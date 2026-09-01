@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
@@ -399,7 +400,10 @@ def load_ai_config(
         metadata = target.stat()
         if not stat.S_ISREG(metadata.st_mode):
             raise ConfigError(f"configuration is not a regular file: {target}")
-        if require_private and metadata.st_mode & 0o077:
+        # POSIX mode bits do not describe Windows ACL privacy. Windows package
+        # installation validates location/regular-file/symlink safety here;
+        # ACL hardening remains an installer/platform responsibility.
+        if require_private and sys.platform != "win32" and metadata.st_mode & 0o077:
             raise ConfigError(f"configuration permissions must be 0600 or stricter: {target}")
         with target.open("r", encoding="utf-8") as stream:
             raw = json.load(stream, object_pairs_hook=_object_pairs)

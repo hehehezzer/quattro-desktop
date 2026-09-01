@@ -354,7 +354,10 @@ def write_manifest_atomic(
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     temporary = pathlib.Path(temporary_name)
     try:
-        os.fchmod(descriptor, mode)
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, mode)
+        else:
+            os.chmod(temporary, mode)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             json.dump(validated, stream, ensure_ascii=False, indent=2, sort_keys=True)
             stream.write("\n")

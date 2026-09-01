@@ -16,18 +16,24 @@ def _environment_path(name: str, fallback: Path) -> Path:
 
 
 def config_home() -> Path:
+    if os.environ.get("XDG_CONFIG_HOME", "").strip():
+        return _environment_path("XDG_CONFIG_HOME", Path.home() / ".config")
     if sys.platform == "win32":
         return _environment_path("APPDATA", Path.home() / "AppData" / "Roaming")
     return _environment_path("XDG_CONFIG_HOME", Path.home() / ".config")
 
 
 def data_home() -> Path:
+    if os.environ.get("XDG_DATA_HOME", "").strip():
+        return _environment_path("XDG_DATA_HOME", Path.home() / ".local" / "share")
     if sys.platform == "win32":
         return _environment_path("LOCALAPPDATA", Path.home() / "AppData" / "Local")
     return _environment_path("XDG_DATA_HOME", Path.home() / ".local" / "share")
 
 
 def state_home() -> Path:
+    if os.environ.get("XDG_STATE_HOME", "").strip():
+        return _environment_path("XDG_STATE_HOME", Path.home() / ".local" / "state")
     if sys.platform == "win32":
         return data_home()
     return _environment_path("XDG_STATE_HOME", Path.home() / ".local" / "state")

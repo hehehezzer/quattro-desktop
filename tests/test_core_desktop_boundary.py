@@ -108,9 +108,9 @@ class CoreDesktopBoundaryTests(unittest.TestCase):
             "APPDATA": str(pathlib.Path(temporary) / "Roaming"),
             "LOCALAPPDATA": str(pathlib.Path(temporary) / "Local"),
         }, clear=False):
-            self.assertEqual(config_home(), pathlib.Path(temporary) / "Roaming")
-            self.assertEqual(data_home(), pathlib.Path(temporary) / "Local")
-            self.assertEqual(state_home(), pathlib.Path(temporary) / "Local")
+            self.assertEqual(config_home(), (pathlib.Path(temporary) / "Roaming").resolve())
+            self.assertEqual(data_home(), (pathlib.Path(temporary) / "Local").resolve())
+            self.assertEqual(state_home(), (pathlib.Path(temporary) / "Local").resolve())
 
     def test_executable_discovery_respects_path_first(self):
         with mock.patch("shutil.which", return_value="/custom/bin/codex"):

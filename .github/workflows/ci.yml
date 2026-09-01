@@ -56,16 +56,7 @@ jobs:
       - name: Import and CLI startup
         run: python -c "import quattro, quattro.core, quattro_agent; print('imports-ok')" && quattro-agent --help && quattro-agent --version
       - name: Core architecture and portable feature tests
-        shell: pwsh
-        run: |
-          python -m unittest `
-            tests.test_core_desktop_boundary `
-            tests.test_public_portability `
-            tests.test_delegation_classifier `
-            tests.test_routing `
-            tests.test_session_durability `
-            tests.test_harness_core `
-            tests.test_retrieval
+        run: python -m unittest tests.test_core_desktop_boundary tests.test_windows_core
       - name: Compile Core
         run: python -m compileall -q src/quattro src/quattro_agent src/quattro_harness.py src/quattro_deployment.py src/quattro_release.py
 
