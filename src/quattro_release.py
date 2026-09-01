@@ -160,6 +160,7 @@ def create_source_release(
     source_root: pathlib.Path,
     mappings: Mapping[str, object] | Iterable[Mapping[str, object]],
     *,
+    release_id: str | None = None,
     absent_paths: Iterable[str] = (),
 ) -> pathlib.Path:
     """Materialize a validated source tree as a restorable release payload.
@@ -182,7 +183,14 @@ def create_source_release(
                 raise ReleaseError("each source release mapping must have a logical name")
             mapping_rows.append((str(value["name"]), value))
 
-    root = (release_root / revision.lower()).resolve(strict=False)
+    directory_name = revision.lower() if release_id is None else str(release_id)
+    if not re.fullmatch(r"[0-9a-f]+(?:-[0-9a-f]+)*", directory_name):
+        raise ReleaseError("release id must be hexadecimal components")
+    root = (release_root / directory_name).resolve(strict=False)
+    try:
+        root.relative_to(release_root.resolve(strict=False))
+    except ValueError as error:
+        raise ReleaseError("release id escapes the release root") from error
     payload = root / "payload"
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     payload.mkdir(mode=0o700)

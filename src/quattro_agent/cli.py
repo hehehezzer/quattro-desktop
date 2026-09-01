@@ -3042,11 +3042,15 @@ def main() -> int:
                         release_id=snapshot_id,
                     )
 
+            candidate_id = revision
+            if (RELEASE_ROOT / revision).exists():
+                candidate_id = f"{revision}-{uuid.uuid4().hex}"
             candidate = create_source_release(
                 RELEASE_ROOT,
                 revision,
                 DEFAULT_WORKSPACE,
                 DEPLOYMENT_MAPPINGS,
+                release_id=candidate_id,
                 absent_paths=retired_paths,
             )
             restored = restore_release(
