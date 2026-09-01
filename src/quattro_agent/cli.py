@@ -3093,20 +3093,31 @@ def main() -> int:
             return 0
         if args.action == "manifest":
             revision = args.revision or resolve_git_revision(DEFAULT_WORKSPACE)
-            releases = []
-            if RELEASE_ROOT.is_dir():
-                for candidate in RELEASE_ROOT.glob("*/release.json"):
-                    try:
-                        release = load_release(candidate)
-                        if re.fullmatch(r"[0-9a-f]{40,64}", str(release["revision"])):
-                            releases.append((candidate.stat().st_mtime, candidate, release))
-                    except (OSError, ValueError):
-                        continue
-            previous = max(releases, default=None, key=lambda item: item[0])
-            rollback_revision = str(previous[2]["revision"]) if previous else None
-            rollback_manifest = (
-                f"{previous[1].parent.name}/release.json" if previous else None
-            )
+            active = load_manifest(DEPLOYMENT_MANIFEST) if DEPLOYMENT_MANIFEST.is_file() else None
+            rollback_revision = None
+            rollback_manifest = None
+            if active is not None and active["gitRevision"] == revision:
+                rollback_revision = active["rollback"]["previousGitRevision"]
+                rollback_manifest = active["rollback"]["previousManifest"]
+            else:
+                releases = []
+                if RELEASE_ROOT.is_dir():
+                    for candidate in RELEASE_ROOT.glob("*/release.json"):
+                        try:
+                            release = load_release(candidate)
+                            release_revision = str(release["revision"])
+                            if (
+                                re.fullmatch(r"[0-9a-f]{40,64}", release_revision)
+                                and release_revision != revision
+                            ):
+                                releases.append((candidate.stat().st_mtime, candidate, release))
+                        except (OSError, ValueError):
+                            continue
+                previous = max(releases, default=None, key=lambda item: item[0])
+                rollback_revision = str(previous[2]["revision"]) if previous else None
+                rollback_manifest = (
+                    f"{previous[1].parent.name}/release.json" if previous else None
+                )
             manifest = build_manifest(
                 DEFAULT_WORKSPACE, HOME, DEPLOYMENT_MAPPINGS,
                 revision=revision,
