@@ -141,7 +141,10 @@ DEPLOYMENT_MAPPINGS = {
         )
     },
 }
-SCRIPT_PATH = pathlib.Path(__file__).resolve()
+# Child workers must enter through the executable wrapper so Python resolves
+# the package from its parent directory.  Executing cli.py directly leaves
+# ``quattro_agent`` unavailable on sys.path in an installed deployment.
+SCRIPT_PATH = pathlib.Path(__file__).resolve().parents[1] / "quattro-agent"
 SCHEMA_VERSION = 1
 MAX_SESSION_META_BYTES = 1_048_576
 HARNESS: HarnessRuntime | None = None

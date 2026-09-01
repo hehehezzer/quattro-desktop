@@ -187,6 +187,10 @@ class CodexPermissionTests(unittest.TestCase):
 
 
 class LauncherParserTests(unittest.TestCase):
+    def test_child_workers_use_the_package_bootstrap_wrapper(self):
+        self.assertEqual(agent.SCRIPT_PATH.name, "quattro-agent")
+        self.assertTrue(agent.SCRIPT_PATH.parent.name in {"src", "bin"})
+
     def test_bare_command_has_implicit_launch_arguments(self):
         args = agent.build_parser().parse_args([])
         self.assertIsNone(args.command)
