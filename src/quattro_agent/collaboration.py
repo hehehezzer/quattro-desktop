@@ -9,9 +9,10 @@ is retained only for an explicit user-requested experiment.
 
 from __future__ import annotations
 
+from quattro.platform.filesystem import fsync_directory
+
 import contextlib
 import datetime as dt
-import fcntl
 import hashlib
 import json
 import os
@@ -24,6 +25,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Mapping, Sequence
 
 from .errors import LeaseConflict
+from quattro.platform.locking import lock_file_descriptor
 
 
 ACTIVE_SESSION_STATES = frozenset({"starting", "active", "validating", "integrating"})
@@ -293,7 +295,7 @@ class RepositoryCoordinator:
         descriptor = os.open(self.lock_path, flags, 0o600)
         try:
             os.chmod(self.lock_path, 0o600)
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            lock_file_descriptor(descriptor)
             state = self._read_state()
             self._reconcile_locked(state)
             yield state
@@ -329,11 +331,7 @@ class RepositoryCoordinator:
                 os.fsync(stream.fileno())
             os.chmod(temporary, 0o600)
             os.replace(temporary, self.registry_path)
-            directory = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            fsync_directory(self.root)
         finally:
             try:
                 os.unlink(temporary)

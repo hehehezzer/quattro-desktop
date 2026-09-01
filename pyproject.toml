@@ -16,7 +16,7 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
-  "Operating System :: POSIX :: Linux",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
 ]
@@ -37,6 +37,7 @@ py-modules = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+exclude = ["quattro_desktop*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

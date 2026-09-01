@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from typing import TextIO
 
 
+SIGHUP = getattr(signal, "SIGHUP", None)
+
+
 @dataclass(frozen=True, slots=True)
 class TerminalSignalAttribution:
     """A stable, display-safe classification for a terminal worker signal."""
@@ -29,7 +32,7 @@ class TerminalSignalAttribution:
 def classify_terminal_signal(signum: int) -> TerminalSignalAttribution:
     """Classify only the two signals intentionally handled by `_task-worker`."""
 
-    if signum == signal.SIGHUP:
+    if SIGHUP is not None and signum == SIGHUP:
         return TerminalSignalAttribution(
             number=signum,
             name="SIGHUP",
@@ -56,7 +59,7 @@ def should_retain_after_exit(
 
     if exit_code == 0:
         return False
-    return attribution is None or attribution.number != signal.SIGHUP
+    return attribution is None or SIGHUP is None or attribution.number != SIGHUP
 
 
 def retain_abnormal_exit(

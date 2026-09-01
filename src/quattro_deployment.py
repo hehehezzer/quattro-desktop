@@ -9,6 +9,8 @@ source and deployed roots.
 
 from __future__ import annotations
 
+from quattro.platform.filesystem import fsync_directory
+
 import datetime as dt
 import hashlib
 import json
@@ -359,11 +361,7 @@ def write_manifest_atomic(
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, target)
-        directory_fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        fsync_directory(target.parent)
     finally:
         temporary.unlink(missing_ok=True)
     return target

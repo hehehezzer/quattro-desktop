@@ -9,7 +9,6 @@ are treated as untrusted data and are only supplied to the reviewer as data.
 from __future__ import annotations
 
 import dataclasses
-import fcntl
 import hashlib
 import json
 import os
@@ -27,6 +26,7 @@ from typing import Any, Callable, Mapping
 from quattro_agent.errors import ConfigError
 from quattro_agent.containment import ContainmentError, build_bwrap_command
 from quattro_agent.omniroute import validate_omniroute_contract
+from quattro.platform.locking import lock_stream as acquire_file_lock
 
 
 TARGET_RE = re.compile(
@@ -295,7 +295,7 @@ class GitHubClient:
         descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
             with os.fdopen(descriptor, "r+", encoding="utf-8") as lock_stream:
-                fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX)
+                acquire_file_lock(lock_stream)
                 existing = self.find_publication(target, marker)
                 if existing and existing["kind"] == "issue-comment":
                     current = self.metadata(target)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -13,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .errors import ConfigError
+from quattro.platform.locking import lock_stream
 
 
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -71,7 +71,7 @@ def prepare_shared_session_namespace(
     linked = 0
     try:
         with os.fdopen(descriptor, "r+") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            lock_stream(lock)
             try:
                 registry = json.loads(registry_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -157,7 +157,7 @@ def update_session_registry(path: Path, session_id: str, values: Mapping[str, An
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     with os.fdopen(descriptor, "r+") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        lock_stream(lock)
         sessions = load_session_registry(path)
         current = sessions.get(session_id, {})
         sessions[session_id] = {**current, **dict(values)}

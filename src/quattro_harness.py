@@ -9,6 +9,8 @@ never projects prompt text, model output, credentials, or environments to QML.
 
 from __future__ import annotations
 
+from quattro.platform.filesystem import fsync_directory
+
 import dataclasses
 import datetime as dt
 import json
@@ -107,11 +109,7 @@ def atomic_json(path: pathlib.Path, value: Mapping[str, Any], mode: int = 0o600)
             os.fsync(stream.fileno())
         os.chmod(temporary, mode)
         os.replace(temporary, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        fsync_directory(path.parent)
     finally:
         try:
             os.unlink(temporary)
