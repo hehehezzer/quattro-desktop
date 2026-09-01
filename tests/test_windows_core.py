@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import contextlib
 import pathlib
 import sqlite3
 import subprocess
@@ -32,7 +33,7 @@ class WindowsCoreTests(unittest.TestCase):
             policy = PolicyProfile(name="windows-read-only")
             task_id = store.create_task(workflow="general", agent="codex", project_path=project, display_title="Windows", policy=policy)
             self.assertEqual(store.get_task(task_id)["state"], "created")
-            with sqlite3.connect(store.path) as connection:
+            with contextlib.closing(sqlite3.connect(store.path)) as connection:
                 self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0].lower(), "wal")
 
     def test_routing_and_adapter_contracts(self):
