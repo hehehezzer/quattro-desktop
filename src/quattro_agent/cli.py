@@ -8,6 +8,8 @@ rate limits come from the structured Codex app-server protocol.
 
 from __future__ import annotations
 
+from quattro.platform.filesystem import fsync_directory
+
 import argparse
 import datetime as dt
 import glob
@@ -51,6 +53,7 @@ from quattro_pr_review import (
     parse_target,
 )
 from quattro_agent.errors import ConfigError, LeaseConflict, StateTransitionError
+from quattro.platform.executables import find_executable
 from quattro_agent.paths import (
     codex_data_root,
     config_path as configured_path,
@@ -94,53 +97,24 @@ HOME = pathlib.Path.home()
 CONFIG_PATH = configured_path()
 STATE_ROOT = configured_state_root()
 DEFAULT_WORKSPACE = default_workspace()
-DEPLOYMENT_MANIFEST = STATE_ROOT / "deployment" / "manifest.json"
+LEGACY_DEPLOYMENT_MANIFEST = STATE_ROOT / "deployment" / "manifest.json"
+CORE_DEPLOYMENT_MANIFEST = STATE_ROOT / "deployment" / "core-manifest.json"
+DESKTOP_DEPLOYMENT_MANIFEST = STATE_ROOT / "deployment" / "desktop-manifest.json"
+# Backward-compatible name now points at the independently operable Core unit.
+DEPLOYMENT_MANIFEST = CORE_DEPLOYMENT_MANIFEST
 RELEASE_ROOT = codex_data_root() / "releases"
 SHARED_CODEX_SESSIONS = STATE_ROOT / "private/codex-sessions"
 CODEX_SESSION_REGISTRY = STATE_ROOT / "private/codex-session-registry.json"
 BASELINE_REVISION = "ef72904701a2920c1dd103e2a9add7b7b12fb7cf"
 BASELINE_RELEASE_ID = BASELINE_REVISION
 VERSION = "0.1.0"
-DEPLOYMENT_MAPPINGS = {
-    "launcher": ("src/quattro-agent", ".local/bin/quattro-agent"),
-    "session-helper": ("src/quattro-session", ".local/bin/quattro-session"),
-    "theme-helper": ("src/quattro-theme", ".local/bin/quattro-theme"),
-    "night-light-helper": ("src/quattro-night-light", ".local/bin/quattro-night-light"),
-    "pointer-helper": ("src/quattro-pointer", ".local/bin/quattro-pointer"),
-    "system-stats-helper": ("src/quattro-system-stats", ".local/bin/quattro-system-stats"),
-    "harness": ("src/quattro_harness.py", ".local/bin/quattro_harness.py"),
-    "deployment": ("src/quattro_deployment.py", ".local/bin/quattro_deployment.py"),
-    "release": ("src/quattro_release.py", ".local/bin/quattro_release.py"),
-    "memory": ("src/quattro_memory.py", ".local/bin/quattro_memory.py"),
-    "pr-review": ("src/quattro_pr_review.py", ".local/bin/quattro_pr_review.py"),
-    "model-catalog": (
-        "src/quattro/omniroute-model-catalog.json",
-        ".local/share/quattro-ai/codex/omniroute-model-catalog.json",
-    ),
-    "agents-qml": ("src/quickshell/components/Agents.qml", ".config/quickshell/components/Agents.qml"),
-    "bar-qml": ("src/quickshell/components/Bar.qml", ".config/quickshell/components/Bar.qml"),
-    "main-menu-qml": ("src/quickshell/components/MainMenu.qml", ".config/quickshell/components/MainMenu.qml"),
-    "system-panels-qml": ("src/quickshell/components/SystemPanels.qml", ".config/quickshell/components/SystemPanels.qml"),
-    "system-stats-qml": ("src/quickshell/components/SystemStats.qml", ".config/quickshell/components/SystemStats.qml"),
-    "shell-qml": ("src/quickshell/shell.qml", ".config/quickshell/shell.qml"),
-    "theme-qml": ("src/quickshell/theme/Theme.qml", ".config/quickshell/theme/Theme.qml"),
-    "hypr-config": ("src/hypr/hyprland.lua", ".config/hypr/hyprland.lua"),
-    "usage-service": ("src/systemd/quattro-agent-usage.service", ".config/systemd/user/quattro-agent-usage.service"),
-    "reconcile-service": ("src/systemd/quattro-agent-reconcile.service", ".config/systemd/user/quattro-agent-reconcile.service"),
-    "reconcile-timer": ("src/systemd/quattro-agent-reconcile.timer", ".config/systemd/user/quattro-agent-reconcile.timer"),
-    **{
-        f"core-{name.removesuffix('.py')}":
-            (f"src/quattro_agent/{name}", f".local/bin/quattro_agent/{name}")
-        for name in (
-            "__init__.py", "adapters.py", "config.py", "errors.py", "models.py",
-            "policy.py", "privacy.py", "scheduler.py", "store.py", "supervisor.py",
-            "validators.py", "workflow.py", "omniroute.py", "sessions.py", "recovery.py",
-            "retrieval.py", "benchmark.py", "delegation.py", "mandatory_context.py",
-            "collaboration.py", "routing.py",
-            "containment.py", "cli.py", "paths.py",
-        )
-    },
-}
+
+from quattro.deployment.migration import migrate_legacy_manifest
+from quattro.deployment.profiles import (
+    CORE_DEPLOYMENT_MAPPINGS, DESKTOP_DEPLOYMENT_MAPPINGS, DESKTOP_RETIRED_PATHS,
+    DEPLOYMENT_MAPPINGS,
+)
+
 # Child workers must enter through the executable wrapper so Python resolves
 # the package from its parent directory.  Executing cli.py directly leaves
 # ``quattro_agent`` unavailable on sys.path in an installed deployment.
@@ -154,9 +128,30 @@ def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 
 
-def deployment_paths(active_manifest: Mapping[str, Any] | None = None) -> set[str]:
+def deployment_profile(profile: str) -> tuple[Mapping[str, tuple[str, str]], pathlib.Path, pathlib.Path]:
+    if profile == "core":
+        return CORE_DEPLOYMENT_MAPPINGS, CORE_DEPLOYMENT_MANIFEST, RELEASE_ROOT / "core"
+    if profile == "desktop":
+        return DESKTOP_DEPLOYMENT_MAPPINGS, DESKTOP_DEPLOYMENT_MANIFEST, RELEASE_ROOT / "desktop"
+    raise ValueError(f"unsupported deployment profile: {profile}")
+
+
+def migrate_deployment_manifest() -> dict[str, Any]:
+    return migrate_legacy_manifest(
+        LEGACY_DEPLOYMENT_MANIFEST,
+        CORE_DEPLOYMENT_MANIFEST,
+        DESKTOP_DEPLOYMENT_MANIFEST,
+        core_names=set(CORE_DEPLOYMENT_MAPPINGS),
+        desktop_names=set(DESKTOP_DEPLOYMENT_MAPPINGS),
+    )
+
+
+def deployment_paths(
+    active_manifest: Mapping[str, Any] | None = None,
+    mappings: Mapping[str, tuple[str, str]] = CORE_DEPLOYMENT_MAPPINGS,
+) -> set[str]:
     """Return the desired inventory plus paths known to the active release."""
-    paths = {str(deployed) for _source, deployed in DEPLOYMENT_MAPPINGS.values()}
+    paths = {str(deployed) for _source, deployed in mappings.values()}
     if active_manifest is not None:
         paths.update(str(record["deployedPath"]) for record in active_manifest["files"])
     return paths
@@ -191,20 +186,7 @@ def die(message: str, code: int = 1) -> "NoReturn":
 
 
 def command_path(name: str) -> str | None:
-    found = shutil.which(name)
-    if found:
-        return found
-    # Hyprland and systemd user services do not necessarily inherit NVM's PATH.
-    # Resolve only the two supported Node-installed agents from known NVM bins.
-    if name in ("codex", "pi"):
-        candidates = sorted(
-            glob.glob(str(HOME / ".nvm/versions/node/*/bin" / name)),
-            reverse=True,
-        )
-        for candidate in candidates:
-            if os.access(candidate, os.X_OK):
-                return candidate
-    return None
+    return find_executable(name)
 
 
 def ensure_state_dirs() -> None:
@@ -227,11 +209,7 @@ def atomic_json(path: pathlib.Path, value: Any, mode: int = 0o600) -> None:
             os.fsync(stream.fileno())
         os.chmod(temporary, mode)
         os.replace(temporary, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        fsync_directory(path.parent)
     finally:
         try:
             os.unlink(temporary)
@@ -1613,72 +1591,85 @@ def print_status(as_json: bool) -> None:
 
 
 def doctor(as_json: bool) -> int:
+    """Report Core health independently from optional integrations."""
     config = load_config()
-    active = account_record(config)
-    checks = []
-    def check(name: str, ok: bool, detail: str) -> None:
-        checks.append({"name": name, "ok": bool(ok), "detail": detail})
-    for name in ("foot", "codex", "pi", "obsidian", "qs", "hyprctl", "coredumpctl", "pw-record", "wl-copy", "wtype"):
-        path = command_path(name)
-        check(f"executable.{name}", path is not None, path or "not found")
-    home = codex_home(config)
-    check("codex.account.directory", home.is_dir(), str(home))
-    try:
-        mode = home.stat().st_mode & 0o777
-    except OSError:
-        mode = 0
-    check("codex.account.permissions", mode == 0o700, f"{mode:04o}")
-    auth = account_login_state(active)
-    check("codex.account.authenticated", auth["authenticated"], auth["status"])
-    check("desktop.workspace", DEFAULT_WORKSPACE.is_dir(), str(DEFAULT_WORKSPACE))
-    check("desktop.instructions", (DEFAULT_WORKSPACE / "AGENTS.md").is_file(), str(DEFAULT_WORKSPACE / "AGENTS.md"))
-    check("shared.skill", (HOME / ".agents/skills/quattro-recreation/SKILL.md").is_file(), "canonical ~/.agents skill")
+    checks: list[dict[str, Any]] = []
+
+    def check(name: str, ok: bool, detail: str, *, required: bool = True) -> None:
+        checks.append({"name": name, "ok": bool(ok), "required": required, "detail": detail})
+
+    check("core.python", sys.version_info >= (3, 11), sys.version.split()[0])
+    codex = command_path("codex")
+    pi = command_path("pi")
+    check("adapter.codex", codex is not None, codex or "optional executable not found", required=False)
+    check("adapter.pi", pi is not None, pi or "optional executable not found", required=False)
+
     memory_enabled, memory_vault, memory_enforced = memory_settings(config)
     project_vault = project_memory_path(config)
     memory_state = vault_status(memory_vault) if memory_enabled else {"status": "disabled"}
     project_memory_state = project_vault_status(project_vault) if memory_enabled else {"status": "disabled"}
-    check("memory.vault", not memory_enforced or memory_state["status"] == "ok", json.dumps(memory_state, ensure_ascii=False))
-    check("memory.projects-vault", not memory_enforced or project_memory_state["status"] == "ok", json.dumps(project_memory_state, ensure_ascii=False))
-    check("memory.skill", (HOME / ".agents/skills/quattro-memory/SKILL.md").is_file(), "canonical ~/.agents skill")
+    check("memory.vault", not memory_enforced or memory_state["status"] == "ok", json.dumps(memory_state, ensure_ascii=False), required=memory_enforced)
+    check("memory.projects-vault", not memory_enforced or project_memory_state["status"] == "ok", json.dumps(project_memory_state, ensure_ascii=False), required=memory_enforced)
+
     try:
         harness().store.list_display_tasks(limit=1)
-        check("harness.task-store", True, str(harness().store.path))
+        check("core.session-store", True, str(harness().store.path))
     except Exception as error:
-        check("harness.task-store", False, str(error)[:240])
+        check("core.session-store", False, str(error)[:240])
     try:
         validated_config = validate_ai_config(config)
-        check(
-            "harness.policy",
-            validated_config.get("defaultPolicyProfile") != "full-access-explicit",
-            str(validated_config.get("defaultPolicyProfile")),
-        )
+        check("core.policy", validated_config.get("defaultPolicyProfile") != "full-access-explicit", str(validated_config.get("defaultPolicyProfile")))
     except (ConfigError, ValueError) as error:
-        check("harness.policy", False, str(error)[:240])
-    if DEPLOYMENT_MANIFEST.is_file():
+        check("core.policy", False, str(error)[:240])
+
+    migration: dict[str, Any]
+    try:
+        migration = migrate_deployment_manifest()
+    except Exception as error:
+        migration = {"status": "failed", "detail": str(error)[:240]}
+        check("core.deployment-migration", False, migration["detail"])
+    if CORE_DEPLOYMENT_MANIFEST.is_file():
         try:
-            manifest = load_manifest(DEPLOYMENT_MANIFEST)
+            manifest = load_manifest(CORE_DEPLOYMENT_MANIFEST)
             parity = verify_manifest_files(manifest, DEFAULT_WORKSPACE, HOME)
-            check("deployment.manifest", bool(parity["allMatch"]), json.dumps(parity))
+            check("core.deployment", bool(parity["allMatch"]), json.dumps(parity))
         except Exception as error:
-            check("deployment.manifest", False, str(error)[:240])
+            check("core.deployment", False, str(error)[:240])
     else:
-        check("deployment.manifest", False, f"missing: {DEPLOYMENT_MANIFEST}")
+        check("core.deployment", True, "package install; source deployment manifest not required", required=False)
+
+    desktop_installed = DESKTOP_DEPLOYMENT_MANIFEST.is_file()
+    if not sys.platform.startswith("linux"):
+        desktop = {"status": "UNSUPPORTED", "installed": False}
+    elif not desktop_installed:
+        desktop = {"status": "OPTIONAL_NOT_INSTALLED", "installed": False}
+    else:
+        desktop_checks = {"hyprland": command_path("hyprctl") is not None, "quickshell": command_path("qs") is not None}
+        desktop = {"status": "HEALTHY" if all(desktop_checks.values()) else "INCOMPLETE", "installed": True, "checks": desktop_checks}
+    check("desktop.integration", True, json.dumps(desktop, ensure_ascii=False), required=False)
     transcriber = find_transcriber()
-    check("dictation.transcriber", transcriber is not None,
-          "ready" if transcriber else "install whisper.cpp and configure a local model")
+    check("optional.dictation", transcriber is not None, "ready" if transcriber else "optional transcriber unavailable", required=False)
+
+    required_ok = all(item["ok"] for item in checks if item["required"])
     result = {
-        "schemaVersion": SCHEMA_VERSION, "generatedAt": now_iso(),
-        "overallStatus": "ok" if all(c["ok"] for c in checks) else "degraded",
+        "schemaVersion": 2, "generatedAt": now_iso(),
+        "overallStatus": "healthy" if required_ok else "degraded",
+        "core": {"status": "HEALTHY" if required_ok else "DEGRADED"},
+        "desktop": desktop,
+        "migration": migration,
         "checks": checks,
     }
     if as_json:
         print(json.dumps(result, ensure_ascii=False))
     else:
-        print("===== QUATTRO AI DOCTOR =====")
+        print("===== QUATTRO DOCTOR =====")
+        print(f"Quattro Core: {result['core']['status']}")
         for item in checks:
-            print(f"{'OK' if item['ok'] else 'WARN':<5} {item['name']:<30} {item['detail']}")
+            label = "OK" if item["ok"] else ("WARN" if not item["required"] else "FAIL")
+            print(f"{label:<5} {item['name']:<30} {item['detail']}")
+        print(f"Desktop: {desktop['status']}")
         print(f"Overall: {result['overallStatus']}")
-    return 0 if result["overallStatus"] == "ok" else 1
+    return 0 if required_ok else 1
 
 
 def find_transcriber() -> tuple[str, pathlib.Path] | None:
@@ -2506,6 +2497,7 @@ def build_parser() -> argparse.ArgumentParser:
     deployment = sub.add_parser("deployment", help="inspect and activate deployment provenance")
     deployment.add_argument("action", choices=("status", "save", "manifest", "deploy", "rollback"))
     deployment.add_argument("revision", nargs="?")
+    deployment.add_argument("--profile", choices=("core", "desktop", "all"), default="all")
     deployment.add_argument("--confirm", action="store_true")
     sub.add_parser("chatgpt")
     sub.add_parser("omniroute")
@@ -2576,6 +2568,188 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_worker = sub.add_parser("_workflow-worker")
     workflow_worker.add_argument("parent_task_id")
     return parser
+
+
+def _deployment_profiles(requested: str) -> tuple[str, ...]:
+    return ("core", "desktop") if requested == "all" else (requested,)
+
+
+def _deployment_status(profile: str) -> dict[str, Any]:
+    mappings, manifest_path, _release_root = deployment_profile(profile)
+    if not manifest_path.is_file():
+        return {
+            "profile": profile,
+            "installed": False,
+            "status": "optional-not-installed" if profile == "desktop" else "not-deployed",
+            "manifestPath": str(manifest_path),
+        }
+    manifest = load_manifest(manifest_path)
+    live = verify_manifest_files(manifest, DEFAULT_WORKSPACE, HOME)
+    return {
+        "profile": profile,
+        "installed": True,
+        "status": "ok" if manifest["parity"]["allMatch"] and live["allMatch"] else "drift",
+        "manifestPath": str(manifest_path),
+        "manifest": manifest,
+        "liveParity": live,
+    }
+
+
+def _find_previous_release(
+    active: Mapping[str, Any], paths: set[str], profile: str,
+) -> pathlib.Path | None:
+    previous_revision = str(active["gitRevision"])
+    candidates = [
+        RELEASE_ROOT / previous_revision / "release.json",
+        RELEASE_ROOT / f"{profile}-{previous_revision}" / "release.json",
+    ]
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        release = load_release(candidate)
+        covered = {str(row["path"]) for row in release["files"]}
+        covered.update(str(path) for path in release["absentPaths"])
+        if release["revision"] == previous_revision and paths <= covered:
+            return candidate
+    return None
+
+
+def _deploy_profile(profile: str, revision: str) -> dict[str, Any]:
+    mappings, manifest_path, _release_root = deployment_profile(profile)
+    active = load_manifest(manifest_path) if manifest_path.is_file() else None
+    current_paths = deployment_paths(mappings=mappings)
+    previous_paths = deployment_paths(active, mappings) if active is not None else set()
+    retired_paths = sorted(
+        (previous_paths - current_paths)
+        | (DESKTOP_RETIRED_PATHS if profile == "desktop" else set())
+    )
+
+    previous_release_manifest = None
+    previous_revision = None
+    if active is not None:
+        previous_revision = str(active["gitRevision"])
+        previous_release_manifest = _find_previous_release(active, previous_paths, profile)
+        if previous_release_manifest is None:
+            snapshot_id = f"{profile}-{previous_revision}-{uuid.uuid4().hex}"
+            previous_release_manifest = create_release(
+                RELEASE_ROOT, previous_revision, HOME, sorted(previous_paths), release_id=snapshot_id,
+            )
+
+    candidate_id = f"{profile}-{revision}"
+    if (RELEASE_ROOT / candidate_id).exists():
+        candidate_id = f"{candidate_id}-{uuid.uuid4().hex}"
+    candidate = create_source_release(
+        RELEASE_ROOT, revision, DEFAULT_WORKSPACE, mappings,
+        release_id=candidate_id, absent_paths=retired_paths,
+    )
+    restored = restore_release(candidate, HOME, release_root=RELEASE_ROOT, expected_revision=revision)
+    rollback_manifest = (
+        previous_release_manifest.relative_to(RELEASE_ROOT.resolve(strict=False)).as_posix()
+        if previous_release_manifest is not None else None
+    )
+    manifest = build_manifest(
+        DEFAULT_WORKSPACE, HOME, mappings, revision=revision,
+        rollback_manifest=rollback_manifest, rollback_revision=previous_revision,
+    )
+    if not manifest["parity"]["allMatch"]:
+        die(f"Refusing to activate {profile} deployment with source/deployed mismatches")
+    write_manifest_atomic(manifest_path, manifest)
+    return {
+        "profile": profile,
+        "revision": revision,
+        "releaseManifest": str(candidate),
+        "restored": [str(path) for path in restored],
+        "retiredPaths": retired_paths,
+        "manifest": manifest,
+    }
+
+
+def _manifest_profile(profile: str, revision: str) -> dict[str, Any]:
+    mappings, manifest_path, _release_root = deployment_profile(profile)
+    active = load_manifest(manifest_path) if manifest_path.is_file() else None
+    rollback_revision = None
+    rollback_manifest = None
+    if active is not None and active["gitRevision"] == revision:
+        rollback_revision = active["rollback"]["previousGitRevision"]
+        rollback_manifest = active["rollback"]["previousManifest"]
+    manifest = build_manifest(
+        DEFAULT_WORKSPACE, HOME, mappings, revision=revision,
+        rollback_manifest=rollback_manifest, rollback_revision=rollback_revision,
+    )
+    if not manifest["parity"]["allMatch"]:
+        die(f"Refusing to activate {profile} deployment with source/deployed mismatches")
+    write_manifest_atomic(manifest_path, manifest)
+    return {"profile": profile, "manifest": manifest}
+
+
+def _rollback_profile(profile: str, requested_revision: str) -> dict[str, Any]:
+    _mappings, manifest_path, _release_root = deployment_profile(profile)
+    release_manifest: pathlib.Path | None = None
+    if manifest_path.is_file():
+        active = load_manifest(manifest_path)
+        rollback = active["rollback"]
+        previous_revision = str(rollback.get("previousGitRevision") or "").lower()
+        previous_manifest = rollback.get("previousManifest")
+        if previous_revision.startswith(requested_revision) and isinstance(previous_manifest, str):
+            candidate = RELEASE_ROOT / pathlib.PurePosixPath(previous_manifest)
+            if candidate.is_file():
+                release_manifest = candidate
+    if release_manifest is None:
+        candidates = []
+        if RELEASE_ROOT.is_dir():
+            for candidate in RELEASE_ROOT.glob("*/release.json"):
+                try:
+                    release = load_release(candidate)
+                except (OSError, ValueError):
+                    continue
+                if str(release["revision"]).startswith(requested_revision):
+                    candidates.append(candidate)
+        if len(candidates) != 1:
+            die("deployment rollback revision is missing or ambiguous")
+        release_manifest = candidates[0]
+    release = load_release(release_manifest)
+    restored = restore_release(
+        release_manifest, HOME, release_root=RELEASE_ROOT, expected_revision=release["revision"],
+    )
+    return {"profile": profile, "revision": release["revision"], "restored": [str(path) for path in restored], "restartRequired": True}
+
+
+def handle_deployment(args: argparse.Namespace) -> int:
+    migration = migrate_deployment_manifest()
+    profiles = _deployment_profiles(args.profile)
+    if args.action == "status":
+        results = [_deployment_status(profile) for profile in profiles]
+        print(json.dumps({"schemaVersion": 2, "migration": migration, "profiles": results}, ensure_ascii=False))
+        return 0 if all(row["status"] in {"ok", "optional-not-installed"} for row in results) else 1
+    if args.action == "rollback":
+        if args.profile == "all":
+            die("deployment rollback requires --profile core or --profile desktop")
+        if not args.revision or not args.confirm:
+            die("deployment rollback requires REVISION and --confirm")
+        if not re.fullmatch(r"[0-9a-f]{7,64}", args.revision.lower()):
+            die("deployment rollback revision must be hexadecimal")
+        print(json.dumps(_rollback_profile(args.profile, args.revision.lower()), ensure_ascii=False))
+        return 0
+
+    source_tree_is_clean(DEFAULT_WORKSPACE)
+    revision = args.revision or resolve_git_revision(DEFAULT_WORKSPACE)
+    if args.action == "deploy":
+        results = [_deploy_profile(profile, revision) for profile in profiles]
+    elif args.action == "manifest":
+        results = [_manifest_profile(profile, revision) for profile in profiles]
+    elif args.action == "save":
+        results = []
+        for profile in profiles:
+            mappings, manifest_path, _release_root = deployment_profile(profile)
+            active = load_manifest(manifest_path) if manifest_path.is_file() else None
+            paths = sorted(deployment_paths(active, mappings))
+            release_id = f"{profile}-{revision}-{uuid.uuid4().hex}"
+            saved = create_release(RELEASE_ROOT, revision, HOME, paths, release_id=release_id)
+            results.append({"profile": profile, "revision": revision, "releaseManifest": str(saved)})
+    else:
+        die(f"unsupported deployment action: {args.action}")
+    print(json.dumps({"schemaVersion": 2, "migration": migration, "profiles": results}, ensure_ascii=False))
+    return 0
 
 
 def main() -> int:
@@ -3002,181 +3176,7 @@ def main() -> int:
         except (OSError, ValueError) as error:
             die(str(error))
     if command == "deployment":
-        if args.action == "status":
-            if not DEPLOYMENT_MANIFEST.is_file():
-                die(f"Deployment manifest is missing: {DEPLOYMENT_MANIFEST}")
-            manifest = load_manifest(DEPLOYMENT_MANIFEST)
-            live = verify_manifest_files(manifest, DEFAULT_WORKSPACE, HOME)
-            print(json.dumps({**manifest, "liveParity": live}, ensure_ascii=False))
-            return 0
-        if args.action == "deploy":
-            source_tree_is_clean(DEFAULT_WORKSPACE)
-            revision = resolve_git_revision(DEFAULT_WORKSPACE)
-            active = load_manifest(DEPLOYMENT_MANIFEST) if DEPLOYMENT_MANIFEST.is_file() else None
-            current_paths = deployment_paths()
-            previous_paths = deployment_paths(active) if active is not None else set()
-            retired_paths = sorted(previous_paths - current_paths)
-
-            previous_release_manifest = None
-            previous_revision = None
-            if active is not None:
-                previous_revision = str(active["gitRevision"])
-                direct_previous = RELEASE_ROOT / previous_revision / "release.json"
-                if direct_previous.is_file():
-                    previous_release = load_release(direct_previous)
-                    if previous_release["revision"] != previous_revision:
-                        die("Active deployment rollback release revision is inconsistent")
-                    covered_paths = {
-                        str(row["path"]) for row in previous_release["files"]
-                    }
-                    covered_paths.update(str(path) for path in previous_release["absentPaths"])
-                    if deployment_paths(active) <= covered_paths:
-                        previous_release_manifest = direct_previous
-                if previous_release_manifest is None:
-                    snapshot_id = f"{previous_revision}-{uuid.uuid4().hex}"
-                    previous_release_manifest = create_release(
-                        RELEASE_ROOT,
-                        previous_revision,
-                        HOME,
-                        sorted(previous_paths),
-                        release_id=snapshot_id,
-                    )
-
-            candidate_id = revision
-            if (RELEASE_ROOT / revision).exists():
-                candidate_id = f"{revision}-{uuid.uuid4().hex}"
-            candidate = create_source_release(
-                RELEASE_ROOT,
-                revision,
-                DEFAULT_WORKSPACE,
-                DEPLOYMENT_MAPPINGS,
-                release_id=candidate_id,
-                absent_paths=retired_paths,
-            )
-            restored = restore_release(
-                candidate,
-                HOME,
-                release_root=RELEASE_ROOT,
-                expected_revision=revision,
-            )
-            rollback_manifest = None
-            if previous_release_manifest is not None:
-                rollback_manifest = previous_release_manifest.relative_to(
-                    RELEASE_ROOT.resolve(strict=False)
-                ).as_posix()
-            manifest = build_manifest(
-                DEFAULT_WORKSPACE,
-                HOME,
-                DEPLOYMENT_MAPPINGS,
-                revision=revision,
-                rollback_manifest=rollback_manifest,
-                rollback_revision=previous_revision,
-            )
-            if not manifest["parity"]["allMatch"]:
-                die("Refusing to activate a deployment manifest with source/deployed mismatches")
-            write_manifest_atomic(DEPLOYMENT_MANIFEST, manifest)
-            print(json.dumps({
-                "revision": revision,
-                "releaseManifest": str(candidate),
-                "restored": [str(path) for path in restored],
-                "retiredPaths": retired_paths,
-                "manifest": manifest,
-            }, ensure_ascii=False))
-            return 0
-        if args.action == "save":
-            if args.revision:
-                revision = args.revision
-            elif DEPLOYMENT_MANIFEST.is_file():
-                revision = str(load_manifest(DEPLOYMENT_MANIFEST)["gitRevision"])
-            else:
-                die("initial deployment save requires the verified live REVISION")
-            active = load_manifest(DEPLOYMENT_MANIFEST) if DEPLOYMENT_MANIFEST.is_file() else None
-            paths = sorted(deployment_paths(active))
-            manifest_path = create_release(RELEASE_ROOT, revision, HOME, paths)
-            print(json.dumps({"revision": revision, "releaseManifest": str(manifest_path)}, ensure_ascii=False))
-            return 0
-        if args.action == "manifest":
-            revision = args.revision or resolve_git_revision(DEFAULT_WORKSPACE)
-            active = load_manifest(DEPLOYMENT_MANIFEST) if DEPLOYMENT_MANIFEST.is_file() else None
-            rollback_revision = None
-            rollback_manifest = None
-            if active is not None and active["gitRevision"] == revision:
-                rollback_revision = active["rollback"]["previousGitRevision"]
-                rollback_manifest = active["rollback"]["previousManifest"]
-            else:
-                releases = []
-                if RELEASE_ROOT.is_dir():
-                    for candidate in RELEASE_ROOT.glob("*/release.json"):
-                        try:
-                            release = load_release(candidate)
-                            release_revision = str(release["revision"])
-                            if (
-                                re.fullmatch(r"[0-9a-f]{40,64}", release_revision)
-                                and release_revision != revision
-                            ):
-                                releases.append((candidate.stat().st_mtime, candidate, release))
-                        except (OSError, ValueError):
-                            continue
-                previous = max(releases, default=None, key=lambda item: item[0])
-                rollback_revision = str(previous[2]["revision"]) if previous else None
-                rollback_manifest = (
-                    f"{previous[1].parent.name}/release.json" if previous else None
-                )
-            manifest = build_manifest(
-                DEFAULT_WORKSPACE, HOME, DEPLOYMENT_MAPPINGS,
-                revision=revision,
-                rollback_manifest=rollback_manifest,
-                rollback_revision=rollback_revision,
-            )
-            if not manifest["parity"]["allMatch"]:
-                die("Refusing to activate a deployment manifest with source/deployed mismatches")
-            write_manifest_atomic(DEPLOYMENT_MANIFEST, manifest)
-            print(json.dumps(manifest, ensure_ascii=False))
-            return 0
-        if not args.revision or not args.confirm:
-            die("deployment rollback requires REVISION and --confirm")
-        if not re.fullmatch(r"[0-9a-f]{7,64}", args.revision.lower()):
-            die("deployment rollback revision must be hexadecimal")
-        requested_revision = args.revision.lower()
-        release_manifest = RELEASE_ROOT / requested_revision / "release.json"
-        if DEPLOYMENT_MANIFEST.is_file():
-            active = load_manifest(DEPLOYMENT_MANIFEST)
-            rollback = active["rollback"]
-            previous_revision = str(rollback.get("previousGitRevision") or "").lower()
-            previous_manifest = rollback.get("previousManifest")
-            if (
-                previous_revision
-                and previous_revision.startswith(requested_revision)
-                and isinstance(previous_manifest, str)
-            ):
-                candidate = RELEASE_ROOT / pathlib.PurePosixPath(previous_manifest)
-                if candidate.is_file():
-                    release_manifest = candidate
-        if not release_manifest.is_file():
-            candidates = []
-            if RELEASE_ROOT.is_dir():
-                for candidate in RELEASE_ROOT.glob("*/release.json"):
-                    try:
-                        release = load_release(candidate)
-                    except (OSError, ValueError):
-                        continue
-                    if str(release["revision"]).startswith(requested_revision):
-                        candidates.append(candidate)
-            if len(candidates) == 1:
-                release_manifest = candidates[0]
-            elif len(candidates) > 1:
-                die("deployment rollback revision is ambiguous")
-        restored = restore_release(
-            release_manifest, HOME,
-            release_root=RELEASE_ROOT,
-            expected_revision=load_release(release_manifest)["revision"],
-        )
-        print(json.dumps({
-            "revision": args.revision,
-            "restored": [str(path) for path in restored],
-            "restartRequired": True,
-        }, ensure_ascii=False))
-        return 0
+        return handle_deployment(args)
     if command == "chatgpt":
         return launch_chatgpt()
     if command == "omniroute":

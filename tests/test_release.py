@@ -87,7 +87,7 @@ class ReleaseTests(unittest.TestCase):
             (source / "src" / "tool").write_text("current", encoding="utf-8")
             (deployed / ".local/bin").mkdir(parents=True)
             (deployed / ".local/bin/tool").write_text("old", encoding="utf-8")
-            retired = deployed / ".local/share/quattro/wallpapers/avengers-doomsday.png"
+            retired = deployed / ".local/share/example/retired-file"
             retired.parent.mkdir(parents=True)
             retired.write_bytes(b"retired asset")
 
@@ -100,7 +100,7 @@ class ReleaseTests(unittest.TestCase):
             )
             release = load_release(manifest)
             self.assertEqual(release["absentPaths"], [
-                ".local/share/quattro/wallpapers/avengers-doomsday.png"
+                ".local/share/example/retired-file"
             ])
             restore_release(manifest, deployed, release_root=releases, expected_revision="1" * 40)
             self.assertEqual((deployed / ".local/bin/tool").read_text(), "current")
