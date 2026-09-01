@@ -29,8 +29,9 @@ All notable Quattro orchestration changes are documented here.
 - The repository, `quattro-agent` command, `quattro_agent` imports, MIT
   license, existing state paths, SQLite schemas, sessions, account homes,
   OmniRoute configuration, and release snapshots remain unchanged.
-- Windows Core remains Planned / Unverified until a hosted Windows CI run
-  succeeds. Linux-only process identity and recovery are not misrepresented.
+- Windows Core packaging and the bounded portable Core surface pass hosted CI.
+  Linux-only managed process identity and recovery remain unsupported and are
+  not misrepresented.
 
 ## 0.1.0 — Initial public OSS release
 

@@ -80,12 +80,14 @@ independent deployment inventory. Their absence is a valid Core state.
 
 | Product | Linux | Windows | macOS |
 | --- | --- | --- | --- |
-| Quattro Core | Supported | Planned / hosted CI unverified | Untested |
+| Quattro Core | Supported | Experimental (hosted Core CI) | Untested |
 | Quattro Desktop | Supported where dependencies are installed | Unsupported | Unsupported |
 
-Windows status will advance to Experimental only after the hosted Windows Core
-job passes. Managed process identity/recovery still uses Linux procfs and is
-explicitly unverified on Windows.
+Windows packaging, imports, CLI startup, platform paths, executable discovery,
+SQLite/WAL state, routing, adapter contracts, portable recovery, file locking,
+Core deployment, Desktop absence, and import boundaries pass hosted CI. Managed
+process identity/recovery still uses Linux procfs and remains unsupported on
+Windows.
 
 ## Requirements
 

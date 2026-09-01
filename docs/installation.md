@@ -30,7 +30,7 @@ The Linux convenience wrapper performs the same Core package installation:
 ./install.sh --profile core
 ```
 
-### Core only (Windows, planned / hosted CI unverified)
+### Core only (Windows, experimental)
 
 Use Python packaging, not the Bash installer:
 
