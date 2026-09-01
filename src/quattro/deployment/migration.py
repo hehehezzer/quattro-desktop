@@ -102,8 +102,10 @@ def migrate_legacy_manifest(
                 {"name": "", "sourcePath": "", "deployedPath": path}, desktop_names,
             ) else core_absent
             target.append(str(path))
-        if not core_records:
+        if not core_records and not core_absent:
             raise ValueError("legacy deployment does not contain a Core inventory")
+
+        desktop_present = bool(desktop_records or desktop_absent)
 
         core_rollback = _partition_rollback(
             legacy, core_records, profile="core", release_root=release_root,
@@ -113,14 +115,14 @@ def migrate_legacy_manifest(
             _partition_rollback(
                 legacy, desktop_records, profile="desktop", release_root=release_root,
                 absent_paths=desktop_absent,
-            ) if desktop_records else {"available": False, "previousManifest": None, "previousGitRevision": None}
+            ) if desktop_present else {"available": False, "previousManifest": None, "previousGitRevision": None}
         )
         write_manifest_atomic(
             core_path, _manifest_for_records(
                 legacy, core_records, rollback=core_rollback, absent_paths=core_absent,
             ),
         )
-        if desktop_records:
+        if desktop_present:
             write_manifest_atomic(
                 desktop_path,
                 _manifest_for_records(

@@ -133,6 +133,60 @@ class CoreDesktopBoundaryTests(unittest.TestCase):
 
 
 class DeploymentMigrationTests(unittest.TestCase):
+    def test_core_absent_only_legacy_inventory_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary); source = root / "source"; deployed = root / "home"
+            source.mkdir(); deployed.mkdir()
+            legacy = root / "state/deployment/manifest.json"
+            write_manifest_atomic(legacy, build_manifest(
+                source, deployed, {}, revision="a" * 40,
+                absent_paths=[".local/bin/retired-core"],
+            ))
+            core_path = legacy.parent / "core-manifest.json"
+            migrate_legacy_manifest(
+                legacy, core_path, legacy.parent / "desktop-manifest.json",
+                core_names=set(), desktop_names=set(),
+            )
+            self.assertEqual(
+                load_manifest(core_path)["absentPaths"], [".local/bin/retired-core"],
+            )
+
+    def test_desktop_absent_only_rollback_partition_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source = root / "source"; deployed = root / "home"; releases = root / "releases"
+            source.mkdir(); deployed.mkdir()
+            core_source = source / "src/core"; core_live = deployed / ".local/bin/core"
+            core_source.parent.mkdir(parents=True); core_live.parent.mkdir(parents=True)
+            core_source.write_text("current", encoding="utf-8")
+            core_live.write_text("previous", encoding="utf-8")
+            previous_revision = "b" * 40
+            combined = create_release(
+                releases, previous_revision, deployed,
+                [".local/bin/core", ".config/quickshell/retired.qml"],
+            )
+            core_live.write_text("current", encoding="utf-8")
+            legacy = root / "state/deployment/manifest.json"
+            write_manifest_atomic(legacy, build_manifest(
+                source, deployed, {"core": ("src/core", ".local/bin/core")},
+                revision="c" * 40,
+                rollback_manifest=combined.resolve().relative_to(releases.resolve()).as_posix(),
+                rollback_revision=previous_revision,
+                absent_paths=[".config/quickshell/retired.qml"],
+            ))
+            desktop_path = legacy.parent / "desktop-manifest.json"
+            migrate_legacy_manifest(
+                legacy, legacy.parent / "core-manifest.json", desktop_path,
+                core_names={"core"}, desktop_names=set(), release_root=releases,
+            )
+            desktop = load_manifest(desktop_path)
+            self.assertEqual(desktop["files"], [])
+            self.assertEqual(desktop["absentPaths"], [".config/quickshell/retired.qml"])
+            rollback = load_release(releases / desktop["rollback"]["previousManifest"])
+            self.assertEqual(rollback["profile"], "desktop")
+            self.assertEqual(rollback["files"], [])
+            self.assertEqual(rollback["absentPaths"], [".config/quickshell/retired.qml"])
+
     def test_legacy_manifest_is_split_archived_and_state_preserved(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
