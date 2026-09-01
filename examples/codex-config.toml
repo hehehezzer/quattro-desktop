@@ -1,0 +1,11 @@
+# Copy this shape into each account-isolated Codex home and adjust the
+# catalog path for your machine. Do not put auth.json or API keys here.
+model = "auto"
+model_provider = "omniroute"
+model_catalog_json = "~/.local/share/quattro-ai/codex/omniroute-model-catalog.json"
+
+[model_providers.omniroute]
+name = "OmniRoute"
+base_url = "http://localhost:20128/api/v1"
+wire_api = "responses"
+requires_openai_auth = false

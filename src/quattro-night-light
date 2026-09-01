@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+
+"""Persistent, allowlisted Hyprland screen-temperature presets."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")).expanduser()
+CONFIG_PATH = CONFIG_HOME / "quattro" / "night-light.json"
+SHADER_DIR = CONFIG_HOME / "quattro" / "night-light-shaders"
+DEFAULT_PRESET = "off"
+PRESETS = {
+    "off": {
+        "label": "Off",
+        "temperature": 6500,
+        "rgb": None,
+    },
+    "soft": {
+        "label": "Soft",
+        "temperature": 5000,
+        "rgb": (1.0, 0.91, 0.82),
+    },
+    "warm": {
+        "label": "Warm",
+        "temperature": 4200,
+        "rgb": (1.0, 0.82, 0.66),
+    },
+    "deep": {
+        "label": "Deep",
+        "temperature": 3400,
+        "rgb": (1.0, 0.72, 0.48),
+    },
+}
+
+
+def current_preset() -> str:
+    try:
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        preset = data.get("preset")
+        if preset in PRESETS:
+            return preset
+    except (OSError, TypeError, ValueError):
+        pass
+    return DEFAULT_PRESET
+
+
+def atomic_write(path: Path, content: str, mode: int = 0o644) -> None:
+    path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def atomic_write_if_changed(path: Path, content: str, mode: int = 0o644) -> bool:
+    """Avoid replacing an active shader when its exact contents are unchanged."""
+    try:
+        if path.read_text(encoding="utf-8") == content:
+            return False
+    except OSError:
+        pass
+    atomic_write(path, content, mode)
+    return True
+
+
+def shader_source(rgb: tuple[float, float, float]) -> str:
+    red, green, blue = rgb
+    return f"""#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+uniform sampler2D tex;
+layout(location = 0) out vec4 fragColor;
+
+void main() {{
+    vec4 pixel = texture(tex, v_texcoord);
+    vec3 warmed = pixel.rgb * vec3({red:.4f}, {green:.4f}, {blue:.4f});
+    fragColor = vec4(clamp(warmed, 0.0, 1.0), 1.0);
+}}
+"""
+
+
+def ensure_shaders() -> None:
+    for preset, details in PRESETS.items():
+        rgb = details["rgb"]
+        if rgb is not None:
+            atomic_write_if_changed(
+                SHADER_DIR / f"{preset}.frag",
+                shader_source(rgb),
+            )
+
+
+def state_for(preset: str) -> dict[str, object]:
+    details = PRESETS[preset]
+    return {
+        "schemaVersion": 1,
+        "preset": preset,
+        "label": details["label"],
+        "temperature": details["temperature"],
+        "active": preset != "off",
+    }
+
+
+def write_config(preset: str) -> None:
+    atomic_write(CONFIG_PATH, json.dumps(state_for(preset), indent=2) + "\n")
+
+
+def apply_preset(preset: str) -> bool:
+    ensure_shaders()
+    shader_path = "" if preset == "off" else str(SHADER_DIR / f"{preset}.frag")
+    escaped_path = shader_path.replace("\\", "\\\\").replace('"', '\\"')
+    code = f'hl.config({{ decoration = {{ screen_shader = "{escaped_path}" }} }})'
+    result = subprocess.run(
+        ["hyprctl", "eval", code],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=3,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def emit(preset: str) -> None:
+    print(json.dumps(state_for(preset), separators=(",", ":")))
+
+
+def main() -> int:
+    action = sys.argv[1] if len(sys.argv) > 1 else "current"
+
+    if action == "list" and len(sys.argv) == 2:
+        print(json.dumps([{"id": name, **details} for name, details in PRESETS.items()]))
+        return 0
+
+    if action == "current" and len(sys.argv) == 2:
+        emit(current_preset())
+        return 0
+
+    if action == "apply" and len(sys.argv) == 2:
+        preset = current_preset()
+        if not apply_preset(preset):
+            print("quattro-night-light: Hyprland rejected the preset", file=sys.stderr)
+            return 1
+        emit(preset)
+        return 0
+
+    if action == "set" and len(sys.argv) == 3 and sys.argv[2] in PRESETS:
+        preset = sys.argv[2]
+        if not apply_preset(preset):
+            print("quattro-night-light: Hyprland rejected the preset", file=sys.stderr)
+            return 1
+        write_config(preset)
+        emit(preset)
+        return 0
+
+    print("usage: quattro-night-light list|current|apply|set PRESET", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

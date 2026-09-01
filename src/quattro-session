@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly HYPRLOCK_BIN="/usr/bin/hyprlock"
+readonly HYPRLOCK_PAM="/etc/pam.d/hyprlock"
+readonly HYPRLOCK_CONFIG="/usr/share/hypr/hyprlock.conf"
+readonly SYSTEM_AUTH_PAM="/etc/pam.d/system-auth"
+readonly LOGIN_PAM="/etc/pam.d/login"
+readonly LOCAL_LOGIN_PAM="/etc/pam.d/system-local-login"
+readonly SYSTEM_LOGIN_PAM="/etc/pam.d/system-login"
+readonly SUDO_PAM="/etc/pam.d/sudo"
+readonly TRUSTED_OWNER="root:root"
+
+fail() {
+    printf 'quattro-session: %s\n' "$1" >&2
+    exit 1
+}
+
+secure_root_file() {
+    local path="$1"
+    local owner mode
+
+    [[ -f "$path" && ! -L "$path" ]] || return 1
+    owner="$(stat -Lc '%U:%G' "$path" 2>/dev/null)" || return 1
+    mode="$(stat -Lc '%a' "$path" 2>/dev/null)" || return 1
+    [[ "$owner" == "$TRUSTED_OWNER" ]] || return 1
+    (( (8#$mode & 8#022) == 0 ))
+}
+
+preflight() {
+    [[ -x "$HYPRLOCK_BIN" ]] && secure_root_file "$HYPRLOCK_BIN" \
+        || fail "the trusted hyprlock executable is unavailable; the session was not locked"
+    local pam_file
+    for pam_file in \
+        "$HYPRLOCK_PAM" "$LOGIN_PAM" "$LOCAL_LOGIN_PAM" \
+        "$SYSTEM_LOGIN_PAM" "$SYSTEM_AUTH_PAM" "$SUDO_PAM"; do
+        secure_root_file "$pam_file" \
+            || fail "a required PAM policy is missing or writable; the session was not locked"
+    done
+    secure_root_file "$HYPRLOCK_CONFIG" \
+        || fail "the hyprlock configuration is missing or writable; the session was not locked"
+    grep -Eq '^[[:space:]]*auth[[:space:]]+include[[:space:]]+login([[:space:]]|$)' "$HYPRLOCK_PAM" \
+        || fail "the hyprlock PAM policy is not linked to the login authentication stack"
+    grep -Eq '^[[:space:]]*auth[[:space:]]+include[[:space:]]+system-local-login([[:space:]]|$)' "$LOGIN_PAM" \
+        || fail "the login PAM policy has an unexpected authentication chain"
+    grep -Eq '^[[:space:]]*auth[[:space:]]+include[[:space:]]+system-login([[:space:]]|$)' "$LOCAL_LOGIN_PAM" \
+        || fail "the local-login PAM policy has an unexpected authentication chain"
+    grep -Eq '^[[:space:]]*auth[[:space:]]+include[[:space:]]+system-auth([[:space:]]|$)' "$SYSTEM_LOGIN_PAM" \
+        || fail "the system-login PAM policy has an unexpected authentication chain"
+    grep -Eq '^[[:space:]]*auth[[:space:]]+include[[:space:]]+system-auth([[:space:]]|$)' "$SUDO_PAM" \
+        || fail "sudo and hyprlock do not share the expected account authentication stack"
+    [[ -n "${WAYLAND_DISPLAY:-}" && -n "${XDG_RUNTIME_DIR:-}" ]] \
+        || fail "no Wayland desktop session is available; the session was not locked"
+    pgrep -u "$(id -u)" -x Hyprland >/dev/null 2>&1 \
+        || fail "Hyprland is not running for this user; the session was not locked"
+}
+
+action="${1:-}"
+
+case "$action" in
+    check)
+        preflight
+        printf '%s\n' "Lock ready: hyprlock and sudo use the same account PAM stack."
+        ;;
+    lock)
+        preflight
+        if pgrep -u "$(id -u)" -x hyprlock >/dev/null 2>&1; then
+            exit 0
+        fi
+        # Stay on the graphical VT. If hyprlock cannot start, this command
+        # fails without moving the user to an unverified recovery screen.
+        exec "$HYPRLOCK_BIN" \
+            --config "$HYPRLOCK_CONFIG" \
+            --grace 0 \
+            --immediate-render \
+            --no-fade-in
+        ;;
+    resume)
+        # Recovery is intentionally not an unlock command. A user who switches
+        # to another VT can return with Ctrl+Alt+F1 and must still authenticate
+        # through hyprlock. Only start a desktop when none is running.
+        if pgrep -u "$(id -u)" -x Hyprland >/dev/null 2>&1; then
+            printf '%s\n' "Hyprland is already running; return to its VT to unlock."
+            exit 0
+        fi
+        exec start-hyprland
+        ;;
+    *)
+        printf 'Usage: %s {check|lock|resume}\n' "$0" >&2
+        exit 2
+        ;;
+esac

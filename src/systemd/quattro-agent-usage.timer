@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Quattro Codex usage every 2 minutes
+
+[Timer]
+OnCalendar=*:0/2
+RandomizedDelaySec=60
+Persistent=true
+Unit=quattro-agent-usage.service
+
+[Install]
+WantedBy=timers.target

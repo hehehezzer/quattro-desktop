@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+whisper_root="${HOME}/.local/opt/quattro-whisper/usr"
+whisper_binary="${whisper_root}/bin/whisper-cli"
+
+if [[ ! -x "$whisper_binary" ]]; then
+    printf 'whisper-cli: local Quattro whisper binary is unavailable\n' >&2
+    exit 1
+fi
+
+export LD_LIBRARY_PATH="${whisper_root}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+export GGML_BACKEND_PATH="${whisper_root}/lib/ggml/libggml-cpu-x64.so"
+exec "$whisper_binary" "$@"

@@ -1,0 +1,11 @@
+[Unit]
+Description=Reconcile Quattro agent tasks every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+RandomizedDelaySec=10s
+Persistent=true
+Unit=quattro-agent-reconcile.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,26 @@
+[Unit]
+Description=Refresh display-safe Quattro Codex usage state
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/quattro-agent usage refresh --all
+ExecStart=%h/.local/bin/quattro-agent recent refresh
+TimeoutStartSec=90
+Nice=10
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=%h/.config/quattro
+ReadWritePaths=%h/.local/share/quattro-ai/codex/accounts
+ReadWritePaths=%h/.local/state/quattro/agents
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=default.target

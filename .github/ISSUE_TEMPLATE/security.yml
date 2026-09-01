@@ -1,0 +1,9 @@
+name: Security report
+description: Redirect security vulnerabilities to a private channel.
+title: "security: use private reporting"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not disclose a vulnerability, exploit, credential, or sensitive data here.
+        Please use a private GitHub Security Advisory as described in SECURITY.md.

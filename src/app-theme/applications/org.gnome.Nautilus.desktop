@@ -1,0 +1,17 @@
+[Desktop Entry]
+Name=Files
+Comment=Access and organize files
+Keywords=folder;manager;explore;disk;filesystem;
+Exec=env GDK_BACKEND=x11 XDG_SESSION_TYPE=x11 nautilus --new-window %U
+Icon=org.gnome.Nautilus
+Terminal=false
+Type=Application
+DBusActivatable=false
+StartupNotify=true
+Categories=GNOME;GTK;Utility;Core;System;FileTools;FileManager;
+MimeType=inode/directory;application/x-gnome-saved-search;
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=env GDK_BACKEND=x11 XDG_SESSION_TYPE=x11 nautilus --new-window

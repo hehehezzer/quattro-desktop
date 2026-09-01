@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+THEMES = (
+    "lofi-noir",
+    "graphite",
+    "terminal",
+    "cyberpunk-2077",
+    "avengers-doomsday",
+)
+DEFAULT_THEME = "lofi-noir"
+CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")).expanduser()
+CONFIG_PATH = CONFIG_HOME / "quattro" / "theme.json"
+FOOT_THEME_PATH = CONFIG_HOME / "foot" / "quattro-theme.ini"
+HYPR_BORDERS = {
+    "lofi-noir": ("rgba(4a4f55ff)", "rgba(202327ff)"),
+    "graphite": ("rgba(626a75ff)", "rgba(25292fff)"),
+    "terminal": ("rgba(58745fff)", "rgba(1b2a20ff)"),
+    "cyberpunk-2077": ("rgba(fcee09ff)", "rgba(25354aff)"),
+    "avengers-doomsday": ("rgba(8fb99aff)", "rgba(33443aff)"),
+}
+FOOT_PALETTES = {
+    "lofi-noir": {
+        "background": "#15171b",
+        "foreground": "#c8c5bc",
+        "selection_background": "#b9ae91",
+        "selection_foreground": "#15171b",
+        "cursor": "#b9ae91",
+        "cursor_text_color": "#15171b",
+        "url_color": "#b9ae91",
+        "active_border_color": "#b9ae91",
+        "inactive_border_color": "#272b31",
+        "active_tab_background": "#b9ae91",
+        "active_tab_foreground": "#15171b",
+        "inactive_tab_background": "#171a1f",
+        "inactive_tab_foreground": "#888b8f",
+        "color0": "#111317", "color8": "#5d6167",
+        "color1": "#b87878", "color9": "#cf8b8b",
+        "color2": "#91a48b", "color10": "#a9bca3",
+        "color3": "#c2a66d", "color11": "#d6bb82",
+        "color4": "#8496aa", "color12": "#9cadc0",
+        "color5": "#9d879d", "color13": "#b59eb5",
+        "color6": "#7f9f9c", "color14": "#96b5b1",
+        "color7": "#c8c5bc", "color15": "#e4e0d5",
+    },
+    "graphite": {
+        "background": "#1b1e23",
+        "foreground": "#d7d9dc",
+        "selection_background": "#aeb5c0",
+        "selection_foreground": "#1b1e23",
+        "cursor": "#aeb5c0",
+        "cursor_text_color": "#1b1e23",
+        "url_color": "#aeb5c0",
+        "active_border_color": "#aeb5c0",
+        "inactive_border_color": "#30343a",
+        "active_tab_background": "#aeb5c0",
+        "active_tab_foreground": "#1b1e23",
+        "inactive_tab_background": "#202329",
+        "inactive_tab_foreground": "#90959d",
+        "color0": "#181a1d", "color8": "#666b73",
+        "color1": "#bd7777", "color9": "#d28c8c",
+        "color2": "#91a48b", "color10": "#a9bca3",
+        "color3": "#c2a66d", "color11": "#d8bc83",
+        "color4": "#879bb3", "color12": "#9fb1c7",
+        "color5": "#a18ca5", "color13": "#b8a2bc",
+        "color6": "#7fa4a6", "color14": "#97bbbd",
+        "color7": "#d7d9dc", "color15": "#f0f1f2",
+    },
+    "terminal": {
+        "background": "#0f1c14",
+        "foreground": "#bfcfc3",
+        "selection_background": "#88a98f",
+        "selection_foreground": "#0f1c14",
+        "cursor": "#88a98f",
+        "cursor_text_color": "#0f1c14",
+        "url_color": "#88a98f",
+        "active_border_color": "#88a98f",
+        "inactive_border_color": "#26372c",
+        "active_tab_background": "#88a98f",
+        "active_tab_foreground": "#0f1c14",
+        "inactive_tab_background": "#132019",
+        "inactive_tab_foreground": "#7f9485",
+        "color0": "#0d1711", "color8": "#586b5e",
+        "color1": "#b87878", "color9": "#cf8b8b",
+        "color2": "#89ad91", "color10": "#a0c4a7",
+        "color3": "#c2a66d", "color11": "#d7bc83",
+        "color4": "#7896a6", "color12": "#90adbc",
+        "color5": "#99849a", "color13": "#b09bb1",
+        "color6": "#78a4a0", "color14": "#90bbb6",
+        "color7": "#bfcfc3", "color15": "#d9e5dc",
+    },
+    "cyberpunk-2077": {
+        "background": "#101827",
+        "foreground": "#d3dae6",
+        "selection_background": "#fcee09",
+        "selection_foreground": "#101827",
+        "cursor": "#fcee09",
+        "cursor_text_color": "#101827",
+        "url_color": "#00f0ff",
+        "active_border_color": "#fcee09",
+        "inactive_border_color": "#25354a",
+        "active_tab_background": "#fcee09",
+        "active_tab_foreground": "#101827",
+        "inactive_tab_background": "#121a27",
+        "inactive_tab_foreground": "#7f91a8",
+        "color0": "#0d121c", "color8": "#52647a",
+        "color1": "#ff2a6d", "color9": "#ff5a8d",
+        "color2": "#00d7c7", "color10": "#00f0ff",
+        "color3": "#fcee09", "color11": "#fff45c",
+        "color4": "#0098db", "color12": "#3fc4ff",
+        "color5": "#d84cff", "color13": "#ed82ff",
+        "color6": "#00b8c8", "color14": "#51e6ee",
+        "color7": "#d3dae6", "color15": "#f4f6e8",
+    },
+    "avengers-doomsday": {
+        "background": "#0d110f",
+        "foreground": "#d5d7d2",
+        "selection_background": "#8fb99a",
+        "selection_foreground": "#0d110f",
+        "cursor": "#8fb99a",
+        "cursor_text_color": "#0d110f",
+        "url_color": "#72b894",
+        "active_border_color": "#8fb99a",
+        "inactive_border_color": "#33443a",
+        "active_tab_background": "#8fb99a",
+        "active_tab_foreground": "#0d110f",
+        "inactive_tab_background": "#18211b",
+        "inactive_tab_foreground": "#8b968e",
+        "color0": "#101512", "color8": "#5e6962",
+        "color1": "#a33c43", "color9": "#c94a52",
+        "color2": "#72a889", "color10": "#8fc4a2",
+        "color3": "#b6924f", "color11": "#c9a75a",
+        "color4": "#748b83", "color12": "#91a99f",
+        "color5": "#806b78", "color13": "#a08598",
+        "color6": "#6e9a8a", "color14": "#86b8a5",
+        "color7": "#d5d7d2", "color15": "#f2eee4",
+    },
+}
+
+
+def current_theme() -> str:
+    try:
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        name = data.get("theme")
+        if name in THEMES:
+            return name
+    except (OSError, ValueError, TypeError):
+        pass
+    return DEFAULT_THEME
+
+
+def write_theme(name: str) -> None:
+    CONFIG_PATH.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".theme-", suffix=".json", dir=CONFIG_PATH.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"schemaVersion": 1, "theme": name}, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, CONFIG_PATH)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def write_foot_theme(name: str) -> None:
+    palette = FOOT_PALETTES[name]
+    foot_color = lambda key: palette[key].removeprefix("#")
+    lines = [
+        "# Generated by quattro-theme. Do not edit this file directly.",
+        f"# Active theme: {name}",
+        "[colors-dark]",
+        "alpha=1.0",
+    ]
+    # Foot uses regular0-7 and bright0-7 for the sixteen ANSI colors.
+    for index in range(8):
+        lines.append(f"regular{index}={foot_color(f'color{index}')}")
+    for index in range(8):
+        lines.append(f"bright{index}={foot_color(f'color{index + 8}')}")
+    lines.extend([
+        f"foreground={foot_color('foreground')}",
+        f"background={foot_color('background')}",
+        f"selection-foreground={foot_color('selection_foreground')}",
+        f"selection-background={foot_color('selection_background')}",
+        f"cursor={foot_color('cursor_text_color')} {foot_color('cursor')}",
+        f"urls={foot_color('url_color')}",
+    ])
+    lines.append("")
+
+    FOOT_THEME_PATH.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=".quattro-theme-",
+        suffix=".ini",
+        dir=FOOT_THEME_PATH.parent,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, FOOT_THEME_PATH)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def reload_foot() -> None:
+    # Standalone Foot windows and Foot server clients both reload on SIGUSR1.
+    for process_name in ("foot", "footclient"):
+        subprocess.run(
+            ["pkill", "-USR1", "-x", process_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            check=False,
+        )
+
+
+def apply_hyprland(name: str) -> None:
+    active, inactive = HYPR_BORDERS[name]
+    code = (
+        "hl.config({ general = { border_size = 1, col = { "
+        f'active_border = "{active}", inactive_border = "{inactive}"'
+        " } }, decoration = { rounding = 0 } })"
+    )
+    subprocess.run(
+        ["hyprctl", "eval", code],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=2,
+        check=False,
+    )
+
+
+def main() -> int:
+    action = sys.argv[1] if len(sys.argv) > 1 else "current"
+
+    if action == "list":
+        print("\n".join(THEMES))
+        return 0
+    if action == "current":
+        print(current_theme())
+        return 0
+    if action == "next":
+        active = current_theme()
+        name = THEMES[(THEMES.index(active) + 1) % len(THEMES)]
+    elif action == "set" and len(sys.argv) == 3 and sys.argv[2] in THEMES:
+        name = sys.argv[2]
+    else:
+        print("usage: quattro-theme list|current|next|set THEME", file=sys.stderr)
+        return 2
+
+    write_foot_theme(name)
+    write_theme(name)
+    apply_hyprland(name)
+    reload_foot()
+    print(name)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

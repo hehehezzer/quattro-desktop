@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "name": "Quattro public synthetic retrieval sample",
+  "cases": [
+    {
+      "id": "file-routing",
+      "query": "Find the file that defines routing tiers",
+      "query_type": "exact_file_lookup",
+      "repository": "",
+      "expected_source_type": ["code"],
+      "expected_files": ["src/quattro_agent/routing.py"],
+      "expected_symbols": ["RoutingTier"],
+      "expected_memories": [],
+      "retrieval_required": true,
+      "semantic_required": false,
+      "graph_required": false,
+      "expected_authority": "repository_worktree",
+      "notes": "Synthetic public case",
+      "ground_truth_status": "established",
+      "branch": ""
+    },
+    {
+      "id": "state-branch",
+      "query": "What branch am I on?",
+      "query_type": "live_state",
+      "repository": "",
+      "expected_source_type": ["live_state"],
+      "expected_files": [],
+      "expected_symbols": [],
+      "expected_memories": [],
+      "retrieval_required": true,
+      "semantic_required": false,
+      "graph_required": false,
+      "expected_authority": "git_live_state",
+      "notes": "Synthetic public case",
+      "ground_truth_status": "established",
+      "branch": ""
+    },
+    {
+      "id": "no-context",
+      "query": "Give me a short greeting",
+      "query_type": "general",
+      "repository": "",
+      "expected_source_type": ["none"],
+      "expected_files": [],
+      "expected_symbols": [],
+      "expected_memories": [],
+      "retrieval_required": false,
+      "semantic_required": false,
+      "graph_required": false,
+      "expected_authority": "none",
+      "notes": "Synthetic public case",
+      "ground_truth_status": "established",
+      "branch": ""
+    }
+  ]
+}

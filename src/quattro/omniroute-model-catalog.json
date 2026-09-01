@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "slug": "auto",
+      "display_name": "Adaptive routes",
+      "description": "Quattro selects an OmniRoute requirement tier; OmniRoute selects the provider and model.",
+      "supported_in_api": true,
+      "input_modalities": ["text"]
+    },
+    {
+      "slug": "auto/coding:cheap",
+      "display_name": "Pinned route · cheap coding",
+      "description": "Low-cost coding capability with latency tie-breaking owned by OmniRoute.",
+      "supported_in_api": true,
+      "input_modalities": ["text"]
+    },
+    {
+      "slug": "auto/coding",
+      "display_name": "Pinned route · coding",
+      "description": "Normal coding capability selected by OmniRoute.",
+      "supported_in_api": true,
+      "input_modalities": ["text"]
+    },
+    {
+      "slug": "auto/reasoning",
+      "display_name": "Pinned route · reasoning",
+      "description": "Reasoning capability selected by OmniRoute.",
+      "supported_in_api": true,
+      "input_modalities": ["text"]
+    }
+  ]
+}

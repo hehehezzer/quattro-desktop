@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a reproducible problem in Quattro.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, tokens, private memory, or sensitive logs.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the smallest safe reproduction.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Quattro version, Python version, OS, and relevant optional runtime versions.
+    validations:
+      required: true

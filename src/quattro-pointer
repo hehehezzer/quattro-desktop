@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+PRESETS = {
+    "very-low": -0.8,
+    "low": -0.5,
+    "reduced": -0.25,
+    "normal": 0.0,
+}
+DEFAULT_PRESET = "normal"
+CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")).expanduser()
+CONFIG_PATH = CONFIG_HOME / "quattro" / "pointer.json"
+
+
+def current_preset() -> str:
+    try:
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        preset = data.get("preset")
+        sensitivity = data.get("sensitivity")
+        if preset in PRESETS and sensitivity == PRESETS[preset]:
+            return preset
+    except (OSError, ValueError, TypeError):
+        pass
+    return DEFAULT_PRESET
+
+
+def write_preset(preset: str) -> None:
+    CONFIG_PATH.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=".pointer-", suffix=".json", dir=CONFIG_PATH.parent
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "schemaVersion": 1,
+                    "preset": preset,
+                    "sensitivity": PRESETS[preset],
+                },
+                handle,
+                indent=2,
+            )
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, CONFIG_PATH)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def apply_hyprland(preset: str) -> bool:
+    sensitivity = PRESETS[preset]
+    code = f"hl.config({{ input = {{ sensitivity = {sensitivity:g} }} }})"
+    try:
+        completed = subprocess.run(
+            ["hyprctl", "eval", code],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+def main() -> int:
+    action = sys.argv[1] if len(sys.argv) > 1 else "current"
+    if action == "current" and len(sys.argv) == 2:
+        print(current_preset())
+        return 0
+    if action == "list" and len(sys.argv) == 2:
+        for preset, sensitivity in PRESETS.items():
+            print(f"{preset}\t{sensitivity:g}")
+        return 0
+    if action != "set" or len(sys.argv) != 3 or sys.argv[2] not in PRESETS:
+        print("usage: quattro-pointer current|list|set PRESET", file=sys.stderr)
+        return 2
+
+    preset = sys.argv[2]
+    write_preset(preset)
+    if not apply_hyprland(preset):
+        print(
+            "saved pointer sensitivity; it will apply when Hyprland reloads",
+            file=sys.stderr,
+        )
+    print(preset)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

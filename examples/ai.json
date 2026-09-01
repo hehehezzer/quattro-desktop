@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 3,
+  "defaultAgent": "codex",
+  "defaultCodexAccount": "default",
+  "defaultPolicyProfile": "workspace-write",
+  "fullAccessRequiresConfirmation": true,
+  "accounts": [
+    {
+      "id": "default",
+      "alias": "Default Codex account",
+      "codexHome": "~/.local/share/quattro-ai/codex/accounts/default",
+      "enabled": true
+    }
+  ],
+  "usageRefresh": { "enabled": false, "intervalMinutes": 15 },
+  "crossDeviceSync": { "enabled": false, "directory": null },
+  "crashCapture": { "enabled": true, "automaticDiagnosis": false },
+  "dictation": {
+    "engine": "whisper.cpp",
+    "modelPath": "~/.local/share/whisper/model.bin",
+    "maxRecordingSeconds": 60,
+    "retainAudio": false
+  },
+  "memory": {
+    "enabled": false,
+    "vaultPath": "~/.local/share/quattro/memory/shared",
+    "projectVaultPath": "~/.local/share/quattro/memory/projects",
+    "enforceOnLaunch": false
+  },
+  "prReview": {
+    "runtime": "codex",
+    "codexAccount": "default",
+    "githubAccount": null,
+    "defaultRepository": null,
+    "reviewMode": "comment",
+    "automaticPublication": false,
+    "maximumDepth": "full",
+    "runTests": true,
+    "securityScanning": true,
+    "commentBehavior": "summary",
+    "severityThreshold": "LOW",
+    "model": null,
+    "timeoutSeconds": 1800,
+    "maxFiles": 500,
+    "maxDiffBytes": 5000000
+  },
+  "delegation": { "enabled": true, "maxWorkers": 3 },
+  "cooperation": { "globalLimit": 5, "perRepositoryLimit": 3 },
+  "routing": {
+    "fastReasoningEffort": "low",
+    "standardReasoningEffort": "medium",
+    "reasoningReasoningEffort": "high",
+    "exceptionalReasoningEffort": "ultra",
+    "maxAutomaticEscalations": 2,
+    "maxExceptionalEscalations": 1,
+    "fastAutoRoute": "auto/coding:cheap",
+    "standardAutoRoute": "auto/coding",
+    "reasoningAutoRoute": "auto/reasoning",
+    "fastContextBudgetTokens": 1200,
+    "standardContextBudgetTokens": 2500,
+    "reasoningContextBudgetTokens": 4000
+  }
+}

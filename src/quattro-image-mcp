@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from quattro_image_mcp import main
+
+raise SystemExit(main())
