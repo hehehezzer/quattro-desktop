@@ -18,8 +18,10 @@ links. Quattro Core can be installed and used independently.
 
 - **Predictable decisions:** explanations can stay direct; repository changes
   become durable, observable tasks.
-- **Tiered execution:** FAST, STANDARD, and REASONING select bounded effort and
-  context budgets without duplicating provider routing.
+- **Evidence-aware execution:** a deterministic TaskProfile maps work to FAST,
+  STANDARD, or REASONING quality requirements and combines OmniRoute runtime
+  metadata, curated benchmark evidence, and local validated outcomes without
+  duplicating provider dispatch.
 - **Recoverable work:** SQLite/WAL task state, checkpoints, leases, cancellation,
   and bounded retries make interrupted work inspectable.
 - **Safe boundaries:** provider credentials stay in native account homes;
@@ -199,7 +201,10 @@ When the selected Codex model is exactly `auto`, Quattro requests:
 
 A concrete `/model` selection is preserved, while Quattro still controls the
 managed task's effective reasoning effort. OmniRoute makes the provider and
-model choice inside the eligible pool. Details are in [routing](docs/routing.md).
+model choice inside the eligible pool. Quattro stores sanitized versioned
+decision snapshots and supports `quattro-agent routing profile`, `explain`,
+`replay`, `refresh-evidence`, `record-outcome`, and `status`. Details are in
+[routing](docs/ROUTING.md).
 
 ## Memory
 

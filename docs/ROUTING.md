@@ -1,4 +1,8 @@
-# Quattro Tiered Request Routing
+# Quattro Evidence-Aware Request Routing
+
+Routing policy: `quattro-routing-v2`
+
+Benchmark normalization: `benchmark-normalization-v1`
 
 Quattro keeps three distinct concepts separate:
 
@@ -7,8 +11,166 @@ Quattro keeps three distinct concepts separate:
 3. **Reasoning effort** — the Quattro-selected effort sent with that request.
 
 Quattro classifies locally; it does not ask an LLM to choose a route and does
-not implement provider, connection/account, quota, reset-window, fallback, or
-billing algorithms. **OmniRoute owns those decisions.**
+not implement provider transport, connection/account fallback, quota reset, or
+billing algorithms. **OmniRoute owns final provider/model dispatch.** Quattro
+owns the task requirement and quality evidence supplied to that boundary.
+
+## Live path and ownership
+
+The current `quattro-agent prompt` path is:
+
+```text
+CLI run_prompt
+  -> DIRECT/DELEGATE decision
+  -> HarnessRuntime.direct_response or HarnessRuntime.create_task
+  -> routing.classify_request
+  -> routing_intelligence.profile_task
+  -> FAST / STANDARD / REASONING minimum requirement
+  -> automatic_model_override (only when configured model == auto)
+  -> Codex Responses request through the existing OmniRoute provider
+  -> OmniRoute candidate eligibility, health/quota/cost ranking and dispatch
+```
+
+For delegated Codex tasks Quattro controls the `-m` route requirement and
+`model_reasoning_effort`; Codex constructs the final Responses payload. Direct
+responses are the only path where Quattro constructs the HTTP body itself.
+
+## Deterministic TaskProfile
+
+`TaskProfile` records:
+
+- task type;
+- complexity, ambiguity, risk, scope, and reasoning depth;
+- verification strength;
+- estimated context tokens and context class;
+- hard required capabilities;
+- minimum quality threshold;
+- transparent signals and component scores.
+
+Classification combines requested operation, diagnosis, architecture,
+uncertainty, mutation scope, security, concurrency, database/infrastructure,
+destructive potential, context, and validation strength. Keyword patterns are
+bounded signals, never the sole classifier. Operation semantics take
+precedence over stray nouns: a localized README rename remains FAST even if
+the prose mentions authentication, while a short authorization-bypass request
+is REASONING.
+
+Tier semantics are minimum quality requirements, not model names:
+
+| Tier | Default quality floor | Meaning |
+| --- | ---: | --- |
+| FAST | 0.45 | low risk, localized, strongly verifiable |
+| STANDARD | 0.65 | normal bounded implementation/debugging |
+| REASONING | 0.80 | architecture, security, concurrency, migration, system scope, high ambiguity, or weak validation |
+
+The floors, evidence weights, preference mode, and outcome sample threshold are
+validated configuration. Default evidence weights
+are metadata `0.25`, public benchmarks `0.50`, and local validated outcomes
+`0.25`. Missing evidence is omitted and remaining weights are renormalized;
+unknown evidence never receives an optimistic quality value.
+
+## Three evidence domains
+
+1. **OmniRoute runtime/model metadata** is authoritative for hard capabilities,
+   practical context, modality, tool compatibility, price, health, quota,
+   rate limits, and cooldown. Missing fields fail conservatively where safe.
+2. **Curated public benchmark evidence** provides cold-start quality dimensions
+   for coding, repository work, reasoning, agentic tool use, long context, and
+   instruction following.
+3. **Quattro local outcomes** provide privacy-safe aggregate validated success,
+   retries, escalation, latency, and cost by task class/tier/provider/model.
+
+Candidate evaluation is lexicographic:
+
+```text
+capability -> practical context -> availability -> quality floor
+           -> expected completion cost -> latency -> stable identity
+```
+
+Cost cannot compensate for a missing capability, insufficient context,
+unavailability, or a quality estimate below the task floor. Expected completion
+cost includes a bounded geometric retry estimate and escalation reserve rather
+than comparing raw input-token price alone.
+
+## Benchmark cache and refresh
+
+The private cache is
+`$QUATTRO_STATE_DIR/private/routing/benchmark-cache.json`. Records are strict,
+size/count bounded, provenance-bearing, and accepted only from allowlisted
+SWE-bench, LiveCodeBench, TerminalBench, or official provider/model-card HTTPS
+hosts. Scores must already be normalized independently into `[0,1]` dimensions;
+raw unrelated benchmark scales are never directly compared. Exact model and
+variant matches retain confidence; family/variant mismatch is discounted and
+age decays confidence. Downloaded data is parsed as inert JSON and never
+executed.
+
+Refresh is out of band and never runs on the request hot path:
+
+```text
+quattro-agent routing refresh-evidence --input curated-cache.json
+quattro-agent routing refresh-evidence --url https://ALLOWLISTED/cache.json
+```
+
+Refresh has a 10-second network timeout, 2 MiB limit, atomic replacement, and
+last-known-good failure behavior. Normal routing is fully offline.
+
+## Local validated outcomes
+
+The private aggregate store is
+`$QUATTRO_STATE_DIR/private/routing/local-outcomes.json`. It contains no prompt,
+response, source code, tool body, environment, credential, or account secret.
+Execution success and validated success are separate. Automatic harness
+validation records pass/fail/not-run against the effective OmniRoute route;
+operators can import a richer provider/model observation when available:
+
+```text
+quattro-agent routing record-outcome \
+  --provider PROVIDER --model MODEL --task-type implementation --tier STANDARD \
+  --execution-success --validated passed --latency-ms 1200 --cost 0.002
+```
+
+Local influence grows linearly to full confidence at 20 validated samples. A
+single success cannot establish model quality.
+
+## Explainability and deterministic replay
+
+Every new managed dispatch stores a sanitized snapshot in private task state:
+TaskProfile, route, policy/normalization versions, evidence content versions,
+configured model, and (when available) candidate decisions/rejections. No raw
+prompt is copied into the snapshot.
+
+```text
+quattro-agent routing profile --prompt "..." --pretty
+quattro-agent routing explain --task TASK_OR_SESSION --pretty
+quattro-agent routing replay TASK_OR_SESSION
+quattro-agent routing status
+```
+
+Replay refuses an unsupported policy version and reproduces route selection
+from the persisted TaskProfile and configured-model precedence. It does not
+invent current health state.
+
+`python scripts/routing/evaluate.py` runs the fixed offline before/after policy
+corpus. It reports fixture accuracy, under/over-routing, tier-cost and bounded
+completion-cost proxies, and escalation need. It explicitly labels real
+provider cost, validated production success, provider concentration, and load
+latency as not measured rather than fabricating those values.
+
+## Current OmniRoute interface gaps
+
+The Codex Responses integration currently exposes route acceptance and final
+model in normal response data, but not a per-request candidate snapshot with
+capabilities, practical limits, provider health, quota, price, or rejection
+reasons. Quattro therefore sends tier/category route requirements and lets the
+existing OmniRoute auto route enforce runtime eligibility. Candidate-level
+Quattro evidence evaluation is implemented as a pure, replayable engine and is
+used when such sanitized candidate metadata is supplied, but Quattro does not
+guess unavailable runtime facts or replace OmniRoute dispatch.
+
+A future optional read-only contract could return a bounded candidate snapshot
+and accept a sanitized requirement envelope containing TaskProfile ID, hard
+capabilities, context tokens, quality floor, and preference mode. This is an
+interface proposal only; no OmniRoute source change is part of Quattro Core.
 
 Quattro, not the native Codex session, owns effective reasoning effort for
 Quattro-managed execution. A parent Codex UI may display `auto medium`, or the
