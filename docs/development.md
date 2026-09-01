@@ -28,5 +28,7 @@ responses, credentials, or arbitrary environments into display-safe state.
 ## Release checks
 
 Review `CHANGELOG.md`, run the CI-equivalent checks, inspect the staged file
-list, run the public-artifact policy, and validate a fresh clone. Do not create
-or move a release tag until the release owner approves the exact commit.
+list, run the public-artifact policy, and validate a fresh clone. Deploy only
+with `quattro-agent deployment deploy` from the exact clean commit; it records
+rollback inventory and removes retired mapped paths. Do not create or move a
+release tag until the release owner approves the exact commit.

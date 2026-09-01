@@ -87,7 +87,7 @@ from quattro_deployment import (
     build_manifest, load_manifest, resolve_git_revision,
     verify_manifest_files, write_manifest_atomic,
 )
-from quattro_release import create_release, load_release, restore_release
+from quattro_release import create_release, create_source_release, load_release, restore_release
 
 
 HOME = pathlib.Path.home()
@@ -149,6 +149,33 @@ HARNESS: HarnessRuntime | None = None
 
 def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def deployment_paths(active_manifest: Mapping[str, Any] | None = None) -> set[str]:
+    """Return the desired inventory plus paths known to the active release."""
+    paths = {str(deployed) for _source, deployed in DEPLOYMENT_MAPPINGS.values()}
+    if active_manifest is not None:
+        paths.update(str(record["deployedPath"]) for record in active_manifest["files"])
+    return paths
+
+
+def source_tree_is_clean(root: pathlib.Path) -> None:
+    """Require a committed source snapshot before it can reach the runtime."""
+    git = shutil.which("git")
+    if not git:
+        die("Git is unavailable; refusing source deployment")
+    try:
+        result = subprocess.run(
+            [git, "-C", str(root), "status", "--porcelain", "--untracked-files=normal"],
+            check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=5, env={"PATH": os.defpath, "LC_ALL": "C"},
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        die(f"Unable to verify source cleanliness: {error}")
+    if result.returncode != 0:
+        die("Unable to verify source cleanliness")
+    if result.stdout.strip():
+        die("Refusing deployment from a dirty source tree")
 
 
 def eprint(message: str) -> None:
@@ -2473,8 +2500,8 @@ def build_parser() -> argparse.ArgumentParser:
     workspace.add_argument("--operation", choices=("clone", "create"), default="clone")
     workspace.add_argument("--repository")
     workspace.add_argument("--destination")
-    deployment = sub.add_parser("deployment", help="inspect deployment provenance")
-    deployment.add_argument("action", choices=("status", "save", "manifest", "rollback"))
+    deployment = sub.add_parser("deployment", help="inspect and activate deployment provenance")
+    deployment.add_argument("action", choices=("status", "save", "manifest", "deploy", "rollback"))
     deployment.add_argument("revision", nargs="?")
     deployment.add_argument("--confirm", action="store_true")
     sub.add_parser("chatgpt")
@@ -2982,6 +3009,76 @@ def main() -> int:
             live = verify_manifest_files(manifest, DEFAULT_WORKSPACE, HOME)
             print(json.dumps({**manifest, "liveParity": live}, ensure_ascii=False))
             return 0
+        if args.action == "deploy":
+            source_tree_is_clean(DEFAULT_WORKSPACE)
+            revision = resolve_git_revision(DEFAULT_WORKSPACE)
+            active = load_manifest(DEPLOYMENT_MANIFEST) if DEPLOYMENT_MANIFEST.is_file() else None
+            current_paths = deployment_paths()
+            previous_paths = deployment_paths(active) if active is not None else set()
+            retired_paths = sorted(previous_paths - current_paths)
+
+            previous_release_manifest = None
+            previous_revision = None
+            if active is not None:
+                previous_revision = str(active["gitRevision"])
+                direct_previous = RELEASE_ROOT / previous_revision / "release.json"
+                if direct_previous.is_file():
+                    previous_release = load_release(direct_previous)
+                    if previous_release["revision"] != previous_revision:
+                        die("Active deployment rollback release revision is inconsistent")
+                    covered_paths = {
+                        str(row["path"]) for row in previous_release["files"]
+                    }
+                    covered_paths.update(str(path) for path in previous_release["absentPaths"])
+                    if deployment_paths(active) <= covered_paths:
+                        previous_release_manifest = direct_previous
+                if previous_release_manifest is None:
+                    snapshot_id = f"{previous_revision}-{uuid.uuid4().hex}"
+                    previous_release_manifest = create_release(
+                        RELEASE_ROOT,
+                        previous_revision,
+                        HOME,
+                        sorted(previous_paths),
+                        release_id=snapshot_id,
+                    )
+
+            candidate = create_source_release(
+                RELEASE_ROOT,
+                revision,
+                DEFAULT_WORKSPACE,
+                DEPLOYMENT_MAPPINGS,
+                absent_paths=retired_paths,
+            )
+            restored = restore_release(
+                candidate,
+                HOME,
+                release_root=RELEASE_ROOT,
+                expected_revision=revision,
+            )
+            rollback_manifest = None
+            if previous_release_manifest is not None:
+                rollback_manifest = previous_release_manifest.relative_to(
+                    RELEASE_ROOT.resolve(strict=False)
+                ).as_posix()
+            manifest = build_manifest(
+                DEFAULT_WORKSPACE,
+                HOME,
+                DEPLOYMENT_MAPPINGS,
+                revision=revision,
+                rollback_manifest=rollback_manifest,
+                rollback_revision=previous_revision,
+            )
+            if not manifest["parity"]["allMatch"]:
+                die("Refusing to activate a deployment manifest with source/deployed mismatches")
+            write_manifest_atomic(DEPLOYMENT_MANIFEST, manifest)
+            print(json.dumps({
+                "revision": revision,
+                "releaseManifest": str(candidate),
+                "restored": [str(path) for path in restored],
+                "retiredPaths": retired_paths,
+                "manifest": manifest,
+            }, ensure_ascii=False))
+            return 0
         if args.action == "save":
             if args.revision:
                 revision = args.revision
@@ -2989,7 +3086,8 @@ def main() -> int:
                 revision = str(load_manifest(DEPLOYMENT_MANIFEST)["gitRevision"])
             else:
                 die("initial deployment save requires the verified live REVISION")
-            paths = [deployed for _source, deployed in DEPLOYMENT_MAPPINGS.values()]
+            active = load_manifest(DEPLOYMENT_MANIFEST) if DEPLOYMENT_MANIFEST.is_file() else None
+            paths = sorted(deployment_paths(active))
             manifest_path = create_release(RELEASE_ROOT, revision, HOME, paths)
             print(json.dumps({"revision": revision, "releaseManifest": str(manifest_path)}, ensure_ascii=False))
             return 0
@@ -3024,11 +3122,39 @@ def main() -> int:
             die("deployment rollback requires REVISION and --confirm")
         if not re.fullmatch(r"[0-9a-f]{7,64}", args.revision.lower()):
             die("deployment rollback revision must be hexadecimal")
-        release_manifest = RELEASE_ROOT / args.revision / "release.json"
+        requested_revision = args.revision.lower()
+        release_manifest = RELEASE_ROOT / requested_revision / "release.json"
+        if DEPLOYMENT_MANIFEST.is_file():
+            active = load_manifest(DEPLOYMENT_MANIFEST)
+            rollback = active["rollback"]
+            previous_revision = str(rollback.get("previousGitRevision") or "").lower()
+            previous_manifest = rollback.get("previousManifest")
+            if (
+                previous_revision
+                and previous_revision.startswith(requested_revision)
+                and isinstance(previous_manifest, str)
+            ):
+                candidate = RELEASE_ROOT / pathlib.PurePosixPath(previous_manifest)
+                if candidate.is_file():
+                    release_manifest = candidate
+        if not release_manifest.is_file():
+            candidates = []
+            if RELEASE_ROOT.is_dir():
+                for candidate in RELEASE_ROOT.glob("*/release.json"):
+                    try:
+                        release = load_release(candidate)
+                    except (OSError, ValueError):
+                        continue
+                    if str(release["revision"]).startswith(requested_revision):
+                        candidates.append(candidate)
+            if len(candidates) == 1:
+                release_manifest = candidates[0]
+            elif len(candidates) > 1:
+                die("deployment rollback revision is ambiguous")
         restored = restore_release(
             release_manifest, HOME,
             release_root=RELEASE_ROOT,
-            expected_revision=args.revision,
+            expected_revision=load_release(release_manifest)["revision"],
         )
         print(json.dumps({
             "revision": args.revision,

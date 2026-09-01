@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import shutil
 import sys
 import tempfile
 import unittest
@@ -10,6 +11,8 @@ import unittest
 SRC = pathlib.Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SRC))
 import quattro_deployment as deployment
+from quattro_agent.cli import DEPLOYMENT_MAPPINGS
+from quattro_release import create_source_release, restore_release
 
 
 class DeploymentManifestTests(unittest.TestCase):
@@ -144,6 +147,55 @@ class DeploymentManifestTests(unittest.TestCase):
             result = deployment.verify_manifest_files(manifest, source, deployed)
             self.assertFalse(result["allMatch"])
             self.assertEqual(result["driftCount"], 1)
+
+    def test_public_mapping_builds_without_removed_wallpaper_asset(self):
+        self.assertNotIn("doomsday-wallpaper", DEPLOYMENT_MAPPINGS)
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory) / "source"
+            deployed = pathlib.Path(directory) / "deployed"
+            source.mkdir()
+            deployed.mkdir()
+            for source_relative, deployed_relative in DEPLOYMENT_MAPPINGS.values():
+                source_file = pathlib.Path(__file__).parents[1] / source_relative
+                source_target = source / source_relative
+                deployed_file = deployed / deployed_relative
+                source_target.parent.mkdir(parents=True, exist_ok=True)
+                deployed_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_file, source_target)
+                shutil.copy2(source_file, deployed_file)
+            manifest = deployment.build_manifest(
+                source,
+                deployed,
+                DEPLOYMENT_MAPPINGS,
+                revision=self.REVISION,
+            )
+        self.assertTrue(manifest["parity"]["allMatch"])
+
+    def test_source_release_deploys_current_mapping_to_manifest_parity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            deployed = root / "deployed"
+            releases = root / "releases"
+            deployed.mkdir()
+            candidate = create_source_release(
+                releases,
+                self.REVISION,
+                pathlib.Path(__file__).parents[1],
+                DEPLOYMENT_MAPPINGS,
+            )
+            restore_release(
+                candidate,
+                deployed,
+                release_root=releases,
+                expected_revision=self.REVISION,
+            )
+            manifest = deployment.build_manifest(
+                pathlib.Path(__file__).parents[1],
+                deployed,
+                DEPLOYMENT_MAPPINGS,
+                revision=self.REVISION,
+            )
+        self.assertTrue(manifest["parity"]["allMatch"])
 
 
 if __name__ == "__main__":

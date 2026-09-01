@@ -7,9 +7,10 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import tempfile
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 
@@ -47,6 +48,50 @@ def _hash(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
+def _source_file(root: pathlib.Path, relative: pathlib.PurePosixPath) -> pathlib.Path:
+    """Resolve one source file without allowing it to escape its root."""
+    try:
+        candidate = (root / pathlib.Path(*relative.parts)).resolve(strict=True)
+        candidate.relative_to(root)
+    except (FileNotFoundError, ValueError) as error:
+        raise ReleaseError(f"source release file is missing or escapes root: {relative}") from error
+    if not candidate.is_file():
+        raise ReleaseError(f"source release file is invalid: {relative}")
+    return candidate
+
+
+def _release_manifest(
+    root: pathlib.Path,
+    revision: str,
+    rows: list[dict[str, Any]],
+    absent_paths: Iterable[str],
+) -> pathlib.Path:
+    absent = sorted({_safe_relative(path).as_posix() for path in absent_paths})
+    file_paths = {str(row["path"]) for row in rows}
+    if file_paths.intersection(absent):
+        raise ReleaseError("release inventory cannot contain both a file and an absent path")
+    if not rows and not absent:
+        raise ReleaseError("release must contain a desired path inventory")
+    manifest = {
+        "schemaVersion": SCHEMA_VERSION,
+        "revision": revision.lower(),
+        "files": rows,
+        "absentPaths": absent,
+    }
+    manifest_path = root / "release.json"
+    fd, temporary_name = tempfile.mkstemp(prefix=".release.", dir=root)
+    temporary = pathlib.Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(manifest, stream, separators=(",", ":"), sort_keys=True)
+            stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, manifest_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return manifest_path
+
+
 def _atomic_copy(source: pathlib.Path, target: pathlib.Path, mode: int) -> None:
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
@@ -67,10 +112,19 @@ def create_release(
     revision: str,
     deployed_root: pathlib.Path,
     deployed_paths: Iterable[str],
+    *,
+    release_id: str | None = None,
 ) -> pathlib.Path:
     if not revision or any(character not in "0123456789abcdef" for character in revision.lower()):
         raise ReleaseError("revision must be hexadecimal")
-    root = (release_root / revision.lower()).resolve(strict=False)
+    directory_name = revision.lower() if release_id is None else str(release_id)
+    if not re.fullmatch(r"[0-9a-f]+(?:-[0-9a-f]+)*", directory_name):
+        raise ReleaseError("release id must be hexadecimal components")
+    root = (release_root / directory_name).resolve(strict=False)
+    try:
+        root.relative_to(release_root.resolve(strict=False))
+    except ValueError as error:
+        raise ReleaseError("release id escapes the release root") from error
     payload = root / "payload"
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     payload.mkdir(mode=0o700)
@@ -97,24 +151,66 @@ def create_release(
         rows.append({"path": relative.as_posix(), "sha256": _hash(target), "mode": mode})
     if not rows and not absent:
         raise ReleaseError("release must contain a desired path inventory")
-    manifest = {
-        "schemaVersion": SCHEMA_VERSION,
-        "revision": revision.lower(),
-        "files": rows,
-        "absentPaths": absent,
-    }
-    manifest_path = root / "release.json"
-    fd, temporary_name = tempfile.mkstemp(prefix=".release.", dir=root)
-    temporary = pathlib.Path(temporary_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(manifest, stream, separators=(",", ":"), sort_keys=True)
-            stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, manifest_path)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return manifest_path
+    return _release_manifest(root, revision, rows, absent)
+
+
+def create_source_release(
+    release_root: pathlib.Path,
+    revision: str,
+    source_root: pathlib.Path,
+    mappings: Mapping[str, object] | Iterable[Mapping[str, object]],
+    *,
+    absent_paths: Iterable[str] = (),
+) -> pathlib.Path:
+    """Materialize a validated source tree as a restorable release payload.
+
+    Mapping values are source/deployed pairs or mappings with ``source`` and
+    ``deployed`` keys.  ``absent_paths`` is the explicit desired-state
+    inventory for files retired by the source release.
+    """
+    if not revision or any(character not in "0123456789abcdef" for character in revision.lower()):
+        raise ReleaseError("revision must be hexadecimal")
+    source = source_root.resolve(strict=True)
+    if not source.is_dir():
+        raise ReleaseError("source release root must be a directory")
+    if isinstance(mappings, Mapping):
+        mapping_rows = [(str(name), value) for name, value in mappings.items()]
+    else:
+        mapping_rows = []
+        for value in mappings:
+            if not isinstance(value, Mapping) or not isinstance(value.get("name"), str):
+                raise ReleaseError("each source release mapping must have a logical name")
+            mapping_rows.append((str(value["name"]), value))
+
+    root = (release_root / revision.lower()).resolve(strict=False)
+    payload = root / "payload"
+    root.mkdir(mode=0o700, parents=True, exist_ok=False)
+    payload.mkdir(mode=0o700)
+    rows: list[dict[str, Any]] = []
+    seen_targets: set[str] = set()
+    for name, value in sorted(mapping_rows, key=lambda row: row[0]):
+        if isinstance(value, Mapping):
+            source_value = value.get("source")
+            deployed_value = value.get("deployed")
+        elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)) and len(value) == 2:
+            source_value, deployed_value = value
+        else:
+            raise ReleaseError(f"mapping {name!r} must contain source and deployed paths")
+        source_relative = _safe_relative(str(source_value))
+        deployed_relative = _safe_relative(str(deployed_value))
+        deployed_path = deployed_relative.as_posix()
+        if deployed_path in seen_targets:
+            raise ReleaseError(f"source release target paths must be unique: {deployed_path}")
+        seen_targets.add(deployed_path)
+        source_file = _source_file(source, source_relative)
+        target = payload / pathlib.Path(*deployed_relative.parts)
+        _atomic_copy(source_file, target, source_file.stat().st_mode & 0o777)
+        rows.append({
+            "path": deployed_path,
+            "sha256": _hash(target),
+            "mode": source_file.stat().st_mode & 0o777,
+        })
+    return _release_manifest(root, revision, rows, absent_paths)
 
 
 def load_release(path: pathlib.Path) -> dict[str, Any]:
@@ -132,12 +228,22 @@ def load_release(path: pathlib.Path) -> dict[str, Any]:
         raise ReleaseError("release manifest version or files are invalid")
     if not isinstance(value["absentPaths"], list):
         raise ReleaseError("release absent-path inventory is invalid")
+    absent_paths: set[str] = set()
     for path in value["absentPaths"]:
-        _safe_relative(path)
+        normalized = _safe_relative(path).as_posix()
+        if normalized in absent_paths:
+            raise ReleaseError("release absent-path inventory contains duplicates")
+        absent_paths.add(normalized)
+    file_paths: set[str] = set()
     for row in value["files"]:
         if not isinstance(row, dict) or set(row) != {"path", "sha256", "mode"}:
             raise ReleaseError("release file record is invalid")
-        _safe_relative(row["path"])
+        normalized = _safe_relative(row["path"]).as_posix()
+        if normalized in file_paths:
+            raise ReleaseError("release file inventory contains duplicates")
+        if normalized in absent_paths:
+            raise ReleaseError("release inventory cannot contain both a file and an absent path")
+        file_paths.add(normalized)
         if not isinstance(row["sha256"], str) or len(row["sha256"]) != 64:
             raise ReleaseError("release hash is invalid")
         if type(row["mode"]) is not int or not 0 <= row["mode"] <= 0o777:

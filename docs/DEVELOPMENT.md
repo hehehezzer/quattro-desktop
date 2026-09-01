@@ -33,8 +33,10 @@ git diff --check
 1. Ensure the intended source changes are reviewed and committed.
 2. Confirm `git status` is clean and no secret or generated artifact is staged.
 3. Run the full test suite and release checks.
-4. Use the existing deployment manifest/release mechanism to build a release
-   from the exact commit; do not copy a dirty working tree into the runtime.
+4. Use `quattro-agent deployment deploy` from the exact clean commit. It
+   creates a private rollback release, installs the validated source mapping,
+   and removes paths retired by the new release; do not copy a dirty working
+   tree into the runtime.
 5. Verify manifest source/deployed parity and both Codex account contracts.
 6. Smoke-test DIRECT and a non-mutating delegated Codex task in a disposable
    repository.

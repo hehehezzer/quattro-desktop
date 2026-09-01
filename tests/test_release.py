@@ -7,7 +7,9 @@ from unittest import mock
 
 SRC = pathlib.Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SRC))
-from quattro_release import ReleaseError, create_release, load_release, restore_release
+from quattro_release import (
+    ReleaseError, create_release, create_source_release, load_release, restore_release,
+)
 
 class ReleaseTests(unittest.TestCase):
     def test_private_release_round_trip_and_hash_validation(self):
@@ -74,5 +76,47 @@ class ReleaseTests(unittest.TestCase):
             )
             self.assertIn(introduced,restored)
             self.assertFalse(introduced.exists())
+
+    def test_source_release_removes_retired_paths_and_restores_current_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source = root / "source"
+            deployed = root / "home"
+            releases = root / "releases"
+            (source / "src").mkdir(parents=True)
+            (source / "src" / "tool").write_text("current", encoding="utf-8")
+            (deployed / ".local/bin").mkdir(parents=True)
+            (deployed / ".local/bin/tool").write_text("old", encoding="utf-8")
+            retired = deployed / ".local/share/quattro/wallpapers/avengers-doomsday.png"
+            retired.parent.mkdir(parents=True)
+            retired.write_bytes(b"retired asset")
+
+            manifest = create_source_release(
+                releases,
+                "1" * 40,
+                source,
+                {"tool": ("src/tool", ".local/bin/tool")},
+                absent_paths=[retired.relative_to(deployed).as_posix()],
+            )
+            release = load_release(manifest)
+            self.assertEqual(release["absentPaths"], [
+                ".local/share/quattro/wallpapers/avengers-doomsday.png"
+            ])
+            restore_release(manifest, deployed, release_root=releases, expected_revision="1" * 40)
+            self.assertEqual((deployed / ".local/bin/tool").read_text(), "current")
+            self.assertFalse(retired.exists())
+
+    def test_source_release_rejects_missing_source_mapping(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            with self.assertRaises(ReleaseError):
+                create_source_release(
+                    root / "releases",
+                    "2" * 40,
+                    source,
+                    {"removed": ("src/removed.png", ".local/share/quattro/removed.png")},
+                )
 
 if __name__ == "__main__": unittest.main()

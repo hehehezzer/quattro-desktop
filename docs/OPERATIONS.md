@@ -9,6 +9,12 @@ quattro-agent deployment status
 quattro-agent config validate
 ```
 
+To activate a reviewed source checkout, run `quattro-agent deployment deploy`
+from its clean committed root. The operation creates a private rollback
+release, installs only validated mappings, and removes paths explicitly
+retired by the source release. It preserves the user configuration and durable
+session state outside the deployment inventory.
+
 For the shell, restart only through the supported helper and then inspect the
 log, IPC targets, and process count:
 
