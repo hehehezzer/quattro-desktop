@@ -2601,7 +2601,7 @@ def _find_previous_release(
     previous_revision = str(active["gitRevision"])
     candidates = [
         RELEASE_ROOT / previous_revision / "release.json",
-        RELEASE_ROOT / f"{profile}-{previous_revision}" / "release.json",
+        RELEASE_ROOT / f"{'c0' if profile == 'core' else 'de'}-{previous_revision}" / "release.json",
     ]
     for candidate in candidates:
         if not candidate.is_file():
@@ -2630,12 +2630,12 @@ def _deploy_profile(profile: str, revision: str) -> dict[str, Any]:
         previous_revision = str(active["gitRevision"])
         previous_release_manifest = _find_previous_release(active, previous_paths, profile)
         if previous_release_manifest is None:
-            snapshot_id = f"{profile}-{previous_revision}-{uuid.uuid4().hex}"
+            snapshot_id = f"{'c0' if profile == 'core' else 'de'}-{previous_revision}-{uuid.uuid4().hex}"
             previous_release_manifest = create_release(
                 RELEASE_ROOT, previous_revision, HOME, sorted(previous_paths), release_id=snapshot_id,
             )
 
-    candidate_id = f"{profile}-{revision}"
+    candidate_id = f"{'c0' if profile == 'core' else 'de'}-{revision}"
     if (RELEASE_ROOT / candidate_id).exists():
         candidate_id = f"{candidate_id}-{uuid.uuid4().hex}"
     candidate = create_source_release(
@@ -2743,7 +2743,7 @@ def handle_deployment(args: argparse.Namespace) -> int:
             mappings, manifest_path, _release_root = deployment_profile(profile)
             active = load_manifest(manifest_path) if manifest_path.is_file() else None
             paths = sorted(deployment_paths(active, mappings))
-            release_id = f"{profile}-{revision}-{uuid.uuid4().hex}"
+            release_id = f"{'c0' if profile == 'core' else 'de'}-{revision}-{uuid.uuid4().hex}"
             saved = create_release(RELEASE_ROOT, revision, HOME, paths, release_id=release_id)
             results.append({"profile": profile, "revision": revision, "releaseManifest": str(saved)})
     else:
