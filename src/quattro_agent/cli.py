@@ -2578,9 +2578,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    if args.command is None and not sys.argv[1:]:
-        parser.print_help()
-        return 0
     if args.command == "ui-state":
         print(json.dumps(ui_snapshot(), ensure_ascii=False))
         return 0
