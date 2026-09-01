@@ -15,7 +15,7 @@ sys.path.insert(0, str(SRC))
 
 from quattro_agent.errors import ConfigError, LeaseConflict
 from quattro_agent.omniroute import (
-    REQUIRED_QUATTRO_ROUTES, validate_catalog_parity,
+    REQUIRED_QUATTRO_ROUTES, validate_catalog_parity, validate_model_catalog,
     validate_omniroute_contract,
 )
 from quattro_agent.policy import policy_profile
@@ -109,6 +109,12 @@ class OmniRouteContractTests(unittest.TestCase):
 
     def test_catalog_parity_skips_when_release_source_is_unavailable(self):
         self.assertIsNone(validate_catalog_parity(self.root / "missing.json", self.catalog))
+
+    def test_public_catalog_is_current_four_route_codex_catalog(self):
+        catalog = SRC / "quattro/omniroute-model-catalog.json"
+        self.assertEqual(validate_model_catalog(catalog), REQUIRED_QUATTRO_ROUTES)
+        models = json.loads(catalog.read_text(encoding="utf-8"))["models"]
+        self.assertTrue(all(model.get("supported_reasoning_levels") for model in models))
 
     def test_loopback_only_policy_is_rejected_when_runtime_cannot_conform(self):
         self.config()
