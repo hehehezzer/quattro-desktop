@@ -80,6 +80,18 @@ from quattro_agent.retrieval import (
     DENIED_NAMES, DENIED_PARTS, MAX_FILE_BYTES, SECRET_PATTERNS,
 )
 from quattro_agent.benchmark import load_cases as load_benchmark_cases, run_benchmark
+from quattro_agent.routing import automatic_model_override, classify_request
+from quattro_agent.routing_intelligence import (
+    MAX_EVIDENCE_BYTES,
+    PreferenceMode,
+    load_benchmark_cache,
+    load_local_outcomes,
+    record_local_outcome,
+    replay_snapshot,
+    routing_snapshot,
+    save_benchmark_cache,
+    task_profile_from_dict,
+)
 from quattro_agent.mandatory_context import (
     build_mandatory_context,
     project_root_from_config,
@@ -292,6 +304,10 @@ def starter_config() -> dict[str, Any]:
             "fastAutoRoute": "auto/coding:cheap", "standardAutoRoute": "auto/coding",
             "reasoningAutoRoute": "auto/reasoning", "fastContextBudgetTokens": 1200,
             "standardContextBudgetTokens": 2500, "reasoningContextBudgetTokens": 4000,
+            "preferenceMode": "balanced",
+            "qualityThresholds": {"FAST": 0.45, "STANDARD": 0.65, "REASONING": 0.8},
+            "qualityWeights": {"metadata": 0.25, "benchmark": 0.5, "local": 0.25},
+            "localOutcomeMinSamples": 5,
         },
     }
 
@@ -2386,6 +2402,230 @@ def multi_launch(count: int, directory_value: str | None) -> int:
     return 0
 
 
+def routing_command(args: argparse.Namespace) -> int:
+    """Inspect and maintain Quattro-owned routing intelligence state."""
+    routing_root = STATE_ROOT / "private" / "routing"
+    benchmark_path = routing_root / "benchmark-cache.json"
+    outcomes_path = routing_root / "local-outcomes.json"
+
+    def snapshot_for_identifier(identifier: str) -> Mapping[str, Any]:
+        try:
+            task = harness().store.get_task(identifier, include_private=True)
+        except KeyError:
+            try:
+                session = harness().store.get_logical_session(identifier)
+                task_id = session.get("current_task_id")
+                if not task_id:
+                    raise KeyError(identifier)
+                task = harness().store.get_task(str(task_id), include_private=True)
+            except KeyError:
+                candidate = pathlib.Path(identifier).expanduser().resolve()
+                if not candidate.is_file() or candidate.is_symlink():
+                    raise ValueError("routing task/session/snapshot was not found")
+                try:
+                    loaded = json.loads(candidate.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as error:
+                    raise ValueError("routing snapshot file is invalid") from error
+                if not isinstance(loaded, Mapping):
+                    raise ValueError("routing snapshot must be an object")
+                return loaded
+        private = task.get("private_payload")
+        snapshot = private.get("routingSnapshot") if isinstance(private, Mapping) else None
+        if not isinstance(snapshot, Mapping):
+            routing = private.get("routing") if isinstance(private, Mapping) else None
+            if not isinstance(routing, Mapping) or not isinstance(routing.get("task_profile"), Mapping):
+                raise ValueError("task predates evidence-aware routing and has no replay snapshot")
+            configured = str(task.get("display_metadata", {}).get("selectedModel") or "auto")
+            route = str(task.get("display_metadata", {}).get("effectiveModelRoute") or configured)
+            snapshot = routing_snapshot(
+                task_profile_from_dict(routing["task_profile"]),
+                route=route,
+                configured_model=configured,
+            )
+        return snapshot
+
+    if args.action in {"profile", "explain"}:
+        if args.task:
+            snapshot = snapshot_for_identifier(args.task)
+            result = {
+                "schemaVersion": 1,
+                "decisionId": snapshot.get("decision_id"),
+                "taskProfile": snapshot.get("task_profile"),
+                "effectiveRoute": snapshot.get("effective_route"),
+                "preferenceMode": snapshot.get("preference_mode"),
+                "policyVersion": snapshot.get("routing_policy_version"),
+                "benchmarkSnapshotVersion": snapshot.get("benchmark_snapshot_version"),
+                "localOutcomeStatsVersion": snapshot.get("local_outcome_stats_version"),
+                "candidateMetadataVersion": snapshot.get("candidate_metadata_version"),
+                "selection": snapshot.get("selection"),
+                "omnirouteInterfaceGaps": (
+                    [] if snapshot.get("selection") else [
+                        "per-candidate health/quota/pricing/capability snapshots are not exposed "
+                        "through the current Codex Responses integration"
+                    ]
+                ),
+            }
+        else:
+            prompt = args.prompt or args.value
+            if not prompt:
+                raise ValueError("routing profile/explain requires --prompt or --task")
+            config = load_config()
+            decision = classify_request(
+                request=prompt,
+                config=config,
+                agent="codex",
+                workflow="general-task",
+                policy_name="workspace-write",
+            )
+            configured = args.model or "auto"
+            route = automatic_model_override(config, decision.tier, configured) or configured
+            preference = PreferenceMode(str(config["routing"].get("preferenceMode", "balanced")))
+            snapshot = routing_snapshot(
+                task_profile_from_dict(decision.task_profile),
+                route=route,
+                configured_model=configured,
+                preference=preference,
+                benchmark_version=HarnessRuntime._file_version(benchmark_path),
+                local_outcomes_version=HarnessRuntime._file_version(outcomes_path),
+            )
+            result = {
+                "schemaVersion": 1,
+                "taskProfile": decision.task_profile,
+                "tier": decision.tier.value,
+                "reasoningEffort": decision.reasoning_effort,
+                "effectiveRoute": route,
+                "decisionSnapshot": snapshot,
+            }
+        print(json.dumps(result, ensure_ascii=False, indent=2 if args.pretty else None))
+        return 0
+
+    if args.action == "replay":
+        identifier = args.task or args.value
+        if not identifier:
+            raise ValueError("routing replay requires a task/session id or snapshot path")
+        result = replay_snapshot(snapshot_for_identifier(identifier))
+        print(json.dumps(result, ensure_ascii=False, indent=2 if args.pretty else None))
+        return 0 if result["matches"] else 1
+
+    if args.action == "refresh-evidence":
+        if bool(args.input) == bool(args.url):
+            raise ValueError("refresh-evidence requires exactly one of --input or --url")
+        source_path: pathlib.Path
+        temporary: pathlib.Path | None = None
+        if args.url:
+            import ipaddress
+            import socket
+            from urllib.parse import urlsplit
+            from quattro_agent.routing_intelligence import ALLOWLISTED_BENCHMARK_SOURCES
+            parsed = urlsplit(args.url)
+            allowed_hosts = {
+                host for hosts in ALLOWLISTED_BENCHMARK_SOURCES.values() for host in hosts
+            }
+            if (
+                parsed.scheme != "https"
+                or parsed.hostname not in allowed_hosts
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.port not in {None, 443}
+                or bool(parsed.fragment)
+            ):
+                raise ValueError("benchmark refresh URL is not allowlisted")
+            try:
+                addresses = {
+                    item[4][0] for item in socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
+                }
+            except OSError as error:
+                raise ValueError("benchmark refresh host could not be resolved") from error
+            if not addresses or any(
+                (address := ipaddress.ip_address(value)).is_private
+                or address.is_loopback
+                or address.is_link_local
+                or address.is_reserved
+                or address.is_multicast
+                for value in addresses
+            ):
+                raise ValueError("benchmark refresh host resolved to a non-public address")
+            request = urllib.request.Request(args.url, headers={"User-Agent": "Quattro-Routing/1"})
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    final = urlsplit(response.geturl())
+                    if response.geturl() != args.url:
+                        raise ValueError("benchmark refresh redirects are not allowed")
+                    if final.scheme != "https" or final.hostname not in allowed_hosts:
+                        raise ValueError("benchmark refresh redirected outside the allowlist")
+                    content_type = response.headers.get_content_type()
+                    if content_type not in {"application/json", "text/json", "text/plain"}:
+                        raise ValueError("benchmark refresh response is not JSON")
+                    payload = response.read(MAX_EVIDENCE_BYTES + 1)
+            except (urllib.error.URLError, TimeoutError) as error:
+                # Last-known-good remains untouched.
+                raise ValueError("benchmark refresh failed; last-known-good cache retained") from error
+            if len(payload) > MAX_EVIDENCE_BYTES:
+                raise ValueError("benchmark refresh payload exceeds the size limit")
+            routing_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(prefix=".benchmark-download.", dir=routing_root)
+            os.close(fd)
+            temporary = pathlib.Path(name)
+            temporary.write_bytes(payload)
+            os.chmod(temporary, 0o600)
+            source_path = temporary
+        else:
+            source_path = pathlib.Path(args.input).expanduser().resolve()
+        try:
+            records = load_benchmark_cache(source_path)
+            version = save_benchmark_cache(benchmark_path, records)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        print(json.dumps({
+            "schemaVersion": 1,
+            "status": "refreshed",
+            "records": len(records),
+            "version": version,
+            "path": str(benchmark_path),
+        }, ensure_ascii=False))
+        return 0
+
+    if args.action == "record-outcome":
+        if not args.provider or not args.model or not args.task_type or not args.tier:
+            raise ValueError("record-outcome requires provider, model, task-type, and tier")
+        validated = {"passed": True, "failed": False, "not-run": None}[args.validated]
+        row = record_local_outcome(
+            outcomes_path,
+            provider=args.provider,
+            model=args.model,
+            task_type=args.task_type,
+            tier=args.tier,
+            execution_success=args.execution_success,
+            validated_success=validated,
+            retries=args.retries,
+            escalations=args.escalations,
+            latency_ms=args.latency_ms,
+            cost=args.cost,
+        )
+        print(json.dumps({
+            "schemaVersion": 1,
+            "aggregate": dataclasses.asdict(row),
+            "confidence": row.confidence,
+            "validatedSuccessRate": row.validated_success_rate,
+        }, ensure_ascii=False))
+        return 0
+
+    if args.action == "status":
+        records = load_benchmark_cache(benchmark_path)
+        outcomes = load_local_outcomes(outcomes_path)
+        print(json.dumps({
+            "schemaVersion": 1,
+            "benchmarkRecords": len(records),
+            "benchmarkVersion": HarnessRuntime._file_version(benchmark_path),
+            "localOutcomeAggregates": len(outcomes),
+            "localOutcomeVersion": HarnessRuntime._file_version(outcomes_path),
+            "offlineReady": True,
+        }, ensure_ascii=False))
+        return 0
+    raise ValueError(f"unsupported routing action: {args.action}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="quattro-agent", description="Quattro AI control plane")
     parser.add_argument("--version", action="version", version=f"quattro-agent {VERSION}")
@@ -2535,6 +2775,29 @@ def build_parser() -> argparse.ArgumentParser:
     retrieval.add_argument("--warm-cache", action="store_true")
     retrieval.add_argument("--embedding-backend", choices=("feature-hash", "local-neural"), default="feature-hash")
     retrieval.add_argument("--router-profile", choices=("current", "legacy"), default="current")
+    routing = sub.add_parser("routing", help="profile, explain, replay, and maintain routing evidence")
+    routing.add_argument(
+        "action",
+        choices=("profile", "explain", "replay", "refresh-evidence", "record-outcome", "status"),
+        nargs="?",
+        default="status",
+    )
+    routing.add_argument("value", nargs="?")
+    routing.add_argument("--prompt")
+    routing.add_argument("--task")
+    routing.add_argument("--model")
+    routing.add_argument("--input")
+    routing.add_argument("--url")
+    routing.add_argument("--provider")
+    routing.add_argument("--task-type")
+    routing.add_argument("--tier", choices=("FAST", "STANDARD", "REASONING"))
+    routing.add_argument("--execution-success", action=argparse.BooleanOptionalAction, default=True)
+    routing.add_argument("--validated", choices=("passed", "failed", "not-run"), default="not-run")
+    routing.add_argument("--retries", type=int, default=0)
+    routing.add_argument("--escalations", type=int, default=0)
+    routing.add_argument("--latency-ms", type=float, default=0)
+    routing.add_argument("--cost", type=float, default=0)
+    routing.add_argument("--pretty", action="store_true")
     open_parser = sub.add_parser("open", help="open a repository or project path in Zed")
     open_parser.add_argument("path", nargs="?")
     inspect_parser = sub.add_parser("inspect", help="open PATH[:LINE[:COLUMN]] in Zed")
@@ -3037,6 +3300,11 @@ def main() -> int:
             refresh_recent()
         print(json.dumps(read_json(STATE_ROOT / "recent" / "projects.json", {"schemaVersion": 1, "projects": []}), ensure_ascii=False))
         return 0
+    if command == "routing":
+        try:
+            return routing_command(args)
+        except (KeyError, OSError, ValueError) as error:
+            die(str(error))
     if command == "sessions":
         if args.action == "open":
             if not args.session_id:

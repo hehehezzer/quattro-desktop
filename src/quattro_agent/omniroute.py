@@ -75,6 +75,71 @@ def validate_model_catalog(path: Path) -> tuple[str, ...]:
     return tuple(slugs)
 
 
+def catalog_model_metadata(path: Path, slug: str) -> dict[str, object] | None:
+    """Return one sanitized local catalog row without contacting a provider."""
+    validate_model_catalog(path)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ConfigError("OmniRoute model catalog is invalid") from error
+    for row in payload.get("models", []):
+        if isinstance(row, dict) and row.get("slug") == slug:
+            allowed = {
+                "slug", "context_window", "max_context_window",
+                "effective_context_window_percent", "input_modalities",
+                "shell_type", "tool_mode", "apply_patch_tool_type",
+                "supports_search_tool", "experimental_supported_tools",
+            }
+            return {key: row[key] for key in allowed if key in row}
+    return None
+
+
+def validate_manual_route_requirements(
+    path: Path,
+    slug: str,
+    *,
+    required_capabilities: tuple[str, ...],
+    estimated_tokens: int,
+) -> None:
+    """Fail clearly when an explicit model is known to miss a hard requirement.
+
+    Unknown fields remain an OmniRoute interface gap rather than guessed
+    incompatibility. Automatic routes are evaluated dynamically by OmniRoute.
+    """
+    if slug == "auto" or slug.startswith("auto/"):
+        return
+    metadata = catalog_model_metadata(path, slug)
+    if metadata is None:
+        raise ConfigError(f"explicit model route is not in the approved catalog: {slug}")
+    required = set(required_capabilities)
+    modalities = metadata.get("input_modalities")
+    if "vision" in required and isinstance(modalities, list) and "image" not in modalities:
+        raise ConfigError(f"explicit model route {slug!r} does not support vision input")
+    execution_required = bool(required & {
+        "repository_read", "repository_write", "shell", "git", "tool_calling",
+    })
+    if execution_required:
+        shell_type = metadata.get("shell_type")
+        tool_mode = metadata.get("tool_mode")
+        if shell_type == "none" and tool_mode == "none":
+            raise ConfigError(f"explicit model route {slug!r} has no verified execution tool contract")
+    limits = [
+        int(value) for value in (
+            metadata.get("context_window"), metadata.get("max_context_window")
+        ) if isinstance(value, int) and not isinstance(value, bool) and value > 0
+    ]
+    if limits:
+        practical = min(limits)
+        percent = metadata.get("effective_context_window_percent")
+        if isinstance(percent, (int, float)) and not isinstance(percent, bool) and 1 <= percent <= 100:
+            practical = int(practical * float(percent) / 100)
+        if estimated_tokens > practical:
+            raise ConfigError(
+                f"explicit model route {slug!r} practical context limit {practical} "
+                f"is below the estimated requirement {estimated_tokens}"
+            )
+
+
 def validate_catalog_parity(source_catalog: Path, active_catalog: Path = APPROVED_CATALOG) -> str | None:
     """Reject a stale runtime catalog when the tracked release source exists.
 

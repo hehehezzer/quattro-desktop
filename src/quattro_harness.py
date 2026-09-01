@@ -13,6 +13,7 @@ from quattro.platform.filesystem import fsync_directory
 
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import os
 import pathlib
@@ -46,7 +47,11 @@ from quattro_agent.delegation import (
 )
 from quattro_agent.errors import ConfigError, LeaseConflict, PolicyEscalationError, StateTransitionError
 from quattro_agent.models import RunState, StepState, TERMINAL_TASK_STATES
-from quattro_agent.omniroute import validate_catalog_parity, validate_omniroute_contract
+from quattro_agent.omniroute import (
+    validate_catalog_parity,
+    validate_manual_route_requirements,
+    validate_omniroute_contract,
+)
 from quattro_agent.mandatory_context import build_mandatory_context
 from quattro_agent.collaboration import RepositoryCoordinator, canonical_project
 from quattro_agent.sessions import (
@@ -62,6 +67,12 @@ from quattro_agent.retrieval import (
 from quattro_agent.policy import MemoryAccess, PolicyProfile
 from quattro_agent.paths import data_root
 from quattro_agent.privacy import redact_secret_text, summarize_display_title
+from quattro_agent.routing_intelligence import (
+    PreferenceMode,
+    record_local_outcome,
+    routing_snapshot,
+    task_profile_from_dict,
+)
 from quattro_agent.recovery import checkpoint_payload, recovery_packet, repository_state
 from quattro_agent.scheduler import LocalScheduler, SchedulerLimits
 from quattro_agent.supervisor import (
@@ -655,6 +666,15 @@ class HarnessRuntime:
         self.codex_preflight(account_home)
         configured_model = self._configured_codex_model(account_home) or "auto"
         model = automatic_model_override(config, routing.tier, configured_model) or configured_model
+        profile_snapshot = task_profile_from_dict(routing.task_profile)
+        configured_catalog = self._configured_codex_catalog(account_home)
+        if configured_catalog is not None:
+            validate_manual_route_requirements(
+                configured_catalog,
+                model,
+                required_capabilities=profile_snapshot.required_capabilities,
+                estimated_tokens=profile_snapshot.estimated_tokens,
+            )
         diagnostics: dict[str, Any] = {"methods": [], "selectedSources": [], "selectedChunks": 0}
         context = self._retrieval_context(
             prompt, project, session_id=None, task_id="direct-response",
@@ -686,9 +706,21 @@ class HarnessRuntime:
         output = body.get("output_text")
         if not isinstance(output, str) or not output.strip():
             raise RuntimeError("OmniRoute returned no final response")
+        snapshot = routing_snapshot(
+            profile_snapshot,
+            route=model,
+            configured_model=configured_model,
+            benchmark_version=self._file_version(
+                self.private_root / "routing" / "benchmark-cache.json"
+            ),
+            local_outcomes_version=self._file_version(
+                self.private_root / "routing" / "local-outcomes.json"
+            ),
+        )
         return {
             "schemaVersion": 1, "decision": decision, "response": output.strip(),
             "model": model, "routing": routing.display(), "retrieval": diagnostics,
+            "routingSnapshot": snapshot,
             "retry": "not_attempted",
         }
 
@@ -711,6 +743,77 @@ class HarnessRuntime:
             return None
         value = parsed.get("model") if isinstance(parsed, Mapping) else None
         return value.strip() if isinstance(value, str) and value.strip() else None
+
+    @staticmethod
+    def _configured_codex_catalog(account_home: pathlib.Path | None) -> pathlib.Path | None:
+        if account_home is None:
+            return None
+        try:
+            parsed = tomllib.loads((account_home / "config.toml").read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            return None
+        value = parsed.get("model_catalog_json") if isinstance(parsed, Mapping) else None
+        if not isinstance(value, str) or not value:
+            return None
+        path = pathlib.Path(os.path.expandvars(os.path.expanduser(value)))
+        try:
+            return path.resolve(strict=True)
+        except OSError:
+            return None
+
+    @staticmethod
+    def _file_version(path: pathlib.Path) -> str:
+        """Return a bounded content version without exposing file contents."""
+        try:
+            payload = path.read_bytes()
+        except OSError:
+            return "none"
+        return hashlib.sha256(payload).hexdigest()
+
+    def _record_routing_outcome(
+        self,
+        task: Mapping[str, Any],
+        *,
+        execution_success: bool,
+        validated_success: bool | None,
+        latency_ms: float = 0,
+    ) -> None:
+        """Aggregate privacy-safe route outcomes; never persist prompts/output."""
+        private = task.get("private_payload")
+        if not isinstance(private, Mapping):
+            return
+        routing = private.get("routing")
+        if not isinstance(routing, Mapping):
+            return
+        profile = routing.get("task_profile")
+        if not isinstance(profile, Mapping):
+            return
+        snapshot = private.get("routingSnapshot")
+        effective_route = (
+            snapshot.get("effective_route")
+            if isinstance(snapshot, Mapping) else None
+        )
+        if not isinstance(effective_route, str) or not effective_route:
+            return
+        try:
+            record_local_outcome(
+                self.private_root / "routing" / "local-outcomes.json",
+                provider="omniroute",
+                model=effective_route,
+                task_type=str(profile.get("task_type", "unknown")),
+                tier=str(profile.get("tier", routing.get("tier", "STANDARD"))),
+                execution_success=execution_success,
+                validated_success=validated_success,
+                retries=int(routing.get("automatic_escalations", 0) or 0),
+                escalations=(
+                    int(routing.get("automatic_escalations", 0) or 0)
+                    + int(routing.get("exceptional_escalations", 0) or 0)
+                ),
+                latency_ms=max(0.0, latency_ms),
+            )
+        except (OSError, TypeError, ValueError):
+            # Routing learning is best-effort and must never change task state.
+            return
 
     def _agent_plan(
         self,
@@ -798,6 +901,23 @@ class HarnessRuntime:
         routing_effort = effective_reasoning_effort(config, routing)
         model_selection = "automatic" if model_override else "manual"
         model_route = model_override or configured_model or "configured default"
+        profile_payload = routing.get("task_profile")
+        if (
+            task["agent"] == "codex"
+            and account_home is not None
+            and configured_model is not None
+            and configured_model != "auto"
+            and isinstance(profile_payload, Mapping)
+        ):
+            task_profile = task_profile_from_dict(profile_payload)
+            configured_catalog = self._configured_codex_catalog(account_home)
+            if configured_catalog is not None:
+                validate_manual_route_requirements(
+                    configured_catalog,
+                    configured_model,
+                    required_capabilities=task_profile.required_capabilities,
+                    estimated_tokens=task_profile.estimated_tokens,
+                )
         metadata = dict(task.get("display_metadata", {}))
         metadata.update({
             "modelRoute": model_route,
@@ -807,6 +927,25 @@ class HarnessRuntime:
             "reasoningEffort": routing_effort,
         })
         self.store.update_display_metadata(str(task["task_id"]), metadata)
+        profile_payload = routing.get("task_profile")
+        if isinstance(profile_payload, Mapping):
+            try:
+                task_profile = task_profile_from_dict(profile_payload)
+                routing_state = self.private_root / "routing"
+                snapshot = routing_snapshot(
+                    task_profile,
+                    route=model_route,
+                    configured_model=configured_model,
+                    preference=PreferenceMode.BALANCED,
+                    benchmark_version=self._file_version(routing_state / "benchmark-cache.json"),
+                    local_outcomes_version=self._file_version(routing_state / "local-outcomes.json"),
+                )
+                refreshed_private = dict(private)
+                refreshed_private["routingSnapshot"] = snapshot
+                self.store.update_private_payload(str(task["task_id"]), refreshed_private)
+            except (KeyError, TypeError, ValueError):
+                # Legacy/malformed profile metadata must not block dispatch.
+                pass
         self.store.append_event(str(task["task_id"]), "routing.dispatched", run_id=run_id, display={
             "tier": routing_tier, "reasoningEffort": routing_effort,
             "selectedModel": configured_model or "configured default",
@@ -1504,6 +1643,12 @@ class HarnessRuntime:
                 )
                 return 124
             if result.state is not RunState.SUCCEEDED:
+                self._record_routing_outcome(
+                    self.store.get_task(task_id, include_private=True),
+                    execution_success=False,
+                    validated_success=False,
+                    latency_ms=duration_ms,
+                )
                 if physical_session_id:
                     self.store.mark_physical_session_failed(
                         physical_session_id,
@@ -1583,6 +1728,12 @@ class HarnessRuntime:
                     terminal_code="interactive_session_closed",
                     terminal_summary="Interactive session exited cleanly; host validation was not run.",
                 )
+                self._record_routing_outcome(
+                    self.store.get_task(task_id, include_private=True),
+                    execution_success=True,
+                    validated_success=None,
+                    latency_ms=duration_ms,
+                )
                 return 0
 
             self.store.transition_task(task_id, TaskState.VALIDATING_RESULT)
@@ -1610,6 +1761,12 @@ class HarnessRuntime:
                     task_id, TaskState.SUCCEEDED,
                     terminal_code="completed", terminal_summary="Required validation passed.",
                 )
+                self._record_routing_outcome(
+                    self.store.get_task(task_id, include_private=True),
+                    execution_success=True,
+                    validated_success=True,
+                    latency_ms=duration_ms,
+                )
                 return 0
             if validation.status is ValidationStatus.BLOCKED:
                 self.store.transition_task(
@@ -1617,10 +1774,22 @@ class HarnessRuntime:
                     terminal_code="validation_blocked",
                     terminal_summary="Required validation was blocked.",
                 )
+                self._record_routing_outcome(
+                    self.store.get_task(task_id, include_private=True),
+                    execution_success=True,
+                    validated_success=None,
+                    latency_ms=duration_ms,
+                )
                 return 2
             self.store.transition_task(
                 task_id, TaskState.FAILED,
                 terminal_code="validation_failed", terminal_summary="Required validation failed.",
+            )
+            self._record_routing_outcome(
+                self.store.get_task(task_id, include_private=True),
+                execution_success=True,
+                validated_success=False,
+                latency_ms=duration_ms,
             )
             return 1
         except KeyboardInterrupt:
