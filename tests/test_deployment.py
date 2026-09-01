@@ -35,17 +35,23 @@ class DeploymentManifestTests(unittest.TestCase):
             old_source = root / "old-source"; (old_source / "src").mkdir(parents=True)
             (old_source / "src/launcher").write_text("old", encoding="utf-8")
             old_revision = "4" * 40; current_revision = "5" * 40
+            retired_path = ".local/bin/retired-core-helper"
             old_release = create_source_release(
                 releases, old_revision, old_source, mapping,
                 release_id=f"c0-{old_revision}", profile="core",
+                absent_paths=[retired_path],
             )
             manifest_path = root / "state/core-manifest.json"
             active = deployment.build_manifest(
                 source, deployed, mapping, revision=current_revision,
                 rollback_manifest=old_release.relative_to(releases).as_posix(),
                 rollback_revision=old_revision,
+                absent_paths=[retired_path],
             )
             deployment.write_manifest_atomic(manifest_path, active)
+            stale = deployed / retired_path
+            stale.parent.mkdir(parents=True, exist_ok=True)
+            stale.write_text("must be removed", encoding="utf-8")
             with mock.patch.multiple(
                 cli,
                 HOME=deployed,
@@ -58,11 +64,52 @@ class DeploymentManifestTests(unittest.TestCase):
                 status = cli._deployment_status("core")
             self.assertEqual(current_live.read_text(encoding="utf-8"), "old")
             self.assertEqual(desktop_canary.read_text(encoding="utf-8"), "desktop")
+            self.assertFalse(stale.exists())
             self.assertEqual(result["revision"], old_revision)
             self.assertTrue(result["liveParity"]["allMatch"])
             self.assertEqual(status["status"], "ok")
             self.assertEqual(status["manifest"]["gitRevision"], old_revision)
             self.assertTrue(status["manifest"]["rollback"]["available"])
+            stale.write_text("reappeared", encoding="utf-8")
+            with mock.patch.multiple(
+                cli, HOME=deployed, DEFAULT_WORKSPACE=source, RELEASE_ROOT=releases,
+                CORE_DEPLOYMENT_MANIFEST=manifest_path, CORE_DEPLOYMENT_MAPPINGS=mapping,
+            ):
+                drifted = cli._deployment_status("core")
+            self.assertEqual(drifted["status"], "drift")
+
+    def test_absent_only_profile_rollback_is_valid_and_healthy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"; deployed = root / "home"; old_home = root / "old-home"
+            releases = root / "releases"
+            source.mkdir(); deployed.mkdir(); old_home.mkdir()
+            mapping = {"launcher": ("src/launcher", ".local/bin/launcher")}
+            source_file = source / "src/launcher"; live_file = deployed / ".local/bin/launcher"
+            source_file.parent.mkdir(parents=True); live_file.parent.mkdir(parents=True)
+            source_file.write_text("new", encoding="utf-8"); live_file.write_text("new", encoding="utf-8")
+            old_revision = "8" * 40; current_revision = "9" * 40
+            old_release = cli.create_release(
+                releases, old_revision, old_home, [".local/bin/launcher"],
+                release_id=f"c0-{old_revision}", profile="core",
+            )
+            manifest_path = root / "state/core-manifest.json"
+            active = deployment.build_manifest(
+                source, deployed, mapping, revision=current_revision,
+                rollback_manifest=old_release.relative_to(releases).as_posix(),
+                rollback_revision=old_revision,
+            )
+            deployment.write_manifest_atomic(manifest_path, active)
+            with mock.patch.multiple(
+                cli, HOME=deployed, DEFAULT_WORKSPACE=source, RELEASE_ROOT=releases,
+                CORE_DEPLOYMENT_MANIFEST=manifest_path, CORE_DEPLOYMENT_MAPPINGS=mapping,
+            ):
+                result = cli._rollback_profile("core", old_revision[:12])
+                status = cli._deployment_status("core")
+            self.assertFalse(live_file.exists())
+            self.assertEqual(result["manifest"]["files"], [])
+            self.assertEqual(result["manifest"]["absentPaths"], [".local/bin/launcher"])
+            self.assertEqual(status["status"], "ok")
 
     def test_profile_rollback_rejects_cross_profile_release(self):
         with tempfile.TemporaryDirectory() as directory:

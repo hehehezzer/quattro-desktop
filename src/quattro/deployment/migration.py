@@ -13,7 +13,8 @@ from quattro_release import partition_release
 
 
 def _manifest_for_records(
-    legacy: Mapping[str, Any], records: list[dict[str, Any]], *, rollback: Mapping[str, Any],
+    legacy: Mapping[str, Any], records: list[dict[str, Any]], *,
+    rollback: Mapping[str, Any], absent_paths: list[str],
 ) -> dict[str, Any]:
     matched = sum(1 for record in records if record["matches"])
     candidate = {
@@ -28,6 +29,7 @@ def _manifest_for_records(
             "total": len(records),
         },
         "rollback": dict(rollback),
+        "absentPaths": sorted(absent_paths),
     }
     return validate_manifest(candidate)
 
@@ -42,7 +44,7 @@ def _looks_desktop(record: Mapping[str, Any], desktop_names: set[str]) -> bool:
 
 def _partition_rollback(
     legacy: Mapping[str, Any], records: list[dict[str, Any]], *, profile: str,
-    release_root: Path | None,
+    release_root: Path | None, absent_paths: list[str],
 ) -> dict[str, Any]:
     rollback = legacy["rollback"]
     if not rollback["available"]:
@@ -60,7 +62,7 @@ def _partition_rollback(
         source_manifest,
         release_root,
         release_id=release_id,
-        allowed_paths={str(record["deployedPath"]) for record in records},
+        allowed_paths={str(record["deployedPath"]) for record in records} | set(absent_paths),
         profile=profile,
     )
     return {
@@ -93,24 +95,38 @@ def migrate_legacy_manifest(
                 desktop_records.append(copy)
             else:
                 core_records.append(copy)
+        core_absent: list[str] = []
+        desktop_absent: list[str] = []
+        for path in legacy.get("absentPaths", []):
+            target = desktop_absent if _looks_desktop(
+                {"name": "", "sourcePath": "", "deployedPath": path}, desktop_names,
+            ) else core_absent
+            target.append(str(path))
         if not core_records:
             raise ValueError("legacy deployment does not contain a Core inventory")
 
         core_rollback = _partition_rollback(
             legacy, core_records, profile="core", release_root=release_root,
+            absent_paths=core_absent,
         )
         desktop_rollback = (
             _partition_rollback(
                 legacy, desktop_records, profile="desktop", release_root=release_root,
+                absent_paths=desktop_absent,
             ) if desktop_records else {"available": False, "previousManifest": None, "previousGitRevision": None}
         )
         write_manifest_atomic(
-            core_path, _manifest_for_records(legacy, core_records, rollback=core_rollback),
+            core_path, _manifest_for_records(
+                legacy, core_records, rollback=core_rollback, absent_paths=core_absent,
+            ),
         )
         if desktop_records:
             write_manifest_atomic(
                 desktop_path,
-                _manifest_for_records(legacy, desktop_records, rollback=desktop_rollback),
+                _manifest_for_records(
+                    legacy, desktop_records, rollback=desktop_rollback,
+                    absent_paths=desktop_absent,
+                ),
             )
 
         archive_dir = legacy_path.parent / "legacy"

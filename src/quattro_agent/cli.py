@@ -156,6 +156,7 @@ def deployment_paths(
     paths = {str(deployed) for _source, deployed in mappings.values()}
     if active_manifest is not None:
         paths.update(str(record["deployedPath"]) for record in active_manifest["files"])
+        paths.update(str(path) for path in active_manifest.get("absentPaths", []))
     return paths
 
 
@@ -2648,6 +2649,7 @@ def _deploy_profile(profile: str, revision: str) -> dict[str, Any]:
     manifest = build_manifest(
         DEFAULT_WORKSPACE, HOME, mappings, revision=revision,
         rollback_manifest=rollback_manifest, rollback_revision=previous_revision,
+        absent_paths=retired_paths,
     )
     if not manifest["parity"]["allMatch"]:
         die(f"Refusing to activate {profile} deployment with source/deployed mismatches")
@@ -2673,6 +2675,9 @@ def _manifest_profile(profile: str, revision: str) -> dict[str, Any]:
     manifest = build_manifest(
         DEFAULT_WORKSPACE, HOME, mappings, revision=revision,
         rollback_manifest=rollback_manifest, rollback_revision=rollback_revision,
+        absent_paths=(
+            set(active.get("absentPaths", [])) if active is not None else set()
+        ) | (DESKTOP_RETIRED_PATHS if profile == "desktop" else set()),
     )
     if not manifest["parity"]["allMatch"]:
         die(f"Refusing to activate {profile} deployment with source/deployed mismatches")
@@ -2708,7 +2713,7 @@ def _manifest_from_release(
         })
     matched = len(records)
     return validate_manifest({
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "generatedAt": now_iso(),
         "gitRevision": str(release["revision"]),
         "files": records,
@@ -2720,6 +2725,7 @@ def _manifest_from_release(
             ).as_posix(),
             "previousGitRevision": forward_revision,
         },
+        "absentPaths": list(release["absentPaths"]),
     })
 
 
