@@ -52,6 +52,7 @@ def _hash(path: pathlib.Path) -> str:
 def _source_file(root: pathlib.Path, relative: pathlib.PurePosixPath) -> pathlib.Path:
     """Resolve one source file without allowing it to escape its root."""
     try:
+        root = root.resolve(strict=True)
         candidate = (root / pathlib.Path(*relative.parts)).resolve(strict=True)
         candidate.relative_to(root)
     except (FileNotFoundError, ValueError) as error:
