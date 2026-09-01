@@ -107,7 +107,7 @@ SHARED_CODEX_SESSIONS = STATE_ROOT / "private/codex-sessions"
 CODEX_SESSION_REGISTRY = STATE_ROOT / "private/codex-session-registry.json"
 BASELINE_REVISION = "ef72904701a2920c1dd103e2a9add7b7b12fb7cf"
 BASELINE_RELEASE_ID = BASELINE_REVISION
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 from quattro.deployment.migration import migrate_legacy_manifest
 from quattro.deployment.profiles import (

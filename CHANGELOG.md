@@ -2,7 +2,7 @@
 
 All notable Quattro orchestration changes are documented here.
 
-## Unreleased — Core/Desktop architecture separation
+## 0.2.0 — 2026-09-02 — Core/Desktop architecture separation
 
 ### Added
 
