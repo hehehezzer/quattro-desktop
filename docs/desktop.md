@@ -22,3 +22,6 @@ Keep exactly one persistent Quickshell process. Existing bar, workspace, tray,
 notification, system-panel, clipboard, and Agents IPC behavior must remain
 available. Hyprland-specific reloads require a running compositor and are not
 part of the hermetic CI gate.
+
+System panels and the calendar open on the currently focused Hyprland monitor,
+including when their controls are clicked on a secondary display.
