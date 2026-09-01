@@ -2,6 +2,37 @@
 
 All notable Quattro orchestration changes are documented here.
 
+## 0.2.0 — 2026-09-02 — Core/Desktop architecture separation
+
+### Added
+
+- Explicit `quattro.core`, adapter, platform, deployment, and CLI boundaries
+  backed by the existing mature `quattro_agent` implementation.
+- Independent Core and optional Linux Desktop deployment manifests with a
+  one-time archival migration from the legacy combined manifest.
+- Core and Desktop Linux installer profiles and native Python package
+  installation guidance for Windows.
+- Windows Core CI for packaging, imports, CLI startup, path handling, locking,
+  routing, durability, recovery-compatible tests, and dependency boundaries.
+
+### Changed
+
+- Desktop executables and assets no longer participate in Core parity,
+  deployment, rollback inventory, or doctor health.
+- Executable discovery, user directories, advisory locks, and filesystem
+  durability helpers now use centralized platform abstractions.
+- `quattro-agent doctor` reports Desktop as optional instead of degrading Core
+  when Hyprland, Quickshell, QML, or wallpapers are absent.
+
+### Compatibility
+
+- The repository, `quattro-agent` command, `quattro_agent` imports, MIT
+  license, existing state paths, SQLite schemas, sessions, account homes,
+  OmniRoute configuration, and release snapshots remain unchanged.
+- Windows Core packaging and the bounded portable Core surface pass hosted CI.
+  Linux-only managed process identity and recovery remain unsupported and are
+  not misrepresented.
+
 ## 0.1.0 — Initial public OSS release
 
 This is the first public OSS snapshot. The `v0.1.0` tag points to the exact

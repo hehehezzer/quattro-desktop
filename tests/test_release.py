@@ -12,6 +12,15 @@ from quattro_release import (
 )
 
 class ReleaseTests(unittest.TestCase):
+    def test_profile_is_recorded_for_split_deployments(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary); deployed = root / "home"; deployed.mkdir()
+            (deployed / "core").write_text("core", encoding="utf-8")
+            manifest = create_release(
+                root / "releases", "9" * 40, deployed, ["core"], profile="core",
+            )
+            self.assertEqual(load_release(manifest)["profile"], "core")
+
     def test_private_release_round_trip_and_hash_validation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=pathlib.Path(temporary); deployed=root/"home"; releases=root/"releases"
@@ -87,7 +96,7 @@ class ReleaseTests(unittest.TestCase):
             (source / "src" / "tool").write_text("current", encoding="utf-8")
             (deployed / ".local/bin").mkdir(parents=True)
             (deployed / ".local/bin/tool").write_text("old", encoding="utf-8")
-            retired = deployed / ".local/share/quattro/wallpapers/avengers-doomsday.png"
+            retired = deployed / ".local/share/example/retired-file"
             retired.parent.mkdir(parents=True)
             retired.write_bytes(b"retired asset")
 
@@ -100,7 +109,7 @@ class ReleaseTests(unittest.TestCase):
             )
             release = load_release(manifest)
             self.assertEqual(release["absentPaths"], [
-                ".local/share/quattro/wallpapers/avengers-doomsday.png"
+                ".local/share/example/retired-file"
             ])
             restore_release(manifest, deployed, release_root=releases, expected_revision="1" * 40)
             self.assertEqual((deployed / ".local/bin/tool").read_text(), "current")

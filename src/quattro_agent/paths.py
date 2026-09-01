@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from quattro.platform.directories import config_home, data_home, state_home
+
 
 def _home_relative(value: str) -> Path:
     """Expand a user-supplied path without requiring it to exist."""
@@ -25,15 +27,15 @@ def _xdg_home(name: str, fallback: str) -> Path:
 
 
 def xdg_config_home() -> Path:
-    return _xdg_home("XDG_CONFIG_HOME", "~/.config")
+    return config_home()
 
 
 def xdg_state_home() -> Path:
-    return _xdg_home("XDG_STATE_HOME", "~/.local/state")
+    return state_home()
 
 
 def xdg_data_home() -> Path:
-    return _xdg_home("XDG_DATA_HOME", "~/.local/share")
+    return data_home()
 
 
 def config_path() -> Path:

@@ -1,14 +1,18 @@
 # Quattro
 
-Quattro is a local-first orchestration control plane for developer-facing AI
-work. It turns a request into a deterministic routing and execution decision,
-then supervises Codex or an optional Pi specialist through a durable task
-lifecycle. It is not an AI provider and it does not replace Codex, Pi, or
-OmniRoute.
+**Codex orchestration framework with an optional Linux desktop integration.**
+
+Quattro is a Codex-centered agent orchestration framework providing durable
+sessions, task routing, delegation, recovery, repository coordination, and
+optional memory/RAG. It is not an AI provider and it does not replace Codex,
+Pi, or OmniRoute.
 
 The repository also contains an optional Linux desktop integration for
 Hyprland and Quickshell. The orchestration engine is usable without that
 desktop layer.
+
+This repository retains the `quattro-desktop` name for continuity and existing
+links. Quattro Core can be installed and used independently.
 
 ## Why Quattro?
 
@@ -58,9 +62,36 @@ do not create Quattro tasks or select providers.
 - Evidence-gated GitHub PR review workflow when `gh` and Codex are configured.
 - Optional Hyprland/Quickshell desktop projection under `src/quickshell/`.
 
+## Quattro Core
+
+The mature standard-library implementation remains in `quattro_agent` for
+backward compatibility and is exposed through the `quattro.core` boundary.
+Core owns routing, policy, durable SQLite/WAL state, sessions, recovery,
+collaboration, retrieval, Codex/Pi adapters, OmniRoute contracts, PR review,
+deployment, and the existing `quattro-agent` CLI.
+
+## Quattro Desktop
+
+Quattro Desktop is an optional Linux-only consumer of Core. Hyprland,
+Quickshell/QML, themes, desktop helpers, and desktop systemd units have an
+independent deployment inventory. Their absence is a valid Core state.
+
+## Platform support
+
+| Product | Linux | Windows | macOS |
+| --- | --- | --- | --- |
+| Quattro Core | Supported | Experimental (hosted Core CI) | Untested |
+| Quattro Desktop | Supported where dependencies are installed | Unsupported | Unsupported |
+
+Windows packaging, imports, CLI startup, platform paths, executable discovery,
+SQLite/WAL state, routing, adapter contracts, portable recovery, file locking,
+Core deployment, Desktop absence, and import boundaries pass hosted CI. Managed
+process identity/recovery still uses Linux procfs and remains unsupported on
+Windows.
+
 ## Requirements
 
-- Linux with Python 3.11 or newer.
+- Python 3.11 or newer. Linux is currently the validated Core platform.
 - Git for repository-aware scheduling and retrieval (optional for non-Git
   projects).
 - Codex CLI 0.15x or a compatible newer release for Codex execution.
@@ -73,7 +104,7 @@ do not create Quattro tasks or select providers.
 - Optional desktop dependencies: Hyprland Lua integration, Quickshell 0.3.x,
   Foot, `wl-clipboard`, and the commands documented in `docs/desktop.md`.
 
-## Quick start
+## Core-only quick start
 
 ```bash
 git clone https://github.com/OWNER/quattro-desktop.git
@@ -88,6 +119,31 @@ quattro-agent config init
 quattro-agent config validate
 quattro-agent --help
 ```
+
+On Windows, use a native PowerShell or Command Prompt environment:
+
+```powershell
+py -m venv .venv
+.venv\Scripts\python -m pip install --no-deps .
+.venv\Scripts\quattro-agent config init
+.venv\Scripts\quattro-agent --help
+```
+
+`install.sh` is a Linux convenience wrapper; it is not the Windows installer.
+
+## Linux Desktop quick start
+
+From a clean clone on Linux:
+
+```bash
+./install.sh --profile desktop
+quattro-agent doctor
+quattro-agent deployment status --profile desktop
+```
+
+The script installs Core first, then deploys only the Desktop profile. Use
+`./install.sh --profile core` for the equivalent Linux Core-only convenience
+path.
 
 The starter config has memory disabled and does not authenticate Codex. Set up
 each native Codex account separately, copy the shape in

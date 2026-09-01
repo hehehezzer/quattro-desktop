@@ -9,6 +9,8 @@ source and deployed roots.
 
 from __future__ import annotations
 
+from quattro.platform.filesystem import fsync_directory
+
 import datetime as dt
 import hashlib
 import json
@@ -22,7 +24,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 REVISION_PATTERN = re.compile(r"^[0-9a-f]{40,64}$")
 SENSITIVE_PATH_PARTS = {
@@ -183,6 +185,7 @@ def build_manifest(
     rollback_manifest: str | None = None,
     rollback_revision: str | None = None,
     generated_at: str | None = None,
+    absent_paths: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Build a deterministic, content-free source/deployed parity manifest.
 
@@ -223,9 +226,6 @@ def build_manifest(
             "matches": source_hash == deployed_hash,
         })
 
-    if not records:
-        raise DeploymentManifestError("A deployment manifest must contain at least one file")
-
     if rollback_manifest is not None:
         previous_manifest = _safe_relative_path(rollback_manifest, "rollbackManifest").as_posix()
     else:
@@ -240,6 +240,10 @@ def build_manifest(
         )
 
     matched = sum(1 for record in records if record["matches"])
+    absent = sorted({_safe_relative_path(path, "absentPath").as_posix() for path in absent_paths})
+    deployed_paths = {record["deployedPath"] for record in records}
+    if deployed_paths.intersection(absent):
+        raise DeploymentManifestError("A deployed path cannot also be required absent")
     manifest = {
         "schemaVersion": SCHEMA_VERSION,
         "generatedAt": _timestamp(generated_at),
@@ -256,6 +260,7 @@ def build_manifest(
             "previousManifest": previous_manifest,
             "previousGitRevision": previous_revision,
         },
+        "absentPaths": absent,
     }
     return validate_manifest(manifest)
 
@@ -270,7 +275,13 @@ def validate_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
 
     if not isinstance(manifest, Mapping):
         raise DeploymentManifestError("Manifest must be a mapping")
-    expected_top = {"schemaVersion", "generatedAt", "gitRevision", "files", "parity", "rollback"}
+    value = dict(manifest)
+    if value.get("schemaVersion") == 1 and set(value) == {
+        "schemaVersion", "generatedAt", "gitRevision", "files", "parity", "rollback",
+    }:
+        value = {**value, "schemaVersion": SCHEMA_VERSION, "absentPaths": []}
+    manifest = value
+    expected_top = {"schemaVersion", "generatedAt", "gitRevision", "files", "parity", "rollback", "absentPaths"}
     if set(manifest) != expected_top:
         raise DeploymentManifestError("Manifest contains missing or unsupported fields")
     if manifest.get("schemaVersion") != SCHEMA_VERSION:
@@ -279,8 +290,8 @@ def validate_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
     _validated_revision(manifest.get("gitRevision"), "gitRevision")
 
     files = manifest.get("files")
-    if not isinstance(files, list) or not files:
-        raise DeploymentManifestError("Manifest files must be a non-empty list")
+    if not isinstance(files, list):
+        raise DeploymentManifestError("Manifest files must be a list")
     expected_file = {
         "name", "sourcePath", "deployedPath", "sourceSha256", "deployedSha256", "matches"
     }
@@ -306,6 +317,21 @@ def validate_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(record.get("matches"), bool) or record["matches"] != (source_hash == deployed_hash):
             raise DeploymentManifestError("File parity flag does not match its hashes")
         matches += int(record["matches"])
+
+    absent_paths = manifest.get("absentPaths")
+    if not isinstance(absent_paths, list):
+        raise DeploymentManifestError("Manifest absentPaths must be a list")
+    absent: set[str] = set()
+    deployed_paths = {str(record["deployedPath"]) for record in files}
+    for raw_path in absent_paths:
+        normalized = _safe_relative_path(raw_path, "absentPath").as_posix()
+        if normalized in absent:
+            raise DeploymentManifestError("Manifest absentPaths contains duplicates")
+        if normalized in deployed_paths:
+            raise DeploymentManifestError("A deployed path cannot also be required absent")
+        absent.add(normalized)
+    if not files and not absent:
+        raise DeploymentManifestError("Manifest must contain files or absent paths")
 
     parity = manifest.get("parity")
     expected_parity = {"allMatch", "matched", "mismatched", "total"}
@@ -352,18 +378,17 @@ def write_manifest_atomic(
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     temporary = pathlib.Path(temporary_name)
     try:
-        os.fchmod(descriptor, mode)
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, mode)
+        else:
+            os.chmod(temporary, mode)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             json.dump(validated, stream, ensure_ascii=False, indent=2, sort_keys=True)
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, target)
-        directory_fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        fsync_directory(target.parent)
     finally:
         temporary.unlink(missing_ok=True)
     return target
@@ -413,11 +438,59 @@ def verify_manifest_files(
                 "deployedMatchesManifest": deployed_hash == record["deployedSha256"],
                 "sourceMatchesDeployed": matches_each_other,
             })
+    for raw_path in validated["absentPaths"]:
+        relative = _safe_relative_path(raw_path, "absentPath")
+        candidate = deployed / pathlib.Path(*relative.parts)
+        if candidate.exists() or candidate.is_symlink():
+            drift.append({
+                "name": f"absent:{relative.as_posix()}",
+                "sourceMatchesManifest": True,
+                "deployedMatchesManifest": False,
+                "sourceMatchesDeployed": False,
+            })
     return {
         "allMatch": not drift,
-        "checked": len(validated["files"]),
+        "checked": len(validated["files"]) + len(validated["absentPaths"]),
         "driftCount": len(drift),
         "drift": drift,
+    }
+
+
+def verify_manifest_deployed_files(
+    manifest: Mapping[str, Any], deployed_root: str | os.PathLike[str],
+) -> dict[str, Any]:
+    """Verify a rollback deployment against recorded hashes without a checkout."""
+    validated = validate_manifest(manifest)
+    deployed = pathlib.Path(deployed_root).resolve(strict=True)
+    drift: list[dict[str, Any]] = []
+    for record in validated["files"]:
+        deployed_relative = _safe_relative_path(record["deployedPath"], "deployedPath")
+        try:
+            deployed_file = _rooted_file(deployed, deployed_relative, "deployedPath")
+            deployed_hash = sha256_file(deployed_file)
+        except DeploymentManifestError:
+            deployed_hash = None
+        if deployed_hash != record["deployedSha256"]:
+            drift.append({
+                "name": record["name"],
+                "deployedMatchesManifest": deployed_hash == record["deployedSha256"],
+                "sourceMatchesDeployed": None,
+            })
+    for raw_path in validated["absentPaths"]:
+        relative = _safe_relative_path(raw_path, "absentPath")
+        candidate = deployed / pathlib.Path(*relative.parts)
+        if candidate.exists() or candidate.is_symlink():
+            drift.append({
+                "name": f"absent:{relative.as_posix()}",
+                "deployedMatchesManifest": False,
+                "sourceMatchesDeployed": None,
+            })
+    return {
+        "allMatch": not drift,
+        "checked": len(validated["files"]) + len(validated["absentPaths"]),
+        "driftCount": len(drift),
+        "drift": drift,
+        "sourceVerified": False,
     }
 
 

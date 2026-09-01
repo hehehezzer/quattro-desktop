@@ -39,7 +39,7 @@ _APPROVAL_AUTHORITY = {
 
 
 def _normal_path(value: str | os.PathLike[str]) -> str:
-    return str(Path(value).expanduser().resolve(strict=False))
+    return os.path.normcase(str(Path(value).expanduser().resolve(strict=False)))
 
 
 def _within(path: str, roots: tuple[str, ...]) -> bool:

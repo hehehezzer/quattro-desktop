@@ -14,7 +14,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+RELEASE_PROFILES = {None, "core", "desktop"}
 
 
 class ReleaseError(RuntimeError):
@@ -51,6 +52,7 @@ def _hash(path: pathlib.Path) -> str:
 def _source_file(root: pathlib.Path, relative: pathlib.PurePosixPath) -> pathlib.Path:
     """Resolve one source file without allowing it to escape its root."""
     try:
+        root = root.resolve(strict=True)
         candidate = (root / pathlib.Path(*relative.parts)).resolve(strict=True)
         candidate.relative_to(root)
     except (FileNotFoundError, ValueError) as error:
@@ -65,7 +67,11 @@ def _release_manifest(
     revision: str,
     rows: list[dict[str, Any]],
     absent_paths: Iterable[str],
+    *,
+    profile: str | None = None,
 ) -> pathlib.Path:
+    if profile not in RELEASE_PROFILES:
+        raise ReleaseError("release profile is invalid")
     absent = sorted({_safe_relative(path).as_posix() for path in absent_paths})
     file_paths = {str(row["path"]) for row in rows}
     if file_paths.intersection(absent):
@@ -77,6 +83,7 @@ def _release_manifest(
         "revision": revision.lower(),
         "files": rows,
         "absentPaths": absent,
+        "profile": profile,
     }
     manifest_path = root / "release.json"
     fd, temporary_name = tempfile.mkstemp(prefix=".release.", dir=root)
@@ -114,6 +121,7 @@ def create_release(
     deployed_paths: Iterable[str],
     *,
     release_id: str | None = None,
+    profile: str | None = None,
 ) -> pathlib.Path:
     if not revision or any(character not in "0123456789abcdef" for character in revision.lower()):
         raise ReleaseError("revision must be hexadecimal")
@@ -151,7 +159,7 @@ def create_release(
         rows.append({"path": relative.as_posix(), "sha256": _hash(target), "mode": mode})
     if not rows and not absent:
         raise ReleaseError("release must contain a desired path inventory")
-    return _release_manifest(root, revision, rows, absent)
+    return _release_manifest(root, revision, rows, absent, profile=profile)
 
 
 def create_source_release(
@@ -162,6 +170,7 @@ def create_source_release(
     *,
     release_id: str | None = None,
     absent_paths: Iterable[str] = (),
+    profile: str | None = None,
 ) -> pathlib.Path:
     """Materialize a validated source tree as a restorable release payload.
 
@@ -218,7 +227,50 @@ def create_source_release(
             "sha256": _hash(target),
             "mode": source_file.stat().st_mode & 0o777,
         })
-    return _release_manifest(root, revision, rows, absent_paths)
+    return _release_manifest(root, revision, rows, absent_paths, profile=profile)
+
+
+def partition_release(
+    source_manifest: pathlib.Path,
+    release_root: pathlib.Path,
+    *,
+    release_id: str,
+    allowed_paths: Iterable[str],
+    profile: str,
+) -> pathlib.Path:
+    """Materialize one profile-safe subset of a legacy combined release."""
+    source_release = load_release(source_manifest)
+    allowed = {_safe_relative(path).as_posix() for path in allowed_paths}
+    root = (release_root / release_id).resolve(strict=False)
+    try:
+        root.relative_to(release_root.resolve(strict=False))
+    except ValueError as error:
+        raise ReleaseError("release id escapes release root") from error
+    if not re.fullmatch(r"[0-9a-f]+(?:-[0-9a-f]+)*", release_id):
+        raise ReleaseError("release id must be hexadecimal components")
+    payload = root / "payload"
+    root.mkdir(mode=0o700, parents=True, exist_ok=False)
+    payload.mkdir(mode=0o700)
+    rows: list[dict[str, Any]] = []
+    source_payload = source_manifest.parent / "payload"
+    try:
+        for row in source_release["files"]:
+            if row["path"] not in allowed:
+                continue
+            relative = _safe_relative(row["path"])
+            source = _source_file(source_payload, relative)
+            target = payload / pathlib.Path(*relative.parts)
+            _atomic_copy(source, target, int(row["mode"]))
+            if _hash(target) != row["sha256"]:
+                raise ReleaseError("legacy release payload hash mismatch")
+            rows.append(dict(row))
+        absent = [path for path in source_release["absentPaths"] if path in allowed]
+        return _release_manifest(
+            root, source_release["revision"], rows, absent, profile=profile,
+        )
+    except BaseException:
+        shutil.rmtree(root, ignore_errors=True)
+        raise
 
 
 def load_release(path: pathlib.Path) -> dict[str, Any]:
@@ -229,13 +281,17 @@ def load_release(path: pathlib.Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ReleaseError("release manifest schema is invalid")
     if value.get("schemaVersion") == 1 and set(value) == {"schemaVersion", "revision", "files"}:
-        value = {**value, "schemaVersion": 2, "absentPaths": []}
-    if set(value) != {"schemaVersion", "revision", "files", "absentPaths"}:
+        value = {**value, "schemaVersion": SCHEMA_VERSION, "absentPaths": [], "profile": None}
+    elif value.get("schemaVersion") == 2 and set(value) == {"schemaVersion", "revision", "files", "absentPaths"}:
+        value = {**value, "schemaVersion": SCHEMA_VERSION, "profile": None}
+    if set(value) != {"schemaVersion", "revision", "files", "absentPaths", "profile"}:
         raise ReleaseError("release manifest schema is invalid")
     if value["schemaVersion"] != SCHEMA_VERSION or not isinstance(value["files"], list):
         raise ReleaseError("release manifest version or files are invalid")
     if not isinstance(value["absentPaths"], list):
         raise ReleaseError("release absent-path inventory is invalid")
+    if value["profile"] not in RELEASE_PROFILES:
+        raise ReleaseError("release profile is invalid")
     absent_paths: set[str] = set()
     for path in value["absentPaths"]:
         normalized = _safe_relative(path).as_posix()
