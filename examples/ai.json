@@ -58,6 +58,10 @@
     "reasoningAutoRoute": "auto/reasoning",
     "fastContextBudgetTokens": 1200,
     "standardContextBudgetTokens": 2500,
-    "reasoningContextBudgetTokens": 4000
+    "reasoningContextBudgetTokens": 4000,
+    "preferenceMode": "balanced",
+    "qualityThresholds": { "FAST": 0.45, "STANDARD": 0.65, "REASONING": 0.8 },
+    "qualityWeights": { "metadata": 0.25, "benchmark": 0.5, "local": 0.25 },
+    "localOutcomeMinSamples": 5
   }
 }

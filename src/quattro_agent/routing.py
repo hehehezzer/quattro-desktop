@@ -1,4 +1,4 @@
-"""Deterministic, low-overhead request-tier classification for Quattro.
+"""Deterministic, evidence-ready request routing for Quattro.
 
 Quattro selects only a reasoning tier.  OmniRoute remains the authority for
 provider, account, quota, and cost routing behind the selected request.
@@ -6,10 +6,12 @@ provider, account, quota, and cost routing behind the selected request.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 import re
 from typing import Mapping
+
+from .routing_intelligence import profile_task
 
 
 class RoutingTier(StrEnum):
@@ -30,22 +32,6 @@ _DEFAULT_CONTEXT_BUDGETS = {
     RoutingTier.REASONING: 4_000,
 }
 
-# High-risk or genuinely ambiguous work is intentionally recognized before the
-# inexpensive/mechanical vocabulary below.
-_REASONING = re.compile(
-    r"\b(?:architecture|security(?:[- ]critical)?|"
-    r"incident|production|concurren(?:cy|t)|race condition|deadlock|data loss|"
-    r"migration|root cause|ambiguous|distributed|cross[- ]cutting|large refactor)\b",
-    re.IGNORECASE,
-)
-_FAST = re.compile(
-    r"\b(?:find|search|locate|list|read|inspect|summari[sz]e|explain|"
-    r"format|lint|rename|typo|documentation|docs?|configuration|config|"
-    r"symbol|grep|deterministic|mechanical)\b",
-    re.IGNORECASE,
-)
-
-
 @dataclass(frozen=True, slots=True)
 class RoutingDecision:
     tier: RoutingTier
@@ -53,6 +39,7 @@ class RoutingDecision:
     reasoning_effort: str
     automatic_escalations: int = 0
     exceptional_escalations: int = 0
+    task_profile: Mapping[str, object] = field(default_factory=dict)
 
     def display(self) -> dict[str, object]:
         return asdict(self) | {"tier": self.tier.value}
@@ -111,26 +98,36 @@ def classify_request(
     workflow: str,
     policy_name: str,
 ) -> RoutingDecision:
-    """Classify locally from stable metadata and bounded lexical heuristics."""
-    compact = " ".join(request.split())[:4_096]
-    if policy_name in {"audit-read-only", "review-untrusted"} and "security" in workflow:
-        tier = RoutingTier.REASONING
-        reason = "security review workflow"
-    elif _REASONING.search(compact):
-        tier = RoutingTier.REASONING
-        reason = "high-risk or ambiguous task signal"
-    elif agent == "pi" and workflow == "codex-pi-delegation":
-        tier = RoutingTier.FAST
-        reason = "bounded read-only delegation"
-    elif _FAST.search(compact) and not re.search(
-        r"\b(?:implement|feature|debug|refactor|integration|test suite)\b", compact, re.IGNORECASE
-    ):
-        tier = RoutingTier.FAST
-        reason = "mechanical discovery or documentation task"
-    else:
-        tier = RoutingTier.STANDARD
-        reason = "normal engineering task or uncertain request"
-    return RoutingDecision(tier=tier, reason=reason, reasoning_effort=_effort(config, tier))
+    """Classify from a transparent multi-signal :class:`TaskProfile`.
+
+    Regexes remain bounded signal detectors inside ``profile_task``; no single
+    keyword is tier authority.  This wrapper preserves the mature public
+    ``RoutingDecision`` contract used by the harness and existing sessions.
+    """
+    routing_config = config.get("routing")
+    thresholds = (
+        routing_config.get("qualityThresholds")
+        if isinstance(routing_config, Mapping) else None
+    )
+    profile = profile_task(
+        request,
+        agent=agent,
+        workflow=workflow,
+        policy_name=policy_name,
+        quality_thresholds=thresholds if isinstance(thresholds, Mapping) else None,
+    )
+    tier = RoutingTier(profile.tier.value)
+    reason = {
+        RoutingTier.FAST: "low-risk localized task with strong verification",
+        RoutingTier.STANDARD: "bounded engineering task requiring normal capability",
+        RoutingTier.REASONING: "high reasoning, risk, scope, ambiguity, or weak-verification requirement",
+    }[tier]
+    return RoutingDecision(
+        tier=tier,
+        reason=reason,
+        reasoning_effort=_effort(config, tier),
+        task_profile=profile.to_dict(),
+    )
 
 
 def next_tier(decision: RoutingDecision, *, evidence: str, max_automatic_escalations: int) -> RoutingDecision | None:
@@ -157,6 +154,7 @@ def next_tier(decision: RoutingDecision, *, evidence: str, max_automatic_escalat
         reasoning_effort={RoutingTier.STANDARD: "medium", RoutingTier.REASONING: "high"}[tier],
         automatic_escalations=decision.automatic_escalations + 1,
         exceptional_escalations=decision.exceptional_escalations,
+        task_profile=decision.task_profile,
     )
 
 
@@ -203,4 +201,30 @@ def next_exceptional_effort(
         reasoning_effort=exceptional_effort,
         automatic_escalations=decision.automatic_escalations,
         exceptional_escalations=decision.exceptional_escalations + 1,
+        task_profile=decision.task_profile,
+    )
+
+
+def deescalate_for_follow_up(
+    previous: RoutingDecision,
+    *,
+    request: str,
+    config: Mapping[str, object],
+    agent: str,
+    workflow: str,
+    policy_name: str,
+) -> RoutingDecision:
+    """Re-profile a follow-up instead of inheriting an expensive parent tier.
+
+    Hard risk signals in the follow-up still route to REASONING.  The previous
+    decision is accepted only to make the policy explicit and auditable; it is
+    never used as a minimum tier.
+    """
+    del previous
+    return classify_request(
+        request=request,
+        config=config,
+        agent=agent,
+        workflow=workflow,
+        policy_name=policy_name,
     )

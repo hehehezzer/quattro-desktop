@@ -82,6 +82,16 @@ def _integer(value: Any, path: str, minimum: int, maximum: int) -> int:
     return value
 
 
+def _number(value: Any, path: str, minimum: float, maximum: float) -> float:
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not minimum <= float(value) <= maximum
+    ):
+        _fail(path, f"must be a number between {minimum} and {maximum}")
+    return float(value)
+
+
 def _enum(value: Any, path: str, allowed: set[str]) -> str:
     if value not in allowed:
         _fail(path, f"must be one of: {', '.join(sorted(allowed))}")
@@ -345,10 +355,18 @@ def validate_ai_config(source: Mapping[str, Any], *, home: Path | None = None) -
     raw_routing.setdefault("fastContextBudgetTokens", 1_200)
     raw_routing.setdefault("standardContextBudgetTokens", 2_500)
     raw_routing.setdefault("reasoningContextBudgetTokens", 4_000)
+    raw_routing.setdefault("preferenceMode", "balanced")
+    raw_routing.setdefault("qualityThresholds", {
+        "FAST": 0.45, "STANDARD": 0.65, "REASONING": 0.80,
+    })
+    raw_routing.setdefault("qualityWeights", {
+        "metadata": 0.25, "benchmark": 0.50, "local": 0.25,
+    })
+    raw_routing.setdefault("localOutcomeMinSamples", 5)
     routing = _mapping(
         raw_routing,
         "$.routing",
-        {"fastReasoningEffort", "standardReasoningEffort", "reasoningReasoningEffort", "exceptionalReasoningEffort", "maxAutomaticEscalations", "maxExceptionalEscalations", "fastAutoRoute", "standardAutoRoute", "reasoningAutoRoute", "fastContextBudgetTokens", "standardContextBudgetTokens", "reasoningContextBudgetTokens"},
+        {"fastReasoningEffort", "standardReasoningEffort", "reasoningReasoningEffort", "exceptionalReasoningEffort", "maxAutomaticEscalations", "maxExceptionalEscalations", "fastAutoRoute", "standardAutoRoute", "reasoningAutoRoute", "fastContextBudgetTokens", "standardContextBudgetTokens", "reasoningContextBudgetTokens", "preferenceMode", "qualityThresholds", "qualityWeights", "localOutcomeMinSamples"},
     )
     routing = dict(routing)
     normal_efforts = {
@@ -378,6 +396,36 @@ def validate_ai_config(source: Mapping[str, Any], *, home: Path | None = None) -
         "reasoningContextBudgetTokens",
     ):
         _integer(routing[field], f"$.routing.{field}", 512, 16_000)
+    _enum(routing["preferenceMode"], "$.routing.preferenceMode", {
+        "economy", "balanced", "quality",
+    })
+    thresholds = _mapping(
+        routing["qualityThresholds"], "$.routing.qualityThresholds",
+        {"FAST", "STANDARD", "REASONING"},
+    )
+    normalized_thresholds = {
+        name: _number(thresholds[name], f"$.routing.qualityThresholds.{name}", 0, 1)
+        for name in ("FAST", "STANDARD", "REASONING")
+    }
+    if not (
+        normalized_thresholds["FAST"]
+        <= normalized_thresholds["STANDARD"]
+        <= normalized_thresholds["REASONING"]
+    ):
+        _fail("$.routing.qualityThresholds", "must be monotonic FAST <= STANDARD <= REASONING")
+    routing["qualityThresholds"] = normalized_thresholds
+    weights = _mapping(
+        routing["qualityWeights"], "$.routing.qualityWeights",
+        {"metadata", "benchmark", "local"},
+    )
+    normalized_weights = {
+        name: _number(weights[name], f"$.routing.qualityWeights.{name}", 0, 1)
+        for name in ("metadata", "benchmark", "local")
+    }
+    if abs(sum(normalized_weights.values()) - 1.0) > 1e-6:
+        _fail("$.routing.qualityWeights", "weights must sum to 1")
+    routing["qualityWeights"] = normalized_weights
+    _integer(routing["localOutcomeMinSamples"], "$.routing.localOutcomeMinSamples", 1, 100)
     normalized["routing"] = copy.deepcopy(routing)
     normalized["workspace"] = {"projectRoot": project_root}
     normalized["defaultAgent"] = default_agent
