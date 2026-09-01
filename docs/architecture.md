@@ -29,5 +29,27 @@ request
   second orchestration daemon.
 
 The CLI is the stable integration boundary. `quattro_harness.py` remains a
-compatibility facade while the `quattro_agent` package contains reusable
-primitives.
+compatibility facade while the mature `quattro_agent` package contains the
+reusable implementation. `quattro.core` and `quattro.adapters` expose explicit
+new dependency boundaries without replacing those proven modules.
+
+```text
+User
+  ↓
+Quattro Core
+  ├─ Codex
+  ├─ Pi
+  ├─ OmniRoute
+  ├─ Sessions / recovery
+  └─ optional Memory/RAG
+
+Quattro Desktop (optional, Linux only)
+  ↓
+Quattro Core
+```
+
+Core modules never import `quattro_desktop`. Desktop may consume stable Core
+interfaces. Deployment uses independent Core and Desktop manifests, release
+inventories, parity checks, and rollback references. A legacy combined
+manifest is partitioned and archived atomically before the split manifests
+become authoritative.

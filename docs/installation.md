@@ -2,13 +2,15 @@
 
 ## Requirements
 
-Python 3.11+, Git, and a Linux user account are required. Codex, Pi, OmniRoute,
-and desktop commands are optional until their corresponding features are used.
+Python 3.11+ and Git are required. Codex, Pi, OmniRoute, and desktop commands
+are optional until their corresponding features are used.
 No Python runtime dependency beyond the standard library is required.
 Linux `bubblewrap` is additionally required for the optional GitHub PR review
 workflow; the workflow refuses to run uncontained.
 
 ## Install from a clone
+
+### Core only (Linux)
 
 ```bash
 git clone https://github.com/OWNER/quattro-desktop.git
@@ -21,6 +23,33 @@ quattro-agent --help
 quattro-agent config init
 quattro-agent config validate
 ```
+
+The Linux convenience wrapper performs the same Core package installation:
+
+```bash
+./install.sh --profile core
+```
+
+### Core only (Windows, planned / hosted CI unverified)
+
+Use Python packaging, not the Bash installer:
+
+```powershell
+py -m venv .venv
+.venv\Scripts\python -m pip install --no-deps .
+.venv\Scripts\quattro-agent config init
+.venv\Scripts\quattro-agent --help
+```
+
+### Optional Linux Desktop
+
+```bash
+./install.sh --profile desktop
+```
+
+Desktop deployment requires a clean source revision. It installs Core first,
+then activates the independent Desktop deployment manifest. It does not alter
+Core's SQLite databases, sessions, account homes, or memory data.
 
 `config init` writes a 0600 credential-free starter configuration. It does not
 log in to Codex, create a memory vault, contact OmniRoute, or enable Pi.
