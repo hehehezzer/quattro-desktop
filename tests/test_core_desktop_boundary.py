@@ -101,12 +101,16 @@ class CoreDesktopBoundaryTests(unittest.TestCase):
             self.assertEqual(doctor.returncode, 0, doctor.stderr)
             payload = json.loads(doctor.stdout)
             self.assertEqual(payload["core"]["status"], "HEALTHY")
-            self.assertEqual(payload["desktop"]["status"], "OPTIONAL_NOT_INSTALLED")
+            expected = "UNSUPPORTED" if sys.platform == "win32" else "OPTIONAL_NOT_INSTALLED"
+            self.assertEqual(payload["desktop"]["status"], expected)
 
     def test_windows_directory_conventions(self):
         with tempfile.TemporaryDirectory() as temporary, mock.patch("sys.platform", "win32"), mock.patch.dict(os.environ, {
             "APPDATA": str(pathlib.Path(temporary) / "Roaming"),
             "LOCALAPPDATA": str(pathlib.Path(temporary) / "Local"),
+            "XDG_CONFIG_HOME": "",
+            "XDG_DATA_HOME": "",
+            "XDG_STATE_HOME": "",
         }, clear=False):
             self.assertEqual(config_home(), (pathlib.Path(temporary) / "Roaming").resolve())
             self.assertEqual(data_home(), (pathlib.Path(temporary) / "Local").resolve())

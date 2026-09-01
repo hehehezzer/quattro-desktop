@@ -31,7 +31,7 @@ class WindowsCoreTests(unittest.TestCase):
             store = TaskStore(root / "state" / "tasks.sqlite3")
             policy = PolicyProfile(name="windows-read-only")
             task_id = store.create_task(workflow="general", agent="codex", project_path=project, display_title="Windows", policy=policy)
-            self.assertEqual(store.get_task(task_id)["state"], "queued")
+            self.assertEqual(store.get_task(task_id)["state"], "created")
             with sqlite3.connect(store.path) as connection:
                 self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0].lower(), "wal")
 
@@ -44,13 +44,15 @@ class WindowsCoreTests(unittest.TestCase):
         self.assertEqual(classify("audit a security architecture"), RoutingTier.REASONING)
         with tempfile.TemporaryDirectory() as temporary:
             project = pathlib.Path(temporary).resolve()
-            policy = PolicyProfile(name="windows-read-only")
+            policy = PolicyProfile(
+                name="windows-read-only", readable_roots=(str(project),), max_commands=1,
+            )
             spec = RunSpec(task_id="task", run_id="run", project_path=project, mode=AgentMode.PROMPT, policy=policy, account_home=project / "codex", private_input="hello")
             self.assertIn("exec", CodexAdapter().build_launch("codex.exe", spec).argv)
             self.assertIn("-p", PiAdapter().build_launch("pi.exe", spec).argv)
 
     def test_recovery_payload_is_portable(self):
-        snapshot = {"kind": "filesystem", "path": "C:/work/project", "dirty": False}
+        snapshot = {"exists": True, "branch": None, "head": None, "dirty": False, "changedPaths": []}
         checkpoint = checkpoint_payload(objective="resume", requirements=["preserve"], repository_path="C:/work/project", working_directory="C:/work/project", next_action="continue", repository_snapshot=snapshot)
         packet, differences = recovery_packet(checkpoint, current_repository_state=snapshot)
         self.assertIn("OBJECTIVE", packet)
