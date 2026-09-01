@@ -1,5 +1,6 @@
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import Quickshell.Services.Pipewire
 import QtQuick
 import QtQuick.Layouts
@@ -79,6 +80,14 @@ Scope {
     }
 
     function focusedScreen() {
+        for (let screen of Quickshell.screens) {
+            if (
+                Hyprland.monitorFor(screen)
+                === Hyprland.focusedMonitor
+            )
+                return screen
+        }
+
         return Quickshell.screens[0]
     }
 
