@@ -188,7 +188,7 @@ class DeploymentMigrationTests(unittest.TestCase):
             legacy = state / "deployment/manifest.json"
             manifest = build_manifest(
                 source, deployed, mappings, revision="2" * 40,
-                rollback_manifest=combined.relative_to(releases).as_posix(),
+                rollback_manifest=combined.resolve().relative_to(releases.resolve()).as_posix(),
                 rollback_revision=previous_revision,
             )
             write_manifest_atomic(legacy, manifest)
