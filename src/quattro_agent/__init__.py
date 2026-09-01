@@ -6,7 +6,7 @@ and process-supervision contracts needed for a later compatibility migration.
 Only OpenAI Codex and Pi are valid agent runtimes.
 """
 
-__version__ = "1.1.0"
+__version__ = "0.1.0"
 
 from .adapters import CodexAdapter, PiAdapter, adapter_for
 from .delegation import (

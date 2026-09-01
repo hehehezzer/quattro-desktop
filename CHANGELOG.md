@@ -2,11 +2,10 @@
 
 All notable Quattro orchestration changes are documented here.
 
-## 1.1.0 — Release candidate
+## 0.1.0 — Initial public OSS release
 
-This release candidate is the proposed first public OSS snapshot. It is not
-tagged automatically; release owners should review the exact commit and CI
-result before creating a tag.
+This is the first public OSS snapshot. The `v0.1.0` tag points to the exact
+commit whose package metadata reports version `0.1.0`.
 
 ### Added
 
