@@ -88,7 +88,8 @@ from quattro_agent.mandatory_context import (
 from quattro_harness import HarnessRuntime
 from quattro_deployment import (
     build_manifest, load_manifest, resolve_git_revision,
-    verify_manifest_files, write_manifest_atomic,
+    validate_manifest, verify_manifest_deployed_files, verify_manifest_files,
+    write_manifest_atomic,
 )
 from quattro_release import create_release, create_source_release, load_release, restore_release
 
@@ -143,6 +144,7 @@ def migrate_deployment_manifest() -> dict[str, Any]:
         DESKTOP_DEPLOYMENT_MANIFEST,
         core_names=set(CORE_DEPLOYMENT_MAPPINGS),
         desktop_names=set(DESKTOP_DEPLOYMENT_MAPPINGS),
+        release_root=RELEASE_ROOT,
     )
 
 
@@ -1631,7 +1633,15 @@ def doctor(as_json: bool) -> int:
     if CORE_DEPLOYMENT_MANIFEST.is_file():
         try:
             manifest = load_manifest(CORE_DEPLOYMENT_MANIFEST)
-            parity = verify_manifest_files(manifest, DEFAULT_WORKSPACE, HOME)
+            try:
+                source_revision = resolve_git_revision(DEFAULT_WORKSPACE)
+            except Exception:
+                source_revision = None
+            parity = (
+                verify_manifest_files(manifest, DEFAULT_WORKSPACE, HOME)
+                if source_revision == manifest["gitRevision"]
+                else verify_manifest_deployed_files(manifest, HOME)
+            )
             check("core.deployment", bool(parity["allMatch"]), json.dumps(parity))
         except Exception as error:
             check("core.deployment", False, str(error)[:240])
@@ -2584,7 +2594,15 @@ def _deployment_status(profile: str) -> dict[str, Any]:
             "manifestPath": str(manifest_path),
         }
     manifest = load_manifest(manifest_path)
-    live = verify_manifest_files(manifest, DEFAULT_WORKSPACE, HOME)
+    try:
+        source_revision = resolve_git_revision(DEFAULT_WORKSPACE)
+    except Exception:
+        source_revision = None
+    live = (
+        verify_manifest_files(manifest, DEFAULT_WORKSPACE, HOME)
+        if source_revision == manifest["gitRevision"]
+        else verify_manifest_deployed_files(manifest, HOME)
+    )
     return {
         "profile": profile,
         "installed": True,
@@ -2593,25 +2611,6 @@ def _deployment_status(profile: str) -> dict[str, Any]:
         "manifest": manifest,
         "liveParity": live,
     }
-
-
-def _find_previous_release(
-    active: Mapping[str, Any], paths: set[str], profile: str,
-) -> pathlib.Path | None:
-    previous_revision = str(active["gitRevision"])
-    candidates = [
-        RELEASE_ROOT / previous_revision / "release.json",
-        RELEASE_ROOT / f"{'c0' if profile == 'core' else 'de'}-{previous_revision}" / "release.json",
-    ]
-    for candidate in candidates:
-        if not candidate.is_file():
-            continue
-        release = load_release(candidate)
-        covered = {str(row["path"]) for row in release["files"]}
-        covered.update(str(path) for path in release["absentPaths"])
-        if release["revision"] == previous_revision and paths <= covered:
-            return candidate
-    return None
 
 
 def _deploy_profile(profile: str, revision: str) -> dict[str, Any]:
@@ -2628,19 +2627,18 @@ def _deploy_profile(profile: str, revision: str) -> dict[str, Any]:
     previous_revision = None
     if active is not None:
         previous_revision = str(active["gitRevision"])
-        previous_release_manifest = _find_previous_release(active, previous_paths, profile)
-        if previous_release_manifest is None:
-            snapshot_id = f"{'c0' if profile == 'core' else 'de'}-{previous_revision}-{uuid.uuid4().hex}"
-            previous_release_manifest = create_release(
-                RELEASE_ROOT, previous_revision, HOME, sorted(previous_paths), release_id=snapshot_id,
-            )
+        snapshot_id = f"{'c0' if profile == 'core' else 'de'}-{previous_revision}-{uuid.uuid4().hex}"
+        previous_release_manifest = create_release(
+            RELEASE_ROOT, previous_revision, HOME, sorted(previous_paths),
+            release_id=snapshot_id, profile=profile,
+        )
 
     candidate_id = f"{'c0' if profile == 'core' else 'de'}-{revision}"
     if (RELEASE_ROOT / candidate_id).exists():
         candidate_id = f"{candidate_id}-{uuid.uuid4().hex}"
     candidate = create_source_release(
         RELEASE_ROOT, revision, DEFAULT_WORKSPACE, mappings,
-        release_id=candidate_id, absent_paths=retired_paths,
+        release_id=candidate_id, absent_paths=retired_paths, profile=profile,
     )
     restored = restore_release(candidate, HOME, release_root=RELEASE_ROOT, expected_revision=revision)
     rollback_manifest = (
@@ -2682,18 +2680,62 @@ def _manifest_profile(profile: str, revision: str) -> dict[str, Any]:
     return {"profile": profile, "manifest": manifest}
 
 
+def _manifest_from_release(
+    profile: str,
+    release: Mapping[str, Any],
+    *,
+    forward_manifest: pathlib.Path,
+    forward_revision: str,
+) -> dict[str, Any]:
+    mappings, _manifest_path, _release_root = deployment_profile(profile)
+    by_deployed = {
+        str(deployed): (name, str(source))
+        for name, (source, deployed) in mappings.items()
+    }
+    records = []
+    for index, row in enumerate(release["files"]):
+        deployed_path = str(row["path"])
+        name, source_path = by_deployed.get(
+            deployed_path, (f"rollback-{index:04d}", deployed_path),
+        )
+        records.append({
+            "name": name,
+            "sourcePath": source_path,
+            "deployedPath": deployed_path,
+            "sourceSha256": str(row["sha256"]),
+            "deployedSha256": str(row["sha256"]),
+            "matches": True,
+        })
+    matched = len(records)
+    return validate_manifest({
+        "schemaVersion": 1,
+        "generatedAt": now_iso(),
+        "gitRevision": str(release["revision"]),
+        "files": records,
+        "parity": {"allMatch": True, "matched": matched, "mismatched": 0, "total": matched},
+        "rollback": {
+            "available": True,
+            "previousManifest": forward_manifest.relative_to(
+                RELEASE_ROOT.resolve(strict=False)
+            ).as_posix(),
+            "previousGitRevision": forward_revision,
+        },
+    })
+
+
 def _rollback_profile(profile: str, requested_revision: str) -> dict[str, Any]:
-    _mappings, manifest_path, _release_root = deployment_profile(profile)
+    mappings, manifest_path, _release_root = deployment_profile(profile)
+    if not manifest_path.is_file():
+        die(f"{profile} deployment is not installed")
+    active = load_manifest(manifest_path)
     release_manifest: pathlib.Path | None = None
-    if manifest_path.is_file():
-        active = load_manifest(manifest_path)
-        rollback = active["rollback"]
-        previous_revision = str(rollback.get("previousGitRevision") or "").lower()
-        previous_manifest = rollback.get("previousManifest")
-        if previous_revision.startswith(requested_revision) and isinstance(previous_manifest, str):
-            candidate = RELEASE_ROOT / pathlib.PurePosixPath(previous_manifest)
-            if candidate.is_file():
-                release_manifest = candidate
+    rollback = active["rollback"]
+    previous_revision = str(rollback.get("previousGitRevision") or "").lower()
+    previous_manifest = rollback.get("previousManifest")
+    if previous_revision.startswith(requested_revision) and isinstance(previous_manifest, str):
+        candidate = RELEASE_ROOT / pathlib.PurePosixPath(previous_manifest)
+        if candidate.is_file() and load_release(candidate).get("profile") == profile:
+            release_manifest = candidate
     if release_manifest is None:
         candidates = []
         if RELEASE_ROOT.is_dir():
@@ -2702,16 +2744,58 @@ def _rollback_profile(profile: str, requested_revision: str) -> dict[str, Any]:
                     release = load_release(candidate)
                 except (OSError, ValueError):
                     continue
-                if str(release["revision"]).startswith(requested_revision):
+                if (
+                    release.get("profile") == profile
+                    and str(release["revision"]).startswith(requested_revision)
+                ):
                     candidates.append(candidate)
         if len(candidates) != 1:
-            die("deployment rollback revision is missing or ambiguous")
+            die("deployment rollback revision is missing or ambiguous for this profile")
         release_manifest = candidates[0]
     release = load_release(release_manifest)
-    restored = restore_release(
-        release_manifest, HOME, release_root=RELEASE_ROOT, expected_revision=release["revision"],
+    if release.get("profile") != profile:
+        die("deployment rollback release belongs to a different profile")
+    allowed = deployment_paths(active, mappings)
+    if profile == "desktop":
+        allowed.update(DESKTOP_RETIRED_PATHS)
+    release_inventory = {
+        str(row["path"]) for row in release["files"]
+    } | {str(path) for path in release["absentPaths"]}
+    if not release_inventory or not release_inventory <= allowed:
+        die("deployment rollback release inventory escapes the selected profile")
+
+    forward_revision = str(active["gitRevision"])
+    forward_id = f"{'c0' if profile == 'core' else 'de'}-{forward_revision}-{uuid.uuid4().hex}"
+    forward_manifest = create_release(
+        RELEASE_ROOT,
+        forward_revision,
+        HOME,
+        sorted(allowed),
+        release_id=forward_id,
+        profile=profile,
     )
-    return {"profile": profile, "revision": release["revision"], "restored": [str(path) for path in restored], "restartRequired": True}
+    restored = restore_release(
+        release_manifest, HOME, release_root=RELEASE_ROOT,
+        expected_revision=release["revision"],
+    )
+    rolled_back_manifest = _manifest_from_release(
+        profile,
+        release,
+        forward_manifest=forward_manifest,
+        forward_revision=forward_revision,
+    )
+    write_manifest_atomic(manifest_path, rolled_back_manifest)
+    live = verify_manifest_deployed_files(rolled_back_manifest, HOME)
+    if not live["allMatch"]:
+        die("rollback restored files but failed deployed parity verification")
+    return {
+        "profile": profile,
+        "revision": release["revision"],
+        "restored": [str(path) for path in restored],
+        "manifest": rolled_back_manifest,
+        "liveParity": live,
+        "restartRequired": True,
+    }
 
 
 def handle_deployment(args: argparse.Namespace) -> int:
@@ -2744,7 +2828,7 @@ def handle_deployment(args: argparse.Namespace) -> int:
             active = load_manifest(manifest_path) if manifest_path.is_file() else None
             paths = sorted(deployment_paths(active, mappings))
             release_id = f"{'c0' if profile == 'core' else 'de'}-{revision}-{uuid.uuid4().hex}"
-            saved = create_release(RELEASE_ROOT, revision, HOME, paths, release_id=release_id)
+            saved = create_release(RELEASE_ROOT, revision, HOME, paths, release_id=release_id, profile=profile)
             results.append({"profile": profile, "revision": revision, "releaseManifest": str(saved)})
     else:
         die(f"unsupported deployment action: {args.action}")

@@ -12,6 +12,15 @@ from quattro_release import (
 )
 
 class ReleaseTests(unittest.TestCase):
+    def test_profile_is_recorded_for_split_deployments(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary); deployed = root / "home"; deployed.mkdir()
+            (deployed / "core").write_text("core", encoding="utf-8")
+            manifest = create_release(
+                root / "releases", "9" * 40, deployed, ["core"], profile="core",
+            )
+            self.assertEqual(load_release(manifest)["profile"], "core")
+
     def test_private_release_round_trip_and_hash_validation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=pathlib.Path(temporary); deployed=root/"home"; releases=root/"releases"

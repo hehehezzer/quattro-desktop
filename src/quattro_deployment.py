@@ -422,6 +422,35 @@ def verify_manifest_files(
     }
 
 
+def verify_manifest_deployed_files(
+    manifest: Mapping[str, Any], deployed_root: str | os.PathLike[str],
+) -> dict[str, Any]:
+    """Verify a rollback deployment against recorded hashes without a checkout."""
+    validated = validate_manifest(manifest)
+    deployed = pathlib.Path(deployed_root).resolve(strict=True)
+    drift: list[dict[str, Any]] = []
+    for record in validated["files"]:
+        deployed_relative = _safe_relative_path(record["deployedPath"], "deployedPath")
+        try:
+            deployed_file = _rooted_file(deployed, deployed_relative, "deployedPath")
+            deployed_hash = sha256_file(deployed_file)
+        except DeploymentManifestError:
+            deployed_hash = None
+        if deployed_hash != record["deployedSha256"]:
+            drift.append({
+                "name": record["name"],
+                "deployedMatchesManifest": deployed_hash == record["deployedSha256"],
+                "sourceMatchesDeployed": None,
+            })
+    return {
+        "allMatch": not drift,
+        "checked": len(validated["files"]),
+        "driftCount": len(drift),
+        "drift": drift,
+        "sourceVerified": False,
+    }
+
+
 # Descriptive aliases for callers that prefer the full deployment terminology.
 build_deployment_manifest = build_manifest
 validate_deployment_manifest = validate_manifest

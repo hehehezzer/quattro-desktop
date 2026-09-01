@@ -7,10 +7,14 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping
 
+from quattro.platform.locking import exclusive_lock
 from quattro_deployment import load_manifest, validate_manifest, write_manifest_atomic
+from quattro_release import partition_release
 
 
-def _manifest_for_records(legacy: Mapping[str, Any], records: list[dict[str, Any]]) -> dict[str, Any]:
+def _manifest_for_records(
+    legacy: Mapping[str, Any], records: list[dict[str, Any]], *, rollback: Mapping[str, Any],
+) -> dict[str, Any]:
     matched = sum(1 for record in records if record["matches"])
     candidate = {
         "schemaVersion": legacy["schemaVersion"],
@@ -23,7 +27,7 @@ def _manifest_for_records(legacy: Mapping[str, Any], records: list[dict[str, Any
             "mismatched": len(records) - matched,
             "total": len(records),
         },
-        "rollback": dict(legacy["rollback"]),
+        "rollback": dict(rollback),
     }
     return validate_manifest(candidate)
 
@@ -36,6 +40,36 @@ def _looks_desktop(record: Mapping[str, Any], desktop_names: set[str]) -> bool:
     return source.startswith(("src/quickshell/", "src/hypr/", "src/systemd/", "src/app-theme/", "src/foot/")) or deployed.startswith((".config/quickshell/", ".config/hypr/", ".config/systemd/", ".local/share/quattro/wallpapers/"))
 
 
+def _partition_rollback(
+    legacy: Mapping[str, Any], records: list[dict[str, Any]], *, profile: str,
+    release_root: Path | None,
+) -> dict[str, Any]:
+    rollback = legacy["rollback"]
+    if not rollback["available"]:
+        return dict(rollback)
+    if release_root is None:
+        raise ValueError("legacy rollback migration requires the release root")
+    previous_manifest = rollback["previousManifest"]
+    previous_revision = rollback["previousGitRevision"]
+    if not isinstance(previous_manifest, str) or not isinstance(previous_revision, str):
+        raise ValueError("legacy rollback metadata is incomplete")
+    source_manifest = release_root / Path(*Path(previous_manifest).parts)
+    prefix = "c0" if profile == "core" else "de"
+    release_id = f"{prefix}-{previous_revision}-{uuid.uuid4().hex}"
+    partitioned = partition_release(
+        source_manifest,
+        release_root,
+        release_id=release_id,
+        allowed_paths={str(record["deployedPath"]) for record in records},
+        profile=profile,
+    )
+    return {
+        "available": True,
+        "previousManifest": partitioned.relative_to(release_root.resolve(strict=False)).as_posix(),
+        "previousGitRevision": previous_revision,
+    }
+
+
 def migrate_legacy_manifest(
     legacy_path: Path,
     core_path: Path,
@@ -43,44 +77,50 @@ def migrate_legacy_manifest(
     *,
     core_names: set[str],
     desktop_names: set[str],
+    release_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Partition, validate, archive, and retire one combined manifest.
+    """Partition, validate, archive, and retire one combined manifest atomically."""
+    lock_path = legacy_path.parent / "migration.lock"
+    with exclusive_lock(lock_path):
+        if not legacy_path.is_file():
+            return {"status": "not-needed", "core": core_path.is_file(), "desktop": desktop_path.is_file()}
+        legacy = load_manifest(legacy_path)
+        core_records: list[dict[str, Any]] = []
+        desktop_records: list[dict[str, Any]] = []
+        for record in legacy["files"]:
+            copy = dict(record)
+            if _looks_desktop(copy, desktop_names):
+                desktop_records.append(copy)
+            else:
+                core_records.append(copy)
+        if not core_records:
+            raise ValueError("legacy deployment does not contain a Core inventory")
 
-    Runtime databases, account homes, configuration, and release snapshots are
-    outside this operation.  The original manifest is archived only after all
-    replacement manifests have been durably written.
-    """
-    if not legacy_path.is_file():
-        return {"status": "not-needed", "core": core_path.is_file(), "desktop": desktop_path.is_file()}
-    legacy = load_manifest(legacy_path)
-    core_records: list[dict[str, Any]] = []
-    desktop_records: list[dict[str, Any]] = []
-    for record in legacy["files"]:
-        copy = dict(record)
-        if _looks_desktop(copy, desktop_names):
-            desktop_records.append(copy)
-        else:
-            core_records.append(copy)
-    if not core_records:
-        raise ValueError("legacy deployment does not contain a Core inventory")
+        core_rollback = _partition_rollback(
+            legacy, core_records, profile="core", release_root=release_root,
+        )
+        desktop_rollback = (
+            _partition_rollback(
+                legacy, desktop_records, profile="desktop", release_root=release_root,
+            ) if desktop_records else {"available": False, "previousManifest": None, "previousGitRevision": None}
+        )
+        write_manifest_atomic(
+            core_path, _manifest_for_records(legacy, core_records, rollback=core_rollback),
+        )
+        if desktop_records:
+            write_manifest_atomic(
+                desktop_path,
+                _manifest_for_records(legacy, desktop_records, rollback=desktop_rollback),
+            )
 
-    if not core_path.is_file():
-        write_manifest_atomic(core_path, _manifest_for_records(legacy, core_records))
-    else:
-        load_manifest(core_path)
-    if desktop_records and not desktop_path.is_file():
-        write_manifest_atomic(desktop_path, _manifest_for_records(legacy, desktop_records))
-    elif desktop_path.is_file():
-        load_manifest(desktop_path)
-
-    archive_dir = legacy_path.parent / "legacy"
-    archive_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    archive = archive_dir / f"combined-manifest-{timestamp}-{uuid.uuid4().hex[:8]}.json"
-    os.replace(legacy_path, archive)
-    return {
-        "status": "migrated",
-        "coreFiles": len(core_records),
-        "desktopFiles": len(desktop_records),
-        "archive": str(archive),
-    }
+        archive_dir = legacy_path.parent / "legacy"
+        archive_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        archive = archive_dir / f"combined-manifest-{timestamp}-{uuid.uuid4().hex[:8]}.json"
+        os.replace(legacy_path, archive)
+        return {
+            "status": "migrated",
+            "coreFiles": len(core_records),
+            "desktopFiles": len(desktop_records),
+            "archive": str(archive),
+        }

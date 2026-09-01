@@ -6,11 +6,13 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SRC = pathlib.Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SRC))
 import quattro_deployment as deployment
+import quattro_agent.cli as cli
 from quattro_agent.cli import DEPLOYMENT_MAPPINGS
 from quattro_release import create_source_release, restore_release
 
@@ -18,6 +20,75 @@ from quattro_release import create_source_release, restore_release
 class DeploymentManifestTests(unittest.TestCase):
     REVISION = "a" * 40
     PREVIOUS_REVISION = "b" * 40
+
+    def test_profile_rollback_is_isolated_and_rewrites_healthy_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"; deployed = root / "home"; releases = root / "releases"
+            source.mkdir(); deployed.mkdir()
+            mapping = {"launcher": ("src/launcher", ".local/bin/launcher")}
+            current_source = source / "src/launcher"; current_live = deployed / ".local/bin/launcher"
+            current_source.parent.mkdir(parents=True); current_live.parent.mkdir(parents=True)
+            current_source.write_text("new", encoding="utf-8"); current_live.write_text("new", encoding="utf-8")
+            desktop_canary = deployed / ".config/quickshell/shell.qml"
+            desktop_canary.parent.mkdir(parents=True); desktop_canary.write_text("desktop", encoding="utf-8")
+            old_source = root / "old-source"; (old_source / "src").mkdir(parents=True)
+            (old_source / "src/launcher").write_text("old", encoding="utf-8")
+            old_revision = "4" * 40; current_revision = "5" * 40
+            old_release = create_source_release(
+                releases, old_revision, old_source, mapping,
+                release_id=f"c0-{old_revision}", profile="core",
+            )
+            manifest_path = root / "state/core-manifest.json"
+            active = deployment.build_manifest(
+                source, deployed, mapping, revision=current_revision,
+                rollback_manifest=old_release.relative_to(releases).as_posix(),
+                rollback_revision=old_revision,
+            )
+            deployment.write_manifest_atomic(manifest_path, active)
+            with mock.patch.multiple(
+                cli,
+                HOME=deployed,
+                DEFAULT_WORKSPACE=source,
+                RELEASE_ROOT=releases,
+                CORE_DEPLOYMENT_MANIFEST=manifest_path,
+                CORE_DEPLOYMENT_MAPPINGS=mapping,
+            ):
+                result = cli._rollback_profile("core", old_revision[:12])
+                status = cli._deployment_status("core")
+            self.assertEqual(current_live.read_text(encoding="utf-8"), "old")
+            self.assertEqual(desktop_canary.read_text(encoding="utf-8"), "desktop")
+            self.assertEqual(result["revision"], old_revision)
+            self.assertTrue(result["liveParity"]["allMatch"])
+            self.assertEqual(status["status"], "ok")
+            self.assertEqual(status["manifest"]["gitRevision"], old_revision)
+            self.assertTrue(status["manifest"]["rollback"]["available"])
+
+    def test_profile_rollback_rejects_cross_profile_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"; deployed = root / "home"; releases = root / "releases"
+            source.mkdir(); deployed.mkdir()
+            mapping = {"launcher": ("src/launcher", ".local/bin/launcher")}
+            for base in (source / "src/launcher", deployed / ".local/bin/launcher"):
+                base.parent.mkdir(parents=True, exist_ok=True); base.write_text("current", encoding="utf-8")
+            revision = "6" * 40
+            wrong = create_source_release(
+                releases, revision, source, mapping,
+                release_id=f"de-{revision}", profile="desktop",
+            )
+            manifest_path = root / "state/core-manifest.json"
+            active = deployment.build_manifest(
+                source, deployed, mapping, revision="7" * 40,
+                rollback_manifest=wrong.relative_to(releases).as_posix(),
+                rollback_revision=revision,
+            )
+            deployment.write_manifest_atomic(manifest_path, active)
+            with mock.patch.multiple(
+                cli, HOME=deployed, DEFAULT_WORKSPACE=source, RELEASE_ROOT=releases,
+                CORE_DEPLOYMENT_MANIFEST=manifest_path, CORE_DEPLOYMENT_MAPPINGS=mapping,
+            ), self.assertRaises(SystemExit):
+                cli._rollback_profile("core", revision[:12])
 
     def roots(self, directory: str) -> tuple[pathlib.Path, pathlib.Path]:
         root = pathlib.Path(directory)

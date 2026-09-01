@@ -7,6 +7,8 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import threading
+import tomllib
 import unittest
 from unittest import mock
 
@@ -21,9 +23,18 @@ from quattro.deployment.profiles import (
 from quattro.platform.directories import config_home, data_home, state_home
 from quattro.platform.executables import find_executable
 from quattro_deployment import build_manifest, load_manifest, write_manifest_atomic
+from quattro_release import create_release, load_release
+from quattro_agent import __version__
+from quattro_agent.cli import VERSION
 
 
 class CoreDesktopBoundaryTests(unittest.TestCase):
+    def test_release_version_is_consistent(self):
+        metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["project"]["version"], "0.2.0")
+        self.assertEqual(__version__, "0.2.0")
+        self.assertEqual(VERSION, "0.2.0")
+
     def test_core_never_imports_desktop_package(self):
         roots = [SRC / "quattro_agent", SRC / "quattro/core", SRC / "quattro/adapters", SRC / "quattro/platform"]
         violations = []
@@ -152,6 +163,76 @@ class DeploymentMigrationTests(unittest.TestCase):
             self.assertEqual({row["name"] for row in desktop["files"]}, {"agents-qml", "retired-wallpaper"})
             self.assertEqual(database.read_bytes(), b"durable-state-canary")
             self.assertEqual(core["rollback"], desktop["rollback"])
+
+    def test_legacy_combined_rollback_is_partitioned_by_profile(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source = root / "source"; deployed = root / "home"; state = root / "state"
+            releases = root / "releases"
+            source.mkdir(); deployed.mkdir(); state.mkdir()
+            mappings = {
+                "launcher": ("src/quattro-agent", ".local/bin/quattro-agent"),
+                "agents-qml": ("src/quickshell/Agents.qml", ".config/quickshell/Agents.qml"),
+            }
+            for source_path, deployed_path in mappings.values():
+                left = source / source_path; right = deployed / deployed_path
+                left.parent.mkdir(parents=True, exist_ok=True); right.parent.mkdir(parents=True, exist_ok=True)
+                left.write_text("current", encoding="utf-8"); right.write_text("previous", encoding="utf-8")
+            previous_revision = "1" * 40
+            combined = create_release(
+                releases, previous_revision, deployed,
+                [value[1] for value in mappings.values()],
+            )
+            for source_path, deployed_path in mappings.values():
+                (deployed / deployed_path).write_text("current", encoding="utf-8")
+            legacy = state / "deployment/manifest.json"
+            manifest = build_manifest(
+                source, deployed, mappings, revision="2" * 40,
+                rollback_manifest=combined.relative_to(releases).as_posix(),
+                rollback_revision=previous_revision,
+            )
+            write_manifest_atomic(legacy, manifest)
+            migrate_legacy_manifest(
+                legacy, state / "deployment/core-manifest.json",
+                state / "deployment/desktop-manifest.json",
+                core_names={"launcher"}, desktop_names={"agents-qml"},
+                release_root=releases,
+            )
+            core = load_manifest(state / "deployment/core-manifest.json")
+            desktop = load_manifest(state / "deployment/desktop-manifest.json")
+            core_release = load_release(releases / core["rollback"]["previousManifest"])
+            desktop_release = load_release(releases / desktop["rollback"]["previousManifest"])
+            self.assertEqual(core_release["profile"], "core")
+            self.assertEqual(desktop_release["profile"], "desktop")
+            self.assertEqual({row["path"] for row in core_release["files"]}, {".local/bin/quattro-agent"})
+            self.assertEqual({row["path"] for row in desktop_release["files"]}, {".config/quickshell/Agents.qml"})
+
+    def test_concurrent_migration_is_serialized_and_idempotent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary); source = root / "source"; deployed = root / "home"
+            source.mkdir(); deployed.mkdir()
+            (source / "core").write_text("x", encoding="utf-8")
+            (deployed / "core").write_text("x", encoding="utf-8")
+            legacy = root / "state/deployment/manifest.json"
+            write_manifest_atomic(
+                legacy, build_manifest(source, deployed, {"core": "core"}, revision="3" * 40),
+            )
+            results: list[dict[str, object]] = []
+            errors: list[BaseException] = []
+            def run() -> None:
+                try:
+                    results.append(migrate_legacy_manifest(
+                        legacy, legacy.parent / "core-manifest.json",
+                        legacy.parent / "desktop-manifest.json",
+                        core_names={"core"}, desktop_names=set(),
+                    ))
+                except BaseException as error:
+                    errors.append(error)
+            threads = [threading.Thread(target=run) for _ in range(2)]
+            for thread in threads: thread.start()
+            for thread in threads: thread.join()
+            self.assertEqual(errors, [])
+            self.assertEqual({row["status"] for row in results}, {"migrated", "not-needed"})
 
 
 if __name__ == "__main__":
