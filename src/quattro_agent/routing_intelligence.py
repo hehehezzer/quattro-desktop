@@ -8,7 +8,7 @@ auditable requirement/preference decision for the existing OmniRoute route.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 import hashlib
@@ -46,7 +46,8 @@ ALLOWLISTED_BENCHMARK_SOURCES = {
     "livecodebench": ("livecodebench.github.io", "github.com", "raw.githubusercontent.com"),
     "terminal-bench": ("terminal-bench.com", "github.com", "raw.githubusercontent.com"),
     "official-model-card": (
-        "openai.com", "anthropic.com", "ai.google.dev", "deepmind.google", "mistral.ai",
+        "openai.com", "developers.openai.com", "anthropic.com", "ai.google.dev",
+        "deepmind.google", "mistral.ai",
     ),
 }
 SOURCE_RELIABILITY = {
@@ -204,6 +205,7 @@ class BenchmarkEvidence:
     confidence: float
     dimensions: Mapping[str, float]
     normalization_version: str = BENCHMARK_NORMALIZATION_VERSION
+    raw_metric: str | float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self) | {"dimensions": dict(self.dimensions)}
@@ -223,6 +225,8 @@ class LocalOutcomeStats:
     escalations: int
     latency_ms_total: float
     cost_total: float
+    cost_observed: int = 0
+    cost_unknown: int = 0
 
     @property
     def validated_success_rate(self) -> float | None:
@@ -244,8 +248,8 @@ class ModelCandidate:
     availability: Availability
     retry_eligible: bool
     metadata_quality: float
-    input_cost_per_million: float
-    output_cost_per_million: float
+    input_cost_per_million: float | None
+    output_cost_per_million: float | None
     expected_input_tokens: int
     expected_output_tokens: int
     latency_ms: float
@@ -262,6 +266,9 @@ class CandidateDecision:
     quality_components: Mapping[str, float]
     expected_completion_cost: float | None
     latency_ms: float
+    quality_confidence: float = 0.0
+    pricing_state: str = "unknown"
+    rank: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self) | {
@@ -658,7 +665,7 @@ def validate_benchmark_evidence(value: Mapping[str, Any]) -> BenchmarkEvidence:
         "source", "source_url", "benchmark", "provider", "canonical_model",
         "model_version", "variant", "source_date", "retrieved_at", "confidence", "dimensions",
     }
-    if set(value) - (required | {"normalization_version"}) or not required <= set(value):
+    if set(value) - (required | {"normalization_version", "raw_metric"}) or not required <= set(value):
         raise ValueError("benchmark record has missing or unknown fields")
     source = str(value["source"])
     if source not in ALLOWLISTED_BENCHMARK_SOURCES:
@@ -697,6 +704,13 @@ def validate_benchmark_evidence(value: Mapping[str, Any]) -> BenchmarkEvidence:
     normalization = str(value.get("normalization_version", BENCHMARK_NORMALIZATION_VERSION))
     if normalization != BENCHMARK_NORMALIZATION_VERSION:
         raise ValueError("unsupported benchmark normalization version")
+    raw_metric = value.get("raw_metric")
+    if raw_metric is not None and (
+        not isinstance(raw_metric, (str, int, float))
+        or isinstance(raw_metric, bool)
+        or len(str(raw_metric)) > 200
+    ):
+        raise ValueError("benchmark raw metric is invalid")
     return BenchmarkEvidence(
         source=source,
         source_url=source_url,
@@ -710,6 +724,7 @@ def validate_benchmark_evidence(value: Mapping[str, Any]) -> BenchmarkEvidence:
         confidence=min(confidence, SOURCE_RELIABILITY[source]),
         dimensions=normalized_dimensions,
         normalization_version=normalization,
+        raw_metric=raw_metric,
     )
 
 
@@ -813,7 +828,7 @@ def benchmark_quality(
     score = weighted_score / total_weight
     variance = sum(weight * (value - score) ** 2 for value, weight in observations) / total_weight
     agreement = max(0.25, 1.0 - 2.0 * math.sqrt(max(0.0, variance)))
-    return score, min(1.0, total_weight / 3.0) * agreement
+    return score, min(1.0, total_weight) * agreement
 
 
 def local_quality(stats: LocalOutcomeStats | None) -> tuple[float | None, float]:
@@ -853,16 +868,20 @@ def quality_estimate(
     }
 
 
-def initial_attempt_cost(candidate: ModelCandidate) -> float:
+def initial_attempt_cost(candidate: ModelCandidate) -> float | None:
+    if candidate.input_cost_per_million is None or candidate.output_cost_per_million is None:
+        return None
     return (
         candidate.expected_input_tokens * candidate.input_cost_per_million
         + candidate.expected_output_tokens * candidate.output_cost_per_million
     ) / 1_000_000
 
 
-def expected_completion_cost(candidate: ModelCandidate, success_probability: float) -> float:
+def expected_completion_cost(candidate: ModelCandidate, success_probability: float) -> float | None:
     probability = min(0.999, max(0.05, success_probability))
     attempt = initial_attempt_cost(candidate)
+    if attempt is None:
+        return None
     # Geometric expected attempts, bounded at three to match Quattro's bounded
     # retry/escalation policy. This captures retry cost without claiming an
     # unbounded theoretical tail.
@@ -893,20 +912,29 @@ def evaluate_candidates(
         ):
             reasons.append("invalid_identity")
         if (
-            not math.isfinite(candidate.input_cost_per_million)
-            or not math.isfinite(candidate.output_cost_per_million)
-            or candidate.input_cost_per_million < 0
-            or candidate.output_cost_per_million < 0
-            or candidate.expected_input_tokens < 0
+            candidate.input_cost_per_million is not None
+            and (
+                not math.isfinite(candidate.input_cost_per_million)
+                or candidate.input_cost_per_million < 0
+            )
+        ) or (
+            candidate.output_cost_per_million is not None
+            and (
+                not math.isfinite(candidate.output_cost_per_million)
+                or candidate.output_cost_per_million < 0
+            )
+        ) or (
+            candidate.expected_input_tokens < 0
             or candidate.expected_output_tokens < 0
         ):
             reasons.append("invalid_pricing")
         missing = sorted(set(profile.required_capabilities) - set(candidate.capabilities))
         if missing:
             reasons.append("missing_capability:" + missing[0])
-        if (
-            candidate.practical_input_limit is not None
-            and candidate.practical_input_limit > 0
+        if candidate.practical_input_limit is None:
+            reasons.append("unknown_context_limit")
+        elif (
+            candidate.practical_input_limit > 0
             and profile.estimated_tokens > candidate.practical_input_limit
         ):
             reasons.append("insufficient_context")
@@ -924,6 +952,15 @@ def evaluate_candidates(
         if estimate < required_quality:
             reasons.append("below_quality_threshold")
         cost = None if reasons else expected_completion_cost(candidate, estimate)
+        quality_confidence = min(1.0, max(
+            float(components.get("benchmark_confidence", 0.0)),
+            float(components.get("local_confidence", 0.0)),
+            QUALITY_WEIGHTS["metadata"],
+        ))
+        pricing_state = (
+            "unknown" if candidate.input_cost_per_million is None or candidate.output_cost_per_million is None
+            else "known"
+        )
         decisions.append(CandidateDecision(
             provider=candidate.provider,
             model=candidate.model,
@@ -936,6 +973,8 @@ def evaluate_candidates(
                 max(0.0, candidate.latency_ms)
                 if math.isfinite(candidate.latency_ms) else math.inf
             ),
+            quality_confidence=quality_confidence,
+            pricing_state=pricing_state,
         ))
 
     eligible = [decision for decision in decisions if decision.eligible]
@@ -945,6 +984,13 @@ def evaluate_candidates(
         decision.provider,
         decision.model,
     ))
+    ranks = {(decision.provider, decision.model): index + 1 for index, decision in enumerate(eligible)}
+    decisions = [
+        replace(decision, rank=ranks.get((decision.provider, decision.model)))
+        for decision in decisions
+    ]
+    eligible = [decision for decision in decisions if decision.eligible]
+    eligible.sort(key=lambda decision: decision.rank or math.inf)
     if not eligible:
         return ModelSelection(None, None, "no candidate satisfied every hard gate and quality floor", tuple(decisions))
     winner = eligible[0]
@@ -966,6 +1012,10 @@ def routing_snapshot(
     local_outcomes_version: str = "none",
     candidate_metadata_version: str = "omniroute-interface-unavailable",
     selection: ModelSelection | None = None,
+    compatibility_mode: str = "standard",
+    actual_selection: Mapping[str, Any] | None = None,
+    adaptive_overhead_ms: float = 0.0,
+    adaptive_cache_hit: bool = False,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
@@ -979,6 +1029,10 @@ def routing_snapshot(
         "benchmark_snapshot_version": benchmark_version,
         "local_outcome_stats_version": local_outcomes_version,
         "selection": selection.to_dict() if selection else None,
+        "compatibility_mode": compatibility_mode,
+        "actual_selection": dict(actual_selection) if actual_selection else None,
+        "adaptive_overhead_ms": max(0.0, float(adaptive_overhead_ms)),
+        "adaptive_cache_hit": bool(adaptive_cache_hit),
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return payload | {"decision_id": "route-" + hashlib.sha256(canonical).hexdigest()[:20]}
@@ -1001,12 +1055,27 @@ def replay_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     configured = snapshot.get("configured_model")
     expected = str(snapshot.get("effective_route"))
     replayed = route if configured == "auto" else str(configured or "configured default")
+    selection = snapshot.get("selection")
+    preferred = []
+    if isinstance(selection, Mapping) and isinstance(selection.get("candidates"), list):
+        preferred = [
+            f"{row.get('provider')}/{row.get('model')}"
+            for row in selection["candidates"]
+            if isinstance(row, Mapping) and row.get("eligible") is True and row.get("rank") is not None
+        ]
+        preferred.sort(key=lambda candidate: next(
+            int(row["rank"]) for row in selection["candidates"]
+            if isinstance(row, Mapping) and f"{row.get('provider')}/{row.get('model')}" == candidate
+        ))
     return {
         "decision_id": snapshot.get("decision_id"),
         "policy_version": ROUTING_POLICY_VERSION,
         "expected_route": expected,
         "replayed_route": replayed,
         "matches": replayed == expected,
+        "compatibility_mode": snapshot.get("compatibility_mode", "standard"),
+        "preferred_candidates": preferred,
+        "actual_selection": snapshot.get("actual_selection"),
     }
 
 
@@ -1033,7 +1102,13 @@ def load_local_outcomes(path: Path) -> dict[tuple[str, str, str, str], LocalOutc
         numeric = {name: row.get(name, 0) for name in (
             "samples", "execution_successes", "validated_successes", "validation_observed",
             "retries", "escalations", "latency_ms_total", "cost_total",
+            "cost_observed", "cost_unknown",
         )}
+        if "cost_observed" not in row and "cost_unknown" not in row:
+            # Legacy schema stored an unconditional numeric zero even when no
+            # cost metadata existed. Treat every legacy sample as unknown; do
+            # not reinterpret that sentinel as a free request.
+            numeric["cost_unknown"] = numeric["samples"]
         if any(not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0 for value in numeric.values()):
             raise ValueError("local outcome counters must be non-negative numbers")
         result[tuple(parts)] = LocalOutcomeStats(
@@ -1042,6 +1117,7 @@ def load_local_outcomes(path: Path) -> dict[tuple[str, str, str, str], LocalOutc
             int(numeric["validated_successes"]), int(numeric["validation_observed"]),
             int(numeric["retries"]), int(numeric["escalations"]),
             float(numeric["latency_ms_total"]), float(numeric["cost_total"]),
+            int(numeric["cost_observed"]), int(numeric["cost_unknown"]),
         )
     return result
 
@@ -1058,17 +1134,20 @@ def record_local_outcome(
     retries: int = 0,
     escalations: int = 0,
     latency_ms: float = 0,
-    cost: float = 0,
+    cost: float | None = None,
 ) -> LocalOutcomeStats:
     if any(not value or "\x00" in value for value in (provider, model, task_type, tier)):
         raise ValueError("local outcome identity fields must be non-empty and NUL-free")
     if retries < 0 or escalations < 0:
         raise ValueError("local outcome retry counters must be non-negative")
-    if not math.isfinite(latency_ms) or latency_ms < 0 or not math.isfinite(cost) or cost < 0:
+    if (
+        not math.isfinite(latency_ms) or latency_ms < 0
+        or cost is not None and (not math.isfinite(cost) or cost < 0)
+    ):
         raise ValueError("local outcome latency and cost must be finite non-negative numbers")
     existing = load_local_outcomes(path)
     key_tuple = (provider[:120], model[:200], task_type[:80], tier[:20])
-    prior = existing.get(key_tuple, LocalOutcomeStats(*key_tuple, 0, 0, 0, 0, 0, 0, 0.0, 0.0))
+    prior = existing.get(key_tuple, LocalOutcomeStats(*key_tuple, 0, 0, 0, 0, 0, 0, 0.0, 0.0, 0, 0))
     updated = LocalOutcomeStats(
         *key_tuple,
         prior.samples + 1,
@@ -1078,7 +1157,9 @@ def record_local_outcome(
         prior.retries + max(0, retries),
         prior.escalations + max(0, escalations),
         prior.latency_ms_total + max(0.0, latency_ms),
-        prior.cost_total + max(0.0, cost),
+        prior.cost_total + (max(0.0, cost) if cost is not None else 0.0),
+        prior.cost_observed + int(cost is not None),
+        prior.cost_unknown + int(cost is None),
     )
     existing[key_tuple] = updated
     aggregates = {
@@ -1091,6 +1172,8 @@ def record_local_outcome(
             "escalations": row.escalations,
             "latency_ms_total": row.latency_ms_total,
             "cost_total": row.cost_total,
+            "cost_observed": row.cost_observed,
+            "cost_unknown": row.cost_unknown,
         }
         for key, row in sorted(existing.items())
     }

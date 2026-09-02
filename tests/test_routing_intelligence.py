@@ -266,6 +266,8 @@ class EvidenceAndReplayTests(unittest.TestCase):
         self.assertEqual(row.execution_successes, 1)
         self.assertEqual(row.validation_observed, 0)
         self.assertIsNone(row.validated_success_rate)
+        self.assertEqual(row.cost_observed, 0)
+        self.assertEqual(row.cost_unknown, 1)
 
     def test_17_failed_fast_task_escalation_is_covered_by_existing_policy(self) -> None:
         from quattro_agent.routing import RoutingDecision, RoutingTier, next_tier

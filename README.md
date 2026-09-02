@@ -206,6 +206,12 @@ decision snapshots and supports `quattro-agent routing profile`, `explain`,
 `replay`, `refresh-evidence`, `record-outcome`, and `status`. Details are in
 [routing](docs/ROUTING.md).
 
+Standard OmniRoute remains supported for tier-based routing. For full
+evidence-aware adaptive routing, candidate observability, expected
+completion-cost ordering, and capability-aware fallback, use the
+[Quattro-compatible OmniRoute fork](https://github.com/hehehezzer/OmniRoute).
+Compatibility is detected automatically; no custom-mode switch is required.
+
 ## Memory
 
 Memory is optional and disabled by the generated starter configuration. If

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "records": [
+    {
+      "source": "official-model-card",
+      "source_url": "https://developers.openai.com/codex/models",
+      "benchmark": "Official Codex model capability rating",
+      "provider": "codex",
+      "canonical_model": "gpt-5.6-sol",
+      "model_version": "gpt-5.6-sol",
+      "variant": "base",
+      "source_date": "2026-09-02T00:00:00+00:00",
+      "retrieved_at": "2026-09-02T00:00:00+00:00",
+      "raw_metric": "Capability rating: 5/5 icons",
+      "confidence": 0.8,
+      "dimensions": {"coding_score": 1.0},
+      "normalization_version": "benchmark-normalization-v1"
+    },
+    {
+      "source": "official-model-card",
+      "source_url": "https://developers.openai.com/codex/models",
+      "benchmark": "Official Codex model capability rating",
+      "provider": "codex",
+      "canonical_model": "gpt-5.6-terra",
+      "model_version": "gpt-5.6-terra",
+      "variant": "base",
+      "source_date": "2026-09-02T00:00:00+00:00",
+      "retrieved_at": "2026-09-02T00:00:00+00:00",
+      "raw_metric": "Capability rating: 4/5 icons",
+      "confidence": 0.8,
+      "dimensions": {"coding_score": 0.8},
+      "normalization_version": "benchmark-normalization-v1"
+    },
+    {
+      "source": "official-model-card",
+      "source_url": "https://developers.openai.com/codex/models",
+      "benchmark": "Official Codex model capability rating",
+      "provider": "codex",
+      "canonical_model": "gpt-5.6-luna",
+      "model_version": "gpt-5.6-luna",
+      "variant": "base",
+      "source_date": "2026-09-02T00:00:00+00:00",
+      "retrieved_at": "2026-09-02T00:00:00+00:00",
+      "raw_metric": "Capability rating: 3/5 icons",
+      "confidence": 0.8,
+      "dimensions": {"coding_score": 0.6},
+      "normalization_version": "benchmark-normalization-v1"
+    }
+  ]
+}

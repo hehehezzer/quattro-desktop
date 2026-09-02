@@ -39,5 +39,8 @@ py-modules = [
 where = ["src"]
 exclude = ["quattro_desktop*"]
 
+[tool.setuptools.package-data]
+quattro_agent = ["data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

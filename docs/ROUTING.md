@@ -32,8 +32,12 @@ CLI run_prompt
 ```
 
 For delegated Codex tasks Quattro controls the `-m` route requirement and
-`model_reasoning_effort`; Codex constructs the final Responses payload. Direct
-responses are the only path where Quattro constructs the HTTP body itself.
+`model_reasoning_effort`; Codex constructs the final Responses payload. When
+the connected gateway advertises `routing_header_transport`, Quattro uses
+Codex's documented custom-provider `env_http_headers` mechanism to carry the
+same bounded routing envelope in `X-Quattro-Routing`. Direct responses put the
+envelope in the request body. No Codex patch or model-visible instruction is
+used.
 
 ## Deterministic TaskProfile
 
@@ -104,7 +108,13 @@ variant matches retain confidence; family/variant mismatch is discounted and
 age decays confidence. Downloaded data is parsed as inert JSON and never
 executed.
 
-Refresh is out of band and never runs on the request hot path:
+Quattro ships three exact-identity cold-start records from the official Codex
+model card for GPT-5.6 Sol, Terra, and Luna. The raw 5/5, 4/5, and 3/5
+capability-icon ratings are normalized mechanically to coding scores 1.0, 0.8,
+and 0.6 with reduced confidence; they are not presented as SWE-bench results.
+On first adaptive use the private cache is seeded atomically when empty.
+
+Further refresh is out of band and never runs on the request hot path:
 
 ```text
 quattro-agent routing refresh-evidence --input curated-cache.json
@@ -156,21 +166,24 @@ completion-cost proxies, and escalation need. It explicitly labels real
 provider cost, validated production success, provider concentration, and load
 latency as not measured rather than fabricating those values.
 
-## Current OmniRoute interface gaps
+## Standard and adaptive compatibility
 
-The Codex Responses integration currently exposes route acceptance and final
-model in normal response data, but not a per-request candidate snapshot with
-capabilities, practical limits, provider health, quota, price, or rejection
-reasons. Quattro therefore sends tier/category route requirements and lets the
-existing OmniRoute auto route enforce runtime eligibility. Candidate-level
-Quattro evidence evaluation is implemented as a pure, replayable engine and is
-used when such sanitized candidate metadata is supplied, but Quattro does not
-guess unavailable runtime facts or replace OmniRoute dispatch.
+Quattro negotiates `GET /api/v1/capabilities` with a five-minute cache. A
+standard upstream-compatible OmniRoute that lacks the enhanced endpoint stays
+healthy and uses the existing FAST/STANDARD/REASONING tier routes. A
+Quattro-compatible OmniRoute adds a five-second runtime candidate snapshot,
+hard capability/context requirements, ordered preferences, runtime fallback,
+and sanitized routing receipts. Candidate metadata failure records
+`adaptive_routing_unavailable` and falls back to standard tier routing.
 
-A future optional read-only contract could return a bounded candidate snapshot
-and accept a sanitized requirement envelope containing TaskProfile ID, hard
-capabilities, context tokens, quality floor, and preference mode. This is an
-interface proposal only; no OmniRoute source change is part of Quattro Core.
+In adaptive mode Quattro reads only the public candidate API. It never reads
+provider configuration, accounts, or credentials. The routing envelope contains
+only schema version, hard capabilities, minimum context, ordered candidate IDs,
+balanced preference mode, TaskProfile ID, and policy version. OmniRoute expands
+automatic tier aliases to the full eligible auto inventory only for a validated
+enhanced envelope, revalidates all hard/runtime gates at dispatch, strips the
+extension before provider translation, and records a bounded metadata-only
+receipt for exact delegated-task correlation.
 
 Quattro, not the native Codex session, owns effective reasoning effort for
 Quattro-managed execution. A parent Codex UI may display `auto medium`, or the

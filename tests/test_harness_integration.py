@@ -25,6 +25,16 @@ from quattro_agent.errors import ConfigError
 from quattro_agent.policy import MemoryAccess
 from quattro_agent.retrieval import RetrievalStore
 from quattro_agent.retrieval import RepositoryIndexer
+from quattro_agent.adaptive_routing import AdaptiveRoutingDecision, CapabilityNegotiation
+from quattro_agent.routing_intelligence import ModelSelection
+
+
+class StandardAdaptiveClient:
+    def __init__(self, _base_url: str):
+        pass
+
+    def negotiate(self):
+        return CapabilityNegotiation(True, "standard", frozenset(), False), False
 
 
 class HarnessRuntimeIntegrationTests(unittest.TestCase):
@@ -99,6 +109,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             default_workspace=self.project,
             command_resolver=resolver,
             codex_preflight=lambda _home: None,
+            adaptive_client_factory=StandardAdaptiveClient,
         )
 
     def tearDown(self):
@@ -350,6 +361,50 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         )
         self.assertIn('model_reasoning_effort="low"', argv)
         self.assertEqual(environment["QUATTRO_ROUTING_TIER"], "FAST")
+
+    def test_delegated_codex_uses_supported_dynamic_header_transport(self):
+        account_home = self.root / "adaptive-account"
+        account_home.mkdir()
+        (account_home / "config.toml").write_text('model = "auto"\n', encoding="utf-8")
+        self.runtime.account = lambda _config, _account_id=None: {  # type: ignore[method-assign]
+            "id": "account-1", "codexHome": str(account_home),
+        }
+        task_id = self.runtime.create_task(
+            agent="codex", project=self.project,
+            prompt="Fix a typo in README.md", mode="prompt",
+        )
+        task = self.runtime.store.get_task(task_id, include_private=True)
+        run_id = self.runtime.store.create_run(task_id)
+        envelope = {
+            "schema_version": 1,
+            "requirements": {"capabilities": ["code_analysis"], "minimum_context": 3000},
+            "preferred_candidates": ["codex/luna", "codex/sol"],
+            "preference_mode": "balanced",
+            "task_profile_id": task_id,
+            "routing_policy_version": "quattro-routing-v2",
+        }
+        adaptive = AdaptiveRoutingDecision(
+            CapabilityNegotiation(
+                True, "enhanced", frozenset({"candidate_snapshot"}), True
+            ),
+            ModelSelection("codex", "luna", "test", ()),
+            envelope,
+            "test-candidates-1",
+            2,
+            1.5,
+            False,
+        )
+        with mock.patch("quattro_harness.build_adaptive_decision", return_value=adaptive):
+            argv, _stdin, environment = self.runtime._agent_plan(
+                task, run_id, PolicyProfile.from_dict(task["policy"])
+            )
+        self.assertIn(
+            'model_providers.omniroute.env_http_headers={"X-Quattro-Routing" = "QUATTRO_ROUTING_ENVELOPE"}',
+            argv,
+        )
+        transported = json.loads(environment["QUATTRO_ROUTING_ENVELOPE"])
+        self.assertEqual(transported, envelope)
+        self.assertNotIn("Fix a typo", environment["QUATTRO_ROUTING_ENVELOPE"])
 
     def test_native_codex_effort_is_ignored_in_both_directions(self):
         account_home = self.root / "account-native-effort"

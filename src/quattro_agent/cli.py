@@ -1677,12 +1677,28 @@ def doctor(as_json: bool) -> int:
     transcriber = find_transcriber()
     check("optional.dictation", transcriber is not None, "ready" if transcriber else "optional transcriber unavailable", required=False)
 
+    from quattro_agent.adaptive_routing import OmniRouteAdaptiveClient
+    from quattro_agent.omniroute import APPROVED_BASE_URL
+    negotiation, _cache_hit = OmniRouteAdaptiveClient(APPROVED_BASE_URL).negotiate()
+    omniroute = {
+        "connected": negotiation.connected,
+        "compatibility": negotiation.compatibility,
+        "adaptiveRouting": "enabled" if negotiation.adaptive else "unavailable",
+        "routing": "adaptive" if negotiation.adaptive else "tier-based",
+        "candidateIntelligence": "available" if "candidate_snapshot" in negotiation.capabilities else "unavailable",
+        "capabilityRouting": "available" if "capability_routing" in negotiation.capabilities else "unavailable",
+        "delegatedEnvelopeTransport": "available" if negotiation.header_transport else "unavailable",
+        "detail": negotiation.error,
+    }
+    check("omniroute.compatibility", negotiation.connected, json.dumps(omniroute), required=False)
+
     required_ok = all(item["ok"] for item in checks if item["required"])
     result = {
         "schemaVersion": 2, "generatedAt": now_iso(),
         "overallStatus": "healthy" if required_ok else "degraded",
         "core": {"status": "HEALTHY" if required_ok else "DEGRADED"},
         "desktop": desktop,
+        "omniroute": omniroute,
         "migration": migration,
         "checks": checks,
     }
@@ -1691,6 +1707,13 @@ def doctor(as_json: bool) -> int:
     else:
         print("===== QUATTRO DOCTOR =====")
         print(f"Quattro Core: {result['core']['status']}")
+        print("OmniRoute:")
+        print(f"  Connected: {'yes' if omniroute['connected'] else 'no'}")
+        print(f"  Compatibility: {omniroute['compatibility']}")
+        print(f"  Adaptive routing: {omniroute['adaptiveRouting']}")
+        print(f"  Candidate intelligence: {omniroute['candidateIntelligence']}")
+        print(f"  Capability routing: {omniroute['capabilityRouting']}")
+        print(f"  Routing: {omniroute['routing']}")
         for item in checks:
             label = "OK" if item["ok"] else ("WARN" if not item["required"] else "FAIL")
             print(f"{label:<5} {item['name']:<30} {item['detail']}")
@@ -2458,6 +2481,10 @@ def routing_command(args: argparse.Namespace) -> int:
                 "localOutcomeStatsVersion": snapshot.get("local_outcome_stats_version"),
                 "candidateMetadataVersion": snapshot.get("candidate_metadata_version"),
                 "selection": snapshot.get("selection"),
+                "compatibilityMode": snapshot.get("compatibility_mode", "standard"),
+                "actualOmniRouteSelection": snapshot.get("actual_selection"),
+                "adaptiveOverheadMs": snapshot.get("adaptive_overhead_ms", 0),
+                "adaptiveCacheHit": snapshot.get("adaptive_cache_hit", False),
                 "omnirouteInterfaceGaps": (
                     [] if snapshot.get("selection") else [
                         "per-candidate health/quota/pricing/capability snapshots are not exposed "
@@ -2796,7 +2823,7 @@ def build_parser() -> argparse.ArgumentParser:
     routing.add_argument("--retries", type=int, default=0)
     routing.add_argument("--escalations", type=int, default=0)
     routing.add_argument("--latency-ms", type=float, default=0)
-    routing.add_argument("--cost", type=float, default=0)
+    routing.add_argument("--cost", type=float)
     routing.add_argument("--pretty", action="store_true")
     open_parser = sub.add_parser("open", help="open a repository or project path in Zed")
     open_parser.add_argument("path", nargs="?")
