@@ -17,6 +17,7 @@ from quattro_agent.adaptive_routing import (
     build_adaptive_decision,
     encode_routing_header,
     model_candidates_from_snapshot,
+    update_envelope_context,
 )
 from quattro_agent.routing_intelligence import PreferenceMode, profile_task
 
@@ -190,6 +191,23 @@ class AdaptiveRoutingTests(unittest.TestCase):
         encoded = encode_routing_header(decision.envelope)
         self.assertNotIn("fix a typo", encoded)
         self.assertNotIn(str(self.root), encoded)
+
+    def test_final_context_update_preserves_pre_routing_order(self):
+        profile = profile_task("reply with just hello")
+        decision = build_adaptive_decision(
+            client=OmniRouteAdaptiveClient(self.base),
+            profile=profile,
+            route="auto/coding:cheap",
+            benchmark_path=self.root / "benchmarks.json",
+            outcomes_path=self.root / "outcomes.json",
+            task_profile_id="task-context-only",
+        )
+        assert decision.envelope is not None
+        expanded = profile_task("reply with just hello", protocol_overhead_tokens=85_000)
+        updated = update_envelope_context(decision.envelope, expanded)
+        self.assertEqual(updated["preferred_candidates"], decision.envelope["preferred_candidates"])
+        self.assertEqual(updated["requirements"]["minimum_context"], expanded.final_request_tokens)
+        self.assertEqual(profile.tier, expanded.tier)
 
 
 if __name__ == "__main__":

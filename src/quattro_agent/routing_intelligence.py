@@ -319,13 +319,48 @@ class ModelSelection:
         }
 
 
+def model_selection_from_dict(value: Mapping[str, Any] | None) -> ModelSelection | None:
+    """Reconstruct sanitized persisted selection metadata for diagnostics."""
+    if not isinstance(value, Mapping):
+        return None
+    rows = value.get("candidates")
+    if not isinstance(rows, list):
+        return None
+    candidates: list[CandidateDecision] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        try:
+            candidates.append(CandidateDecision(
+                provider=str(row["provider"]), model=str(row["model"]),
+                eligible=bool(row["eligible"]),
+                rejection_reasons=tuple(str(item) for item in row.get("rejection_reasons", ())),
+                quality_estimate=(float(row["quality_estimate"]) if row.get("quality_estimate") is not None else None),
+                quality_components={str(k): float(v) for k, v in dict(row.get("quality_components", {})).items()},
+                expected_completion_cost=(float(row["expected_completion_cost"]) if row.get("expected_completion_cost") is not None else None),
+                latency_ms=float(row.get("latency_ms", math.inf)),
+                quality_confidence=float(row.get("quality_confidence", 0.0)),
+                pricing_state=str(row.get("pricing_state", "unknown")),
+                rank=(int(row["rank"]) if row.get("rank") is not None else None),
+            ))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return ModelSelection(
+        str(value["selected_provider"]) if value.get("selected_provider") is not None else None,
+        str(value["selected_model"]) if value.get("selected_model") is not None else None,
+        str(value.get("rationale", "persisted pre-routing selection")),
+        tuple(candidates),
+        str(value.get("policy_version", ROUTING_POLICY_VERSION)),
+    )
+
+
 _TRIVIAL_OPERATION = re.compile(
     r"\b(?:fix\s+(?:a\s+)?typo|rename\s+[\w.`/-]+\s+to\s+[\w.`/-]+|"
     r"format|reformat|update\s+(?:the\s+)?docs?|documentation only|change\s+(?:a\s+)?label)\b",
     re.IGNORECASE,
 )
 _TRIVIAL_CONVERSATION = re.compile(
-    r"^\s*(?:reply|respond|answer|say)\s+(?:with\s+)?(?:hello|hi|yes|no|thanks?|thank you|ok|okay)[.!?\s]*$",
+    r"^\s*(?:reply|respond|answer|say)\s+(?:with\s+)?(?:just\s+)?(?:hello|hi|yes|no|thanks?|thank you|ok|okay)[.!?\s]*$",
     re.IGNORECASE,
 )
 _CLONE_OPERATION = re.compile(r"\b(?:git\s+clone|clone)\b", re.IGNORECASE)
@@ -448,6 +483,96 @@ class RoutingTaskInput:
     estimated_repository_scope: str
     estimated_working_context: int
     validation_available: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PreRoutingInput:
+    """Small request-boundary input used before Codex builds its context.
+
+    This is intentionally not a transcript or a prompt assembled for an
+    agent.  It carries only facts which can affect task capability and the
+    deterministic Quattro classifier.  Native Codex bootstrap, tools,
+    permissions, skills, AGENTS files, and protocol history are never placed
+    here.
+    """
+
+    request: str
+    working_directory: str
+    repository_present: bool
+    explicit_model: str | None
+    routing_mode: str
+    selected_account: str | None
+    attachments: Mapping[str, bool]
+    session_continuation: bool
+    task_summary: str = ""
+    agent: str = "codex"
+    workflow: str = "general-task"
+    policy_name: str = "workspace-write"
+    write_scopes: tuple[str, ...] = ()
+
+    def bounded_request(self) -> str:
+        """Return only the bounded latest request plus optional task summary."""
+        request = " ".join(self.request.split())[:16_000]
+        summary = " ".join(self.task_summary.split())[:2_000]
+        if self.session_continuation and summary:
+            return f"{request}\n\nBounded current-task summary: {summary}"[:16_000]
+        return request
+
+    def diagnostics(self) -> dict[str, Any]:
+        """Return display-safe boundary facts without request content."""
+        return {
+            "workingDirectory": self.working_directory,
+            "repositoryPresent": self.repository_present,
+            "explicitModel": self.explicit_model,
+            "routingMode": self.routing_mode,
+            "selectedAccount": self.selected_account,
+            "attachments": dict(self.attachments),
+            "sessionContinuation": self.session_continuation,
+            "hasTaskSummary": bool(self.task_summary),
+            "agent": self.agent,
+            "workflow": self.workflow,
+            "policy": self.policy_name,
+            "writeScopeCount": len(self.write_scopes),
+        }
+
+
+def make_pre_routing_input(
+    *,
+    request: str,
+    working_directory: str,
+    repository_present: bool,
+    explicit_model: str | None,
+    routing_mode: str = "auto",
+    selected_account: str | None = None,
+    attachments: Mapping[str, bool] | None = None,
+    session_continuation: bool = False,
+    task_summary: str = "",
+    agent: str = "codex",
+    workflow: str = "general-task",
+    policy_name: str = "workspace-write",
+    write_scopes: Sequence[str] = (),
+) -> PreRoutingInput:
+    """Construct the trusted, bounded input at the Quattro request boundary."""
+    safe_attachments = {
+        str(key)[:40]: bool(value)
+        for key, value in (attachments or {}).items()
+        if isinstance(key, str)
+    }
+    return PreRoutingInput(
+        request=str(request)[:16_000],
+        working_directory=str(working_directory)[:4_000],
+        repository_present=bool(repository_present),
+        explicit_model=(str(explicit_model)[:256] if explicit_model else None),
+        routing_mode=str(routing_mode)[:32],
+        selected_account=(str(selected_account)[:128] if selected_account else None),
+        attachments=safe_attachments,
+        session_continuation=bool(session_continuation),
+        task_summary=str(task_summary)[:2_000],
+        agent=str(agent)[:32],
+        workflow=str(workflow)[:64],
+        policy_name=str(policy_name)[:64],
+        write_scopes=tuple(str(scope)[:256] for scope in write_scopes)[:32],
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -799,6 +924,27 @@ def profile_task(
         },
     )
     return replace(provisional, context_profile=context_profile_for_task(provisional))
+
+
+def profile_pre_routing_input(
+    value: PreRoutingInput,
+    *,
+    quality_thresholds: Mapping[str, float] | None = None,
+) -> TaskProfile:
+    """Profile a request-boundary input using the existing task classifier.
+
+    Keeping this adapter separate makes the lifecycle explicit without
+    introducing a second classifier.  Only a bounded latest request and, for
+    continuation turns, a bounded task summary reach :func:`profile_task`.
+    """
+    return profile_task(
+        value.bounded_request(),
+        agent=value.agent,
+        workflow=value.workflow,
+        policy_name=value.policy_name,
+        quality_thresholds=quality_thresholds,
+        write_scopes=value.write_scopes,
+    )
 
 
 def task_type_requires_reasoning(task_type: str) -> bool:

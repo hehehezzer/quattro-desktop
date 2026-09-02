@@ -10,9 +10,16 @@ User request
   ▼
 Quattro request boundary
   │
-  ├── DIRECT ───► OmniRoute Responses ───► final response
-  │
-  └── DELEGATE ─► durable task ─► Codex or Pi ─► validation/result
+  ▼
+ PreRoutingInput → TaskProfile → FAST / STANDARD / REASONING
+   │                         │
+   │                         └── bounded adaptive preference envelope
+   ▼
+ execution preparation (Codex-owned bootstrap may now expand)
+   │
+   ├── DIRECT ───► final context-fit/runtime gates ─► OmniRoute Responses ─► final response
+   │
+   └── DELEGATE ─► durable task ─► final context-fit/runtime gates ─► Codex/Pi ─► validation/result
 ```
 
 ## Responsibilities
@@ -22,14 +29,18 @@ Quattro request boundary
 Quattro classifies requests, selects an execution agent deterministically,
 creates and supervises durable tasks, assembles bounded context, enforces task
 policy, and projects display-safe lifecycle state. It does not choose a
-provider or let a model create agents.
+provider or let a model create agents. Its request-boundary `TaskProfile` is the
+single authority for task intelligence; native bootstrap size is not a quality
+signal.
 
 ### OmniRoute
 
 OmniRoute remains the authority for provider/account/model selection, cost and
 quota behavior, health and context eligibility, cooldowns, and fallbacks.
-Quattro supplies only request requirements through the FAST, STANDARD, and
-REASONING tiers. Explicit Codex `/model` selection remains user intent.
+Quattro supplies precomputed request requirements and preferences through the
+FAST, STANDARD, and REASONING tiers. OmniRoute performs final hard eligibility
+and dispatch, not a second semantic quality classification. Explicit Codex
+`/model` selection remains user intent.
 
 ### Codex and Pi
 

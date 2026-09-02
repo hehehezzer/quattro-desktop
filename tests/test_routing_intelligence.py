@@ -17,6 +17,7 @@ from quattro_agent.routing_intelligence import (
     ContextProfile,
     Level,
     ModelCandidate,
+    PreRoutingInput,
     PreferenceMode,
     Risk,
     RoutingTierName,
@@ -30,6 +31,7 @@ from quattro_agent.routing_intelligence import (
     model_identity_record,
     normalize_benchmark_score,
     profile_task,
+    profile_pre_routing_input,
     extract_routing_task_input,
     record_local_outcome,
     replay_snapshot,
@@ -73,6 +75,46 @@ def candidate(
 
 
 class TaskProfileMatrixTests(unittest.TestCase):
+    def test_request_boundary_input_excludes_execution_bootstrap(self) -> None:
+        boundary = PreRoutingInput(
+            request="reply with just hello",
+            working_directory="/workspace/projects/example",
+            repository_present=True,
+            explicit_model=None,
+            routing_mode="auto",
+            selected_account="account-test",
+            attachments={"images": False, "files": False},
+            session_continuation=False,
+        )
+        profile = profile_pre_routing_input(boundary)
+        self.assertEqual(profile.task_type, "conversation")
+        self.assertEqual(profile.tier, RoutingTierName.FAST)
+        self.assertEqual(profile.complexity, Level.LOW)
+        self.assertEqual(profile.risk, Risk.LOW)
+        self.assertNotIn("developer instructions", boundary.bounded_request().lower())
+        self.assertNotIn("working_directory", boundary.bounded_request())
+
+    def test_same_semantics_have_identical_quality_across_bootstrap_sizes(self) -> None:
+        baseline = profile_task("reply with just hello")
+        semantic_fields = ("task_type", "complexity", "risk", "ambiguity", "scope", "reasoning_depth", "minimum_quality", "tier")
+        for bootstrap in (5_000, 50_000, 85_000):
+            expanded = profile_task("reply with just hello", protocol_overhead_tokens=bootstrap)
+            self.assertEqual(
+                tuple(getattr(expanded, field) for field in semantic_fields),
+                tuple(getattr(baseline, field) for field in semantic_fields),
+            )
+            self.assertEqual(expanded.tier, RoutingTierName.FAST)
+
+    def test_semantics_dominate_protocol_size(self) -> None:
+        trivial = profile_task("reply with just hello", protocol_overhead_tokens=85_000)
+        security = profile_task(
+            "Find the root cause of a nondeterministic authorization race causing cross-tenant access.",
+            protocol_overhead_tokens=5_000,
+        )
+        self.assertEqual(trivial.tier, RoutingTierName.FAST)
+        self.assertEqual(security.tier, RoutingTierName.REASONING)
+        self.assertEqual(security.risk, Risk.HIGH)
+
     def test_trivial_conversation_with_huge_protocol_overhead_stays_fast(self) -> None:
         result = profile_task("reply with hello", protocol_overhead_tokens=50_000)
         self.assertEqual(result.tier, RoutingTierName.FAST)

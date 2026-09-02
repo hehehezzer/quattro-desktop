@@ -22,13 +22,35 @@ The current `quattro-agent prompt` path is:
 ```text
 CLI run_prompt
   -> DIRECT/DELEGATE decision
-  -> HarnessRuntime.direct_response or HarnessRuntime.create_task
-  -> routing.classify_request
-  -> routing_intelligence.profile_task
-  -> FAST / STANDARD / REASONING minimum requirement
-  -> automatic_model_override (only when configured model == auto)
-  -> Codex Responses request through the existing OmniRoute provider
-  -> OmniRoute candidate eligibility, health/quota/cost ranking and dispatch
+  -> Quattro request boundary (latest request + bounded task/session facts)
+  -> PreRoutingInput
+  -> existing routing_intelligence.profile_task classifier
+  -> FAST / STANDARD / REASONING + quality floor
+  -> adaptive candidate preference ordering (when enhanced metadata is available)
+  -> durable task/envelope persistence
+  -> Codex execution preparation (bootstrap, tools, skills, permissions, AGENTS, history)
+  -> final_request_tokens context-capacity eligibility only
+  -> OmniRoute hard capability/runtime revalidation and provider dispatch
+```
+
+The request-boundary step is the single task-intelligence authority. It runs
+before `HarnessRuntime._agent_plan` assembles Quattro-owned retrieval and policy
+context and before the Codex child/session can construct its native Responses
+request. The persisted envelope is bounded metadata, not a serialized
+conversation. A legacy task without an envelope may use a one-time compatibility
+recovery path; new tasks never rank candidates after execution preparation.
+
+The phase ownership is explicit:
+
+```text
+PRE_ROUTING
+  user request -> TaskProfile -> tier/quality floor -> preferred candidates
+EXECUTION_PREPARATION
+  Quattro context gates -> Codex-owned bootstrap and final request assembly
+FINAL_ELIGIBILITY
+  final request size -> context fit only; no tier/quality reclassification
+DISPATCH / VALIDATION
+  OmniRoute runtime truth -> provider -> Quattro outcome evidence
 ```
 
 For delegated Codex tasks Quattro controls the `-m` route requirement and
@@ -63,7 +85,8 @@ is REASONING.
 ## Routing context semantics
 
 Task difficulty and request size are independent axes. Quattro builds a bounded
-`RoutingTaskInput` from the user operation and explicit task metadata; it never
+`PreRoutingInput` and derives `RoutingTaskInput` from it using the existing
+deterministic classifier; it never
 profiles the expanded Codex bootstrap, skill catalog, permission inventory,
 AGENTS content, raw retrieval blobs, or previous transcript.
 
@@ -84,7 +107,9 @@ Codex constructs additional system, tool, skill, sandbox, permission, AGENTS,
 environment, and session bootstrap context after Quattro launches it. Quattro
 does not read or duplicate that private request. Consequently diagnostics mark
 runtime-owned overhead as unmeasured; OmniRoute's final request pipeline remains
-authoritative for actual wire-size compatibility.
+authoritative for actual wire-size compatibility. A large protocol overhead can
+reject a candidate for context capacity, but cannot increase complexity,
+reasoning depth, quality floor, or tier.
 
 ## Context gating
 
@@ -228,7 +253,7 @@ hard capability/context requirements, ordered preferences, runtime fallback,
 and sanitized routing receipts. Candidate metadata failure records
 `adaptive_routing_unavailable` and falls back to standard tier routing.
 
-In adaptive mode Quattro reads only the public candidate API. It never reads
+In adaptive mode Quattro reads only the public candidate API at PRE_ROUTING. It never reads
 provider configuration, accounts, or credentials. The routing envelope contains
 only schema version, hard capabilities, minimum context, ordered candidate IDs,
 balanced preference mode, TaskProfile ID, and policy version. OmniRoute expands
@@ -236,6 +261,14 @@ automatic tier aliases to the full eligible auto inventory only for a validated
 enhanced envelope, revalidates all hard/runtime gates at dispatch, strips the
 extension before provider translation, and records a bounded metadata-only
 receipt for exact delegated-task correlation.
+
+The first envelope carries the task-context estimate and the precomputed
+candidate order. After Codex preparation Quattro updates only its
+`requirements.minimum_context` with the final request estimate; the candidate
+order and task quality requirement remain unchanged. OmniRoute may reject a
+preferred candidate for context, quota, health, or capability and then select
+the next eligible preferred candidate. This is runtime fallback, not a second
+semantic classifier.
 
 Quattro, not the native Codex session, owns effective reasoning effort for
 Quattro-managed execution. A parent Codex UI may display `auto medium`, or the

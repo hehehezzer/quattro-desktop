@@ -196,6 +196,30 @@ def _requirements(profile: TaskProfile) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
+def task_profile_identifier(profile: TaskProfile) -> str:
+    """Return a stable non-content identifier for one routing profile."""
+    return "profile-" + hashlib.sha256(
+        json.dumps(profile.to_dict(), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:20]
+
+
+def update_envelope_context(
+    envelope: Mapping[str, Any], profile: TaskProfile,
+) -> dict[str, Any]:
+    """Apply final request capacity facts without changing task intelligence.
+
+    Candidate preference order is deliberately preserved.  The final request
+    size is a context-fit input only; it never reclassifies the task or
+    re-ranks candidates by quality.
+    """
+    updated = dict(envelope)
+    requirements = dict(updated.get("requirements", {}))
+    requirements["capabilities"] = list(_requirements(profile))
+    requirements["minimum_context"] = profile.final_request_tokens
+    updated["requirements"] = requirements
+    return updated
+
+
 def _candidate_capabilities(row: Mapping[str, Any]) -> frozenset[str]:
     result = {"conversation"}
     capabilities = row.get("capabilities")
@@ -358,13 +382,10 @@ def build_adaptive_decision(
         (item for item in selection.candidates if item.eligible),
         key=lambda item: item.rank or math.inf,
     )
-    profile_id = task_profile_id or (
-        "profile-" + hashlib.sha256(
-            json.dumps(profile.to_dict(), sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()[:20]
-    )
+    profile_id = task_profile_id or task_profile_identifier(profile)
     envelope = {
         "schema_version": 1,
+        "tier": profile.tier.value,
         "requirements": {
             "capabilities": list(_requirements(profile)),
             "minimum_context": profile.estimated_tokens,

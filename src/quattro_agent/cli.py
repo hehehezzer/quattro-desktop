@@ -2485,6 +2485,7 @@ def routing_command(args: argparse.Namespace) -> int:
                 "actualOmniRouteSelection": snapshot.get("actual_selection"),
                 "adaptiveOverheadMs": snapshot.get("adaptive_overhead_ms", 0),
                 "adaptiveCacheHit": snapshot.get("adaptive_cache_hit", False),
+                "lifecycle": snapshot.get("lifecycle"),
                 "omnirouteInterfaceGaps": (
                     [] if snapshot.get("selection") else [
                         "per-candidate health/quota/pricing/capability snapshots are not exposed "

@@ -11,7 +11,7 @@ from enum import StrEnum
 import re
 from typing import Mapping
 
-from .routing_intelligence import profile_task
+from .routing_intelligence import PreRoutingInput, profile_pre_routing_input, profile_task
 
 
 class RoutingTier(StrEnum):
@@ -97,6 +97,7 @@ def classify_request(
     agent: str,
     workflow: str,
     policy_name: str,
+    pre_routing_input: PreRoutingInput | None = None,
 ) -> RoutingDecision:
     """Classify from a transparent multi-signal :class:`TaskProfile`.
 
@@ -109,12 +110,18 @@ def classify_request(
         routing_config.get("qualityThresholds")
         if isinstance(routing_config, Mapping) else None
     )
-    profile = profile_task(
-        request,
-        agent=agent,
-        workflow=workflow,
-        policy_name=policy_name,
-        quality_thresholds=thresholds if isinstance(thresholds, Mapping) else None,
+    profile = (
+        profile_pre_routing_input(
+            pre_routing_input,
+            quality_thresholds=thresholds if isinstance(thresholds, Mapping) else None,
+        )
+        if pre_routing_input is not None else profile_task(
+            request,
+            agent=agent,
+            workflow=workflow,
+            policy_name=policy_name,
+            quality_thresholds=thresholds if isinstance(thresholds, Mapping) else None,
+        )
     )
     tier = RoutingTier(profile.tier.value)
     reason = {
@@ -127,6 +134,22 @@ def classify_request(
         reason=reason,
         reasoning_effort=_effort(config, tier),
         task_profile=profile.to_dict(),
+    )
+
+
+def classify_pre_routing(
+    *,
+    pre_routing_input: PreRoutingInput,
+    config: Mapping[str, object],
+) -> RoutingDecision:
+    """Classify at the Quattro request boundary before execution expansion."""
+    return classify_request(
+        request=pre_routing_input.request,
+        config=config,
+        agent=pre_routing_input.agent,
+        workflow=pre_routing_input.workflow,
+        policy_name=pre_routing_input.policy_name,
+        pre_routing_input=pre_routing_input,
     )
 
 

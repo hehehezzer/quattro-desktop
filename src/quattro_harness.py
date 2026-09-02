@@ -33,14 +33,18 @@ from typing import Any
 
 from quattro_agent import (
     RoutingDecision, RoutingTier, TaskState, TaskStore, adapter_for, automatic_model_override,
-    classify_request, context_budget_tokens, effective_reasoning_effort, load_ai_config,
+    classify_pre_routing, classify_request, context_budget_tokens, effective_reasoning_effort, load_ai_config,
     next_exceptional_effort, next_tier, policy_profile,
 )
 from quattro_agent.adapters import AgentMode, RunSpec
 from quattro_agent.adaptive_routing import (
+    AdaptiveRoutingDecision,
+    CapabilityNegotiation,
     OmniRouteAdaptiveClient,
     build_adaptive_decision,
     encode_routing_header,
+    task_profile_identifier,
+    update_envelope_context,
 )
 from quattro_agent.delegation import (
     classify_task_request,
@@ -75,6 +79,8 @@ from quattro_agent.privacy import redact_secret_text, summarize_display_title
 from quattro_agent.routing_intelligence import (
     PreferenceMode,
     context_load_plan,
+    make_pre_routing_input,
+    model_selection_from_dict,
     record_local_outcome,
     routing_snapshot,
     task_profile_from_dict,
@@ -522,10 +528,29 @@ class HarnessRuntime:
                 "Pi does not expose an enforceable filesystem sandbox; writable Pi tasks "
                 "require the run-scoped full-access-explicit policy and confirmation"
             )
-        routing = classify_request(
-            request=prompt, config=config, agent=agent, workflow=workflow,
+        configured_model = None
+        if agent == "codex":
+            account_home = pathlib.Path(str(self.account(config, selected_account)["codexHome"])).expanduser().resolve()
+            configured_model = self._configured_codex_model(account_home)
+        routing, adaptive, pre_routing_diagnostics = self._pre_route(
+            config=config,
+            request=prompt,
+            project=actual_project,
+            agent=agent,
+            workflow=workflow,
             policy_name=profile.name,
+            configured_model=configured_model,
+            selected_account=selected_account,
+            session_continuation=logical_session_id is not None,
+            write_scopes=ownership,
         )
+        pre_profile = task_profile_from_dict(routing.task_profile)
+        pre_envelope = dict(adaptive.envelope) if adaptive and adaptive.envelope else None
+        pre_selection = adaptive.selection.to_dict() if adaptive and adaptive.selection else None
+        if pre_envelope is not None:
+            # The task id is not known until persistence below.  It is bound to
+            # the request-scoped envelope immediately after durable creation.
+            pre_envelope["task_profile_id"] = task_profile_identifier(pre_profile)
         git_status_before = self._git_status_snapshot(actual_project)
         canonical_repository = (
             pathlib.Path(str(coordination["originalRepository"]))
@@ -547,6 +572,15 @@ class HarnessRuntime:
                     "coordinationSessionId": coordination.get("sessionId") if coordination else None,
                     "routingTier": routing.tier.value,
                     "routingReason": routing.reason,
+                    "preRouting": {
+                        "phase": "PRE_ROUTING",
+                        "taskProfileId": task_profile_identifier(pre_profile),
+                        "tier": routing.tier.value,
+                        "qualityFloor": pre_profile.minimum_quality,
+                        "taskContextTokens": pre_profile.task_context_tokens,
+                        "preferredCandidates": list(adaptive.preferred_candidates) if adaptive else [],
+                        "adaptiveMode": adaptive.negotiation.compatibility if adaptive else "standard",
+                    },
                     "delegationDecision": delegation["decision"],
                     "delegationReason": delegation["reason"],
                     "delegationConfidence": delegation["confidence"],
@@ -571,9 +605,25 @@ class HarnessRuntime:
                     "canonicalRepository": str(canonical_repository),
                     "writeScopes": list(ownership) if profile.writable_roots else [],
                     "routing": routing.display(),
+                    "routingEnvelope": pre_envelope,
+                    "routingSelection": pre_selection,
+                    "routingAdaptive": ({
+                        "compatibility": adaptive.negotiation.compatibility,
+                        "headerTransport": adaptive.negotiation.header_transport,
+                        "metadataVersion": adaptive.metadata_version,
+                        "candidateCount": adaptive.candidate_count,
+                        "overheadMs": adaptive.overhead_ms,
+                        "cacheHit": adaptive.cache_hit,
+                    } if adaptive else None),
+                    "preRoutingInput": pre_routing_diagnostics,
+                    "preRoutingProfileId": task_profile_identifier(pre_profile),
                 },
                 priority=priority,
             )
+            if pre_envelope is not None:
+                refreshed_private = self.store.get_task(task_id, include_private=True)["private_payload"]
+                refreshed_private["routingEnvelope"] = dict(pre_envelope) | {"task_profile_id": task_id}
+                self.store.update_private_payload(task_id, refreshed_private)
             if logical_session_id:
                 self.store.attach_task_to_logical_session(task_id, logical_session_id)
             elif top_level:
@@ -668,10 +718,6 @@ class HarnessRuntime:
         decision = classify_task_request(prompt).to_dict()
         if decision["decision"] != "DIRECT":
             raise ValueError("direct_response requires a DIRECT request")
-        routing = classify_request(
-            request=prompt, config=config, agent="codex", workflow="direct-response",
-            policy_name=profile.name,
-        )
         account = self.account(config, account_id)
         account_home = pathlib.Path(str(account["codexHome"])).expanduser().resolve()
         # Direct calls use the same contract gate as Codex execution.  The
@@ -679,8 +725,40 @@ class HarnessRuntime:
         # must not be bypassed merely because no agent task is created.
         self.codex_preflight(account_home)
         configured_model = self._configured_codex_model(account_home) or "auto"
-        model = automatic_model_override(config, routing.tier, configured_model) or configured_model
+        # DIRECT requests use the same request-boundary pre-router, before any
+        # retrieval or execution context is assembled.
+        boundary = make_pre_routing_input(
+            request=prompt,
+            working_directory=str(project),
+            repository_present=(project / ".git").exists(),
+            explicit_model=configured_model,
+            routing_mode="auto" if configured_model == "auto" else "manual",
+            selected_account=str(account["id"]),
+            workflow="direct-response",
+            policy_name=profile.name,
+            agent="codex",
+        )
+        routing = classify_pre_routing(pre_routing_input=boundary, config=config)
         profile_snapshot = task_profile_from_dict(routing.task_profile)
+        model = automatic_model_override(config, routing.tier, configured_model) or configured_model
+        adaptive = None
+        if configured_model == "auto":
+            try:
+                routing_state = self.private_root / "routing"
+                routing_config = config.get("routing", {})
+                adaptive = build_adaptive_decision(
+                    client=self.adaptive_client_factory(self._omniroute_base_url()),
+                    profile=profile_snapshot,
+                    route=model,
+                    benchmark_path=routing_state / "benchmark-cache.json",
+                    outcomes_path=routing_state / "local-outcomes.json",
+                    preference=PreferenceMode(str(routing_config.get("preferenceMode", "balanced"))),
+                    quality_weights=routing_config.get("qualityWeights"),
+                    local_outcome_min_samples=int(routing_config.get("localOutcomeMinSamples", 5)),
+                    task_profile_id=task_profile_identifier(profile_snapshot),
+                )
+            except (OSError, TypeError, ValueError):
+                adaptive = None
         load_plan = context_load_plan(profile_snapshot)
         diagnostics: dict[str, Any] = {"methods": [], "selectedSources": [], "selectedChunks": 0}
         context = (
@@ -709,19 +787,19 @@ class HarnessRuntime:
                 required_capabilities=profile_snapshot.required_capabilities,
                 estimated_tokens=profile_snapshot.final_request_tokens,
             )
+        profile_snapshot = with_context_estimates(
+            profile_snapshot,
+            task_context_tokens=approximate_tokens(input_text) + 2_000,
+            protocol_overhead_tokens=0,
+        )
+        if adaptive and adaptive.envelope:
+            adaptive = dataclasses.replace(
+                adaptive,
+                envelope=update_envelope_context(adaptive.envelope, profile_snapshot),
+            )
         routing_state = self.private_root / "routing"
         routing_config = config.get("routing", {})
         preference = PreferenceMode(str(routing_config.get("preferenceMode", "balanced")))
-        adaptive = build_adaptive_decision(
-            client=self.adaptive_client_factory(self._omniroute_base_url()),
-            profile=profile_snapshot,
-            route=model,
-            benchmark_path=routing_state / "benchmark-cache.json",
-            outcomes_path=routing_state / "local-outcomes.json",
-            preference=preference,
-            quality_weights=routing_config.get("qualityWeights"),
-            local_outcome_min_samples=int(routing_config.get("localOutcomeMinSamples", 5)),
-        ) if configured_model == "auto" else None
         request_body: dict[str, Any] = {
             "model": model,
             "input": input_text,
@@ -776,6 +854,23 @@ class HarnessRuntime:
             adaptive_overhead_ms=(adaptive.overhead_ms if adaptive else 0.0),
             adaptive_cache_hit=(adaptive.cache_hit if adaptive else False),
         )
+        snapshot["lifecycle"] = {
+            "preRouting": {
+                "phase": "PRE_ROUTING",
+                "boundary": boundary.diagnostics(),
+                "tier": routing.tier.value,
+                "qualityFloor": profile_snapshot.minimum_quality,
+                "taskContextTokens": profile_snapshot.task_context_tokens,
+                "preferredCandidates": list(adaptive.preferred_candidates) if adaptive else [],
+            },
+            "executionPreparation": {"phase": "EXECUTION_PREPARATION"},
+            "finalEligibility": {
+                "phase": "FINAL_ELIGIBILITY",
+                "finalRequestTokens": profile_snapshot.final_request_tokens,
+                "contextIsCapacityOnly": True,
+                "runtimeRevalidation": "OmniRoute",
+            },
+        }
         return {
             "schemaVersion": 1, "decision": decision, "response": output.strip(),
             "model": model, "routing": routing.display(), "retrieval": diagnostics,
@@ -785,6 +880,7 @@ class HarnessRuntime:
                 "protocolOverheadTokens": profile_snapshot.protocol_overhead_tokens,
                 "finalRequestTokens": profile_snapshot.final_request_tokens,
                 "runtimeOwnedOverheadMeasured": False,
+                "protocolOverheadSource": "none_for_direct_request",
             },
             "routingSnapshot": snapshot,
             "adaptiveRouting": {
@@ -944,6 +1040,11 @@ class HarnessRuntime:
         }
         refreshed_snapshot = dict(snapshot)
         refreshed_snapshot["actual_selection"] = actual
+        lifecycle = dict(refreshed_snapshot.get("lifecycle", {}))
+        final_eligibility = dict(lifecycle.get("finalEligibility", {}))
+        final_eligibility["runtimeDecisions"] = safe_decisions
+        lifecycle["finalEligibility"] = final_eligibility
+        refreshed_snapshot["lifecycle"] = lifecycle
         refreshed_private = dict(private)
         refreshed_private["routingSnapshot"] = refreshed_snapshot
         self.store.update_private_payload(task_id, refreshed_private)
@@ -958,8 +1059,70 @@ class HarnessRuntime:
                 "model": model,
                 "fallbackUsed": actual["fallback_used"],
                 "costState": "unknown",
+                "runtimeDecisions": safe_decisions,
             },
         )
+
+    def _pre_route(
+        self,
+        *,
+        config: Mapping[str, Any],
+        request: str,
+        project: pathlib.Path,
+        agent: str,
+        workflow: str,
+        policy_name: str,
+        configured_model: str | None,
+        selected_account: str | None = None,
+        session_continuation: bool = False,
+        write_scopes: Sequence[str] = (),
+        attachments: Mapping[str, bool] | None = None,
+    ) -> tuple[RoutingDecision, Any | None, dict[str, Any]]:
+        """Perform Quattro's complete pre-routing phase at the request boundary.
+
+        This method runs before retrieval, mandatory-context assembly, Codex
+        process launch, and therefore before native Codex can construct its
+        large Responses request.  The adaptive result is an advisory ordered
+        preference; final context/runtime eligibility remains downstream.
+        """
+        boundary = make_pre_routing_input(
+            request=request,
+            working_directory=str(project),
+            repository_present=(project / ".git").exists(),
+            explicit_model=configured_model,
+            routing_mode="auto" if configured_model == "auto" else "manual",
+            selected_account=selected_account,
+            attachments=attachments,
+            session_continuation=session_continuation,
+            agent=agent,
+            workflow=workflow,
+            policy_name=policy_name,
+            write_scopes=write_scopes,
+        )
+        routing = classify_pre_routing(pre_routing_input=boundary, config=config)
+        profile = task_profile_from_dict(routing.task_profile)
+        adaptive = None
+        if agent == "codex" and configured_model == "auto":
+            try:
+                routing_config = config.get("routing", {})
+                routing_state = self.private_root / "routing"
+                adaptive = build_adaptive_decision(
+                    client=self.adaptive_client_factory(self._omniroute_base_url()),
+                    profile=profile,
+                    route=automatic_model_override(config, RoutingTier(profile.tier.value), configured_model)
+                    or configured_model,
+                    benchmark_path=routing_state / "benchmark-cache.json",
+                    outcomes_path=routing_state / "local-outcomes.json",
+                    preference=PreferenceMode(str(routing_config.get("preferenceMode", "balanced"))),
+                    quality_weights=routing_config.get("qualityWeights"),
+                    local_outcome_min_samples=int(routing_config.get("localOutcomeMinSamples", 5)),
+                    task_profile_id=task_profile_identifier(profile),
+                )
+            except (OSError, TypeError, ValueError):
+                # Standard OmniRoute and unavailable enhanced metadata are both
+                # valid compatibility states.  The tier decision is retained.
+                adaptive = None
+        return routing, adaptive, boundary.diagnostics()
 
     def _agent_plan(
         self,
@@ -1078,13 +1241,38 @@ class HarnessRuntime:
         routing_effort = effective_reasoning_effort(config, routing)
         model_selection = "automatic" if model_override else "manual"
         model_route = model_override or configured_model or "configured default"
-        profile_payload = routing.get("task_profile")
+        # Normal tasks already carry the request-boundary result.  Do not
+        # re-rank after Codex context assembly: final size updates the hard
+        # context requirement while preserving the pre-routing order.  The
+        # fallback exists only for legacy durable tasks created before the
+        # pre-routing envelope was persisted.
         adaptive = None
-        if (
+        persisted_envelope = private.get("routingEnvelope")
+        persisted_adaptive = private.get("routingAdaptive")
+        persisted_selection = model_selection_from_dict(private.get("routingSelection"))
+        if isinstance(persisted_envelope, Mapping) and isinstance(persisted_adaptive, Mapping):
+            adaptive = AdaptiveRoutingDecision(
+                CapabilityNegotiation(
+                    connected=True,
+                    compatibility=str(persisted_adaptive.get("compatibility", "standard")),
+                    capabilities=frozenset(),
+                    header_transport=bool(persisted_adaptive.get("headerTransport", False)),
+                ),
+                persisted_selection,
+                dict(persisted_envelope),
+                str(persisted_adaptive.get("metadataVersion", "persisted")),
+                int(persisted_adaptive.get("candidateCount", 0) or 0),
+                float(persisted_adaptive.get("overheadMs", 0.0) or 0.0),
+                bool(persisted_adaptive.get("cacheHit", False)),
+            )
+        elif (
             task["agent"] == "codex"
             and configured_model == "auto"
             and dispatch_task_profile is not None
+            and "preRoutingInput" not in private
         ):
+            # Compatibility recovery for pre-envelope persisted tasks only.
+            # New request-boundary tasks never take this path.
             try:
                 routing_state = self.private_root / "routing"
                 routing_config = config.get("routing", {})
@@ -1101,6 +1289,11 @@ class HarnessRuntime:
                 )
             except (OSError, TypeError, ValueError):
                 adaptive = None
+        if adaptive and adaptive.envelope and dispatch_task_profile is not None:
+            adaptive = dataclasses.replace(
+                adaptive,
+                envelope=update_envelope_context(adaptive.envelope, dispatch_task_profile),
+            )
         if (
             task["agent"] == "codex"
             and account_home is not None
@@ -1150,6 +1343,26 @@ class HarnessRuntime:
                     adaptive_overhead_ms=(adaptive.overhead_ms if adaptive else 0.0),
                     adaptive_cache_hit=(adaptive.cache_hit if adaptive else False),
                 )
+                pre_profile = task_profile_from_dict(routing["task_profile"])
+                snapshot["lifecycle"] = {
+                    "preRouting": {
+                        "tier": pre_profile.tier.value,
+                        "qualityFloor": pre_profile.minimum_quality,
+                        "taskContextTokens": pre_profile.task_context_tokens,
+                        "preferredCandidates": list(
+                            (adaptive.preferred_candidates if adaptive else ())
+                        ),
+                    },
+                    "executionPreparation": {
+                        "contextProfile": str(load_plan.profile) if load_plan else "legacy",
+                        "codexBootstrapConstructed": True,
+                    },
+                    "finalEligibility": {
+                        "finalRequestTokens": dispatch_task_profile.final_request_tokens,
+                        "contextIsCapacityOnly": True,
+                        "runtimeRevalidation": "OmniRoute",
+                    },
+                }
                 refreshed_private = dict(private)
                 refreshed_private["routingSnapshot"] = snapshot
                 self.store.update_private_payload(str(task["task_id"]), refreshed_private)
@@ -1157,10 +1370,16 @@ class HarnessRuntime:
                 # Legacy/malformed profile metadata must not block dispatch.
                 pass
         self.store.append_event(str(task["task_id"]), "routing.dispatched", run_id=run_id, display={
+            "phase": "DISPATCH",
             "tier": routing_tier, "reasoningEffort": routing_effort,
             "selectedModel": configured_model or "configured default",
             "effectiveModelRoute": model_route,
             "modelRoute": model_route, "modelSelection": model_selection,
+            "preRouting": dict(metadata.get("preRouting", {})),
+            "finalRequestTokens": (
+                dispatch_task_profile.final_request_tokens
+                if dispatch_task_profile is not None else None
+            ),
         })
         if task["agent"] == "codex":
             memory_args: list[str] = ["-c", f"model_reasoning_effort={json.dumps(routing_effort)}"]
@@ -1194,6 +1413,7 @@ class HarnessRuntime:
         self.store.append_event(
             str(task["task_id"]), "context.assembled", run_id=run_id,
             display={
+                "phase": "EXECUTION_PREPARATION",
                 "mandatoryContext": mandatory_diagnostics,
                 "retrievedContext": retrieval_diagnostics,
                 "contextProfile": str(load_plan.profile) if load_plan else "legacy",
@@ -1210,6 +1430,7 @@ class HarnessRuntime:
                     if dispatch_task_profile else approximate_tokens(private_input + trusted_instructions)
                 ),
                 "runtimeOwnedOverheadMeasured": False,
+                "protocolOverheadSource": "Quattro-owned-only; Codex-runtime-unmeasured",
                 "components": {
                     "userAndRetrievalTokens": approximate_tokens(private_input),
                     "memoryPolicyTokens": approximate_tokens(instructions),
@@ -1229,6 +1450,16 @@ class HarnessRuntime:
                     ) >= 16_000 else "small"
                 ),
                 "failureClassification": None,
+                "preRouting": dict(metadata.get("preRouting", {})),
+                "finalEligibility": {
+                    "phase": "FINAL_ELIGIBILITY",
+                    "finalRequestTokens": (
+                        dispatch_task_profile.final_request_tokens
+                        if dispatch_task_profile else None
+                    ),
+                    "contextOnly": True,
+                    "runtimeAuthority": "OmniRoute",
+                },
             },
         )
         overrides = dict(plan.environment_overrides)
@@ -2897,7 +3128,58 @@ class HarnessRuntime:
                 implementation_output = self._child_output_path(identifiers["implementation"])
                 prompt = f"Independently review and synthesize the completed objective: {objective}. Inspect the actual project and the worker artifact at {implementation_output}. Run bounded validation, identify any remaining defect, and end with exactly HARNESS_VERDICT: PASS only when the objective and required checks are satisfied; otherwise end with HARNESS_VERDICT: FAIL. Do not modify project files."
             payload = self.store.get_task(identifiers[name], include_private=True)["private_payload"]
-            self.store.update_private_payload(identifiers[name], {**payload, "prompt": prompt})
+            child_id = identifiers[name]
+            child_task = self.store.get_task(child_id, include_private=True)
+            child_configured_model = None
+            if child_task["agent"] == "codex":
+                child_account = str(payload.get("accountId") or config["defaultCodexAccount"])
+                child_home = pathlib.Path(str(self.account(config, child_account)["codexHome"])).expanduser().resolve()
+                child_configured_model = self._configured_codex_model(child_home)
+            child_routing, child_adaptive, child_boundary = self._pre_route(
+                config=config,
+                request=prompt,
+                project=pathlib.Path(child_task["project_path"]),
+                agent=str(child_task["agent"]),
+                workflow="implementation-review",
+                policy_name=str(child_task["policy"]["name"]),
+                configured_model=child_configured_model,
+                selected_account=(str(payload.get("accountId")) if payload.get("accountId") else None),
+                session_continuation=True,
+            )
+            child_envelope = dict(child_adaptive.envelope) if child_adaptive and child_adaptive.envelope else None
+            if child_envelope is not None:
+                child_envelope["task_profile_id"] = child_id
+            child_private = {
+                **payload,
+                "prompt": prompt,
+                "routing": child_routing.display(),
+                "routingEnvelope": child_envelope,
+                "routingSelection": child_adaptive.selection.to_dict() if child_adaptive and child_adaptive.selection else None,
+                "routingAdaptive": ({
+                    "compatibility": child_adaptive.negotiation.compatibility,
+                    "headerTransport": child_adaptive.negotiation.header_transport,
+                    "metadataVersion": child_adaptive.metadata_version,
+                    "candidateCount": child_adaptive.candidate_count,
+                    "overheadMs": child_adaptive.overhead_ms,
+                    "cacheHit": child_adaptive.cache_hit,
+                } if child_adaptive else None),
+                "preRoutingInput": child_boundary,
+                "preRoutingProfileId": task_profile_identifier(task_profile_from_dict(child_routing.task_profile)),
+            }
+            self.store.update_private_payload(child_id, child_private)
+            child_metadata = dict(child_task.get("display_metadata", {}))
+            child_profile = task_profile_from_dict(child_routing.task_profile)
+            child_metadata["routingTier"] = child_routing.tier.value
+            child_metadata["routingReason"] = child_routing.reason
+            child_metadata["preRouting"] = {
+                "phase": "PRE_ROUTING",
+                "taskProfileId": child_private["preRoutingProfileId"],
+                "tier": child_profile.tier.value,
+                "qualityFloor": child_profile.minimum_quality,
+                "taskContextTokens": child_profile.task_context_tokens,
+                "preferredCandidates": list(child_adaptive.preferred_candidates) if child_adaptive else [],
+            }
+            self.store.update_display_metadata(child_id, child_metadata)
 
         self.store.append_event(
             parent_id, "workflow.created",
