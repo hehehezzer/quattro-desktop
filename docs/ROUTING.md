@@ -359,15 +359,32 @@ route or `auto/coding` explicitly chosen by the user), Quattro does not
 replace it. It only sends the automatically selected reasoning effort.
 
 The shared Codex model catalog is the single picker/direct-selection registry.
-It publishes these Quattro route modes first, followed by the verified manual
-OmniRoute models:
+It publishes these Quattro route modes first, followed by the six account-pinned
+GPT-5.6 family routes and the currently verified Antigravity text routes:
 
 ```text
 auto
 auto/coding:cheap
 auto/coding
 auto/reasoning
+
+account-1/gpt-5.6-sol
+account-1/gpt-5.6-terra
+account-1/gpt-5.6-luna
+account-2/gpt-5.6-sol
+account-2/gpt-5.6-terra
+account-2/gpt-5.6-luna
+
+antigravity/* (18 text-capable routes)
 ```
+
+The six `account-*/gpt-5.6-*` entries are single-target OmniRoute combos:
+each is pinned to its named Codex OAuth account and has no cross-account
+fallback. The Antigravity entries are a reviewed snapshot of the current
+text-capable provider catalog, including its `no-think/` Claude variants. The
+Antigravity image-only route is intentionally not a Codex picker entry; image
+generation remains available through the credential-free local image MCP
+bridge.
 
 Selecting `auto` enables per-task adaptive routing. Selecting one of the three
 `auto/...` values pins that exact OmniRoute route for later managed requests.

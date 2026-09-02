@@ -100,9 +100,10 @@ Windows.
 - Pi 0.8x or a compatible newer release only when delegated specialists are
   enabled. Pi is optional and writable Pi execution remains fail-closed unless
   the runtime can enforce the requested network policy.
-- OmniRoute with the Responses-compatible local endpoint and the four Quattro
-  route labels when direct or Codex execution is used. The endpoint and catalog
-  are configurable; Quattro does not bundle OmniRoute.
+- OmniRoute with the Responses-compatible local endpoint and the Quattro,
+  account-qualified GPT-5.6, and verified Antigravity route labels when direct
+  or Codex execution is used. The endpoint and catalog are configurable;
+  Quattro does not bundle OmniRoute.
 - Optional desktop dependencies: Hyprland Lua integration, Quickshell 0.3.x,
   Foot, `wl-clipboard`, and the commands documented in `docs/desktop.md`.
 
