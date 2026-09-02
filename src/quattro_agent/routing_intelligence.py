@@ -119,6 +119,14 @@ class ContextClass(StrEnum):
     VERY_LARGE = "very_large"
 
 
+class ContextProfile(StrEnum):
+    CHAT_MINIMAL = "CHAT_MINIMAL"
+    CODE_SIMPLE = "CODE_SIMPLE"
+    REPOSITORY_EXECUTION = "REPOSITORY_EXECUTION"
+    SECURITY_REVIEW = "SECURITY_REVIEW"
+    DESIGN = "DESIGN"
+
+
 class RoutingTierName(StrEnum):
     FAST = "FAST"
     STANDARD = "STANDARD"
@@ -152,6 +160,10 @@ class TaskProfile:
     verification_strength: VerificationStrength
     context_requirement: ContextClass
     estimated_tokens: int
+    task_context_tokens: int
+    protocol_overhead_tokens: int
+    final_request_tokens: int
+    context_profile: ContextProfile
     required_capabilities: tuple[str, ...]
     minimum_quality: float
     tier: RoutingTierName
@@ -162,7 +174,7 @@ class TaskProfile:
         value = asdict(self)
         for key in (
             "complexity", "ambiguity", "risk", "scope", "reasoning_depth",
-            "verification_strength", "context_requirement", "tier",
+            "verification_strength", "context_requirement", "context_profile", "tier",
         ):
             value[key] = str(value[key])
         value["required_capabilities"] = list(self.required_capabilities)
@@ -173,7 +185,11 @@ class TaskProfile:
 
 def task_profile_from_dict(value: Mapping[str, Any]) -> TaskProfile:
     """Validate and reconstruct a profile from a persisted decision snapshot."""
-    return TaskProfile(
+    estimated = int(value["estimated_tokens"])
+    task_context = int(value.get("task_context_tokens", estimated))
+    protocol_overhead = int(value.get("protocol_overhead_tokens", 0))
+    final_request = int(value.get("final_request_tokens", estimated))
+    result = TaskProfile(
         task_type=str(value["task_type"]),
         complexity=Level(str(value["complexity"])),
         ambiguity=Level(str(value["ambiguity"])),
@@ -182,12 +198,20 @@ def task_profile_from_dict(value: Mapping[str, Any]) -> TaskProfile:
         reasoning_depth=Level(str(value["reasoning_depth"])),
         verification_strength=VerificationStrength(str(value["verification_strength"])),
         context_requirement=ContextClass(str(value["context_requirement"])),
-        estimated_tokens=int(value["estimated_tokens"]),
+        estimated_tokens=estimated,
+        task_context_tokens=task_context,
+        protocol_overhead_tokens=protocol_overhead,
+        final_request_tokens=final_request,
+        context_profile=ContextProfile(str(value.get("context_profile", "CODE_SIMPLE"))),
         required_capabilities=tuple(str(item) for item in value["required_capabilities"]),
         minimum_quality=float(value["minimum_quality"]),
         tier=RoutingTierName(str(value["tier"])),
         signals=tuple(str(item) for item in value["signals"]),
         scores={str(key): int(score) for key, score in dict(value["scores"]).items()},
+    )
+    return (
+        result if "context_profile" in value
+        else replace(result, context_profile=context_profile_for_task(result))
     )
 
 
@@ -300,6 +324,11 @@ _TRIVIAL_OPERATION = re.compile(
     r"format|reformat|update\s+(?:the\s+)?docs?|documentation only|change\s+(?:a\s+)?label)\b",
     re.IGNORECASE,
 )
+_TRIVIAL_CONVERSATION = re.compile(
+    r"^\s*(?:reply|respond|answer|say)\s+(?:with\s+)?(?:hello|hi|yes|no|thanks?|thank you|ok|okay)[.!?\s]*$",
+    re.IGNORECASE,
+)
+_CLONE_OPERATION = re.compile(r"\b(?:git\s+clone|clone)\b", re.IGNORECASE)
 _MECHANICAL_READ = re.compile(
     r"\b(?:find|search|locate|list|read|inspect|summari[sz]e|explain|grep)\b",
     re.IGNORECASE,
@@ -376,6 +405,8 @@ def _context_class(tokens: int) -> ContextClass:
 
 
 def _task_type(text: str, mutation: bool) -> str:
+    if _CLONE_OPERATION.search(text):
+        return "repository_execution"
     if _TRIVIAL_OPERATION.search(text) and re.search(r"\b(?:docs?|documentation|readme)\b", text, re.I):
         return "documentation"
     if not mutation and _MECHANICAL_READ.search(text):
@@ -397,6 +428,146 @@ def _task_type(text: str, mutation: bool) -> str:
     return "implementation" if mutation else "conversation"
 
 
+@dataclass(frozen=True, slots=True)
+class RoutingTaskInput:
+    """Bounded semantic facts used for routing; never an expanded agent prompt."""
+
+    user_intent: str
+    task_type: str
+    requested_operation: str
+    target_scope: str
+    explicit_constraints: tuple[str, ...]
+    mutation_expected: bool
+    execution_required: bool
+    repository_required: bool
+    research_required: bool
+    vision_required: bool
+    security_sensitive: bool
+    migration_sensitive: bool
+    concurrency_sensitive: bool
+    estimated_repository_scope: str
+    estimated_working_context: int
+    validation_available: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ContextLoadPlan:
+    """Quattro-owned optional context gates; runtime/Codex policy remains external."""
+
+    profile: ContextProfile
+    load_memory_policy: bool
+    load_mandatory_policy: bool
+    load_retrieval: bool
+    load_coordination: bool
+    load_delegation_policy: bool
+    load_full_skill_bodies: bool = False
+
+
+def extract_routing_task_input(request: str, *, workflow: str = "general-task") -> RoutingTaskInput:
+    """Extract cheap routing facts without including bootstrap, skills, RAG, or history."""
+    text = " ".join(request.split())[:16_000]
+    clone = bool(_CLONE_OPERATION.search(text))
+    mutation = bool(_MUTATION.search(text)) or clone
+    no_mutation = bool(re.search(
+        r"\b(?:do not|don't|without)\s+(?:modify|change|edit|write|update|delete|remove|clone)\b",
+        text,
+        re.IGNORECASE,
+    ))
+    if no_mutation and not clone:
+        mutation = False
+    operation = (
+        "clone" if clone else
+        "security_review" if _SECURITY.search(text) else
+        "diagnose" if _DIAGNOSIS.search(text) else
+        "design" if _VISION.search(text) else
+        "research" if _RESEARCH.search(text) else
+        "mutate" if mutation else
+        "read" if _MECHANICAL_READ.search(text) else
+        "respond"
+    )
+    repository_required = clone or workflow != "direct-response" and bool(
+        mutation or _DIAGNOSIS.search(text) or _ARCHITECTURE.search(text)
+        or _DATABASE.search(text) or _SECURITY.search(text)
+    )
+    constraints = tuple(dict.fromkeys(
+        match.group(0).strip()[:160]
+        for match in re.finditer(
+            r"\b(?:do not|don't|without|must|only)\b[^.;\n]{0,140}", text, re.IGNORECASE
+        )
+    ))[:8]
+    prompt_tokens = max(1, math.ceil(len(text) / 4))
+    task_type = _task_type(text, mutation)
+    return RoutingTaskInput(
+        user_intent=text[:2_000],
+        task_type=task_type,
+        requested_operation=operation,
+        target_scope=("system" if _SYSTEM_SCOPE.search(text) else "multi_module" if _MULTI_SCOPE.search(text) else "local"),
+        explicit_constraints=constraints,
+        mutation_expected=mutation,
+        execution_required=mutation or clone,
+        repository_required=repository_required,
+        research_required=bool(_RESEARCH.search(text)),
+        vision_required=bool(_VISION.search(text)),
+        security_sensitive=bool(_SECURITY.search(text)),
+        migration_sensitive=bool(_DATABASE.search(text)),
+        concurrency_sensitive=bool(_CONCURRENCY.search(text)),
+        estimated_repository_scope=("system" if _SYSTEM_SCOPE.search(text) else "multi_module" if _MULTI_SCOPE.search(text) else "local"),
+        estimated_working_context=prompt_tokens,
+        validation_available=bool(_STRONG_VALIDATION.search(text) or _TRIVIAL_OPERATION.search(text) or _TRIVIAL_CONVERSATION.fullmatch(text)),
+    )
+
+
+def context_profile_for_task(profile: TaskProfile) -> ContextProfile:
+    if "vision" in profile.required_capabilities:
+        return ContextProfile.DESIGN
+    if profile.task_type == "security":
+        return ContextProfile.SECURITY_REVIEW
+    if {"repository_read", "repository_write", "git", "shell"} & set(profile.required_capabilities):
+        return ContextProfile.REPOSITORY_EXECUTION
+    if profile.task_type == "conversation":
+        return ContextProfile.CHAT_MINIMAL
+    return ContextProfile.CODE_SIMPLE
+
+
+def context_load_plan(profile: TaskProfile) -> ContextLoadPlan:
+    selected = context_profile_for_task(profile)
+    repository_mutation = "repository_write" in profile.required_capabilities
+    return ContextLoadPlan(
+        profile=selected,
+        load_memory_policy=True,
+        load_mandatory_policy=True,
+        load_retrieval=selected is not ContextProfile.CHAT_MINIMAL,
+        load_coordination=repository_mutation,
+        load_delegation_policy=selected is not ContextProfile.CHAT_MINIMAL,
+        # Quattro never injects Codex skill bodies. Codex owns skill discovery
+        # and lazy loading through its supported runtime integration.
+        load_full_skill_bodies=False,
+    )
+
+
+def with_context_estimates(
+    profile: TaskProfile, *, task_context_tokens: int, protocol_overhead_tokens: int,
+) -> TaskProfile:
+    """Update only capacity facts; semantic tier and quality remain unchanged."""
+    task_tokens = max(1, int(task_context_tokens))
+    protocol_tokens = max(0, int(protocol_overhead_tokens))
+    final_tokens = task_tokens + protocol_tokens
+    capabilities = set(profile.required_capabilities)
+    if final_tokens >= 32_000:
+        capabilities.add("long_context")
+    else:
+        capabilities.discard("long_context")
+    return replace(
+        profile,
+        context_requirement=_context_class(final_tokens),
+        estimated_tokens=final_tokens,
+        task_context_tokens=task_tokens,
+        protocol_overhead_tokens=protocol_tokens,
+        final_request_tokens=final_tokens,
+        required_capabilities=tuple(sorted(capabilities)),
+    )
+
+
 def profile_task(
     request: str,
     *,
@@ -406,19 +577,23 @@ def profile_task(
     conversation_tokens: int = 0,
     retrieved_tokens: int = 0,
     tool_schema_tokens: int = 0,
+    protocol_overhead_tokens: int = 0,
     output_reserve_tokens: int = 2_000,
     write_scopes: Sequence[str] = (),
     quality_thresholds: Mapping[str, float] | None = None,
 ) -> TaskProfile:
     """Build a transparent multi-signal profile without calling a classifier model."""
-    text = " ".join(request.split())[:16_000]
+    routing_input = extract_routing_task_input(request, workflow=workflow)
+    text = routing_input.user_intent
     prompt_tokens = max(1, math.ceil(len(text) / 4))
-    estimated_tokens = max(1, prompt_tokens + max(0, conversation_tokens) + max(0, retrieved_tokens)
-                           + max(0, tool_schema_tokens) + max(0, output_reserve_tokens))
+    task_context_tokens = max(1, prompt_tokens + max(0, conversation_tokens) + max(0, retrieved_tokens)
+                              + max(0, tool_schema_tokens) + max(0, output_reserve_tokens))
     if re.search(r"\b(?:huge|very large|entire|whole)\b.{0,32}\b(?:context|repository|codebase)\b", text, re.I):
-        estimated_tokens = max(estimated_tokens, 100_000)
+        task_context_tokens = max(task_context_tokens, 100_000)
+    protocol_tokens = max(0, protocol_overhead_tokens)
+    final_request_tokens = task_context_tokens + protocol_tokens
     signals: list[str] = []
-    mutation = bool(_MUTATION.search(text))
+    mutation = routing_input.mutation_expected
     if re.search(
         r"\b(?:do not|don't|without)\s+(?:modify|change|edit|write|update|delete|remove)\b",
         text,
@@ -426,6 +601,7 @@ def profile_task(
     ):
         mutation = len(list(_MUTATION.finditer(text))) > 1
     trivial = bool(_TRIVIAL_OPERATION.search(text))
+    trivial_conversation = bool(_TRIVIAL_CONVERSATION.fullmatch(text))
     mechanical_read = bool(_MECHANICAL_READ.search(text)) and not mutation
     diagnosis = bool(_DIAGNOSIS.search(text))
     architecture = bool(_ARCHITECTURE.search(text))
@@ -492,10 +668,6 @@ def profile_task(
     if diagnosis and re.search(r"\b(?:intermittent|flaky|unknown|cannot reproduce|nondeterministic)\b", text, re.I):
         ambiguity_score += 1
         signals.append("diagnostic_uncertainty")
-    if estimated_tokens >= 32_000:
-        complexity_score += 2
-        reasoning_score += 1
-        signals.append("large_context")
     if policy_name in {"audit-read-only", "review-untrusted"} and "security" in workflow:
         risk_score = max(risk_score, 4)
         reasoning_score = max(reasoning_score, 3)
@@ -523,7 +695,7 @@ def profile_task(
         risk_score = 0
         signals.append("localized_mechanical_read")
 
-    if trivial or mechanical_read:
+    if trivial or mechanical_read or trivial_conversation:
         scope = Scope.LOCAL
     elif system_scope or scope_score >= 3:
         scope = Scope.SYSTEM
@@ -535,7 +707,10 @@ def profile_task(
         scope = Scope.LOCAL
 
     verification = VerificationStrength.MODERATE
-    if _STRONG_VALIDATION.search(text) or trivial or (_MECHANICAL_READ.search(text) and not mutation):
+    if (
+        _STRONG_VALIDATION.search(text) or trivial or trivial_conversation
+        or (_MECHANICAL_READ.search(text) and not mutation)
+    ):
         verification = VerificationStrength.STRONG
         signals.append("strong_validation")
     if _WEAK_VALIDATION.search(text) or (diagnosis and not _STRONG_VALIDATION.search(text)):
@@ -564,7 +739,6 @@ def profile_task(
         or verification is VerificationStrength.WEAK and complexity is Level.HIGH
         or verification is VerificationStrength.WEAK and ambiguity is Level.HIGH
         or architecture or concurrency
-        or estimated_tokens >= 100_000 and mutation
         or task_type_requires_reasoning(_task_type(text, mutation))
     ):
         tier = RoutingTierName.REASONING
@@ -585,7 +759,7 @@ def profile_task(
         capabilities.update({"repository_write", "git"})
     if _RESEARCH.search(text):
         capabilities.add("research")
-    if estimated_tokens >= 32_000:
+    if final_request_tokens >= 32_000:
         capabilities.add("long_context")
     if _VISION.search(text):
         capabilities.add("vision")
@@ -598,7 +772,7 @@ def profile_task(
             raw = quality_thresholds.get(key)
             if isinstance(raw, (int, float)) and not isinstance(raw, bool) and 0 <= raw <= 1:
                 thresholds[key] = float(raw)
-    return TaskProfile(
+    provisional = TaskProfile(
         task_type=_task_type(text, mutation),
         complexity=complexity,
         ambiguity=ambiguity,
@@ -606,8 +780,12 @@ def profile_task(
         scope=scope,
         reasoning_depth=reasoning_depth,
         verification_strength=verification,
-        context_requirement=_context_class(estimated_tokens),
-        estimated_tokens=estimated_tokens,
+        context_requirement=_context_class(final_request_tokens),
+        estimated_tokens=final_request_tokens,
+        task_context_tokens=task_context_tokens,
+        protocol_overhead_tokens=protocol_tokens,
+        final_request_tokens=final_request_tokens,
+        context_profile=ContextProfile.CODE_SIMPLE,
         required_capabilities=tuple(sorted(capabilities)),
         minimum_quality=thresholds[tier.value],
         tier=tier,
@@ -620,6 +798,7 @@ def profile_task(
             "reasoning": reasoning_score,
         },
     )
+    return replace(provisional, context_profile=context_profile_for_task(provisional))
 
 
 def task_type_requires_reasoning(task_type: str) -> bool:

@@ -14,6 +14,7 @@ from quattro_agent.routing_intelligence import (
     Availability,
     BenchmarkEvidence,
     ContextClass,
+    ContextProfile,
     Level,
     ModelCandidate,
     PreferenceMode,
@@ -22,12 +23,14 @@ from quattro_agent.routing_intelligence import (
     Scope,
     benchmark_quality,
     canonical_model_identity,
+    context_load_plan,
     evaluate_candidates,
     load_benchmark_cache,
     load_local_outcomes,
     model_identity_record,
     normalize_benchmark_score,
     profile_task,
+    extract_routing_task_input,
     record_local_outcome,
     replay_snapshot,
     routing_snapshot,
@@ -70,6 +73,50 @@ def candidate(
 
 
 class TaskProfileMatrixTests(unittest.TestCase):
+    def test_trivial_conversation_with_huge_protocol_overhead_stays_fast(self) -> None:
+        result = profile_task("reply with hello", protocol_overhead_tokens=50_000)
+        self.assertEqual(result.tier, RoutingTierName.FAST)
+        self.assertEqual(result.complexity, Level.LOW)
+        self.assertEqual(result.minimum_quality, 0.45)
+        self.assertLess(result.task_context_tokens, 3_000)
+        self.assertEqual(result.protocol_overhead_tokens, 50_000)
+        self.assertEqual(
+            result.final_request_tokens,
+            result.task_context_tokens + result.protocol_overhead_tokens,
+        )
+        self.assertIn("long_context", result.required_capabilities)
+
+    def test_simple_clone_with_huge_protocol_overhead_is_repository_execution(self) -> None:
+        prompt = "Clone https://github.com/example/example into the default project directory."
+        routing_input = extract_routing_task_input(prompt)
+        result = profile_task(prompt, protocol_overhead_tokens=50_000)
+        self.assertEqual(routing_input.requested_operation, "clone")
+        self.assertTrue(routing_input.repository_required)
+        self.assertEqual(result.task_type, "repository_execution")
+        self.assertIn(result.tier, {RoutingTierName.FAST, RoutingTierName.STANDARD})
+        self.assertNotEqual(result.tier, RoutingTierName.REASONING)
+        for capability in ("git", "shell", "repository_read", "repository_write"):
+            self.assertIn(capability, result.required_capabilities)
+
+    def test_context_load_profiles_gate_only_quattro_owned_optional_context(self) -> None:
+        chat = context_load_plan(profile_task("reply with hello"))
+        self.assertEqual(chat.profile, ContextProfile.CHAT_MINIMAL)
+        self.assertFalse(chat.load_retrieval)
+        self.assertFalse(chat.load_coordination)
+        self.assertFalse(chat.load_delegation_policy)
+        self.assertFalse(chat.load_full_skill_bodies)
+        self.assertTrue(chat.load_memory_policy)
+        repository = context_load_plan(profile_task("Clone https://github.com/example/example"))
+        self.assertEqual(repository.profile, ContextProfile.REPOSITORY_EXECUTION)
+        self.assertTrue(repository.load_retrieval)
+        self.assertTrue(repository.load_coordination)
+        security = context_load_plan(profile_task("Review an authorization bypass"))
+        self.assertEqual(security.profile, ContextProfile.SECURITY_REVIEW)
+        self.assertTrue(security.load_retrieval)
+        vision = profile_task("Inspect this screenshot and explain the visual regression")
+        self.assertEqual(vision.context_profile, ContextProfile.DESIGN)
+        self.assertIn("vision", vision.required_capabilities)
+
     def assert_profile(
         self,
         prompt: str,
@@ -151,6 +198,16 @@ class CandidateGateAndSelectionTests(unittest.TestCase):
         huge = profile_task("Analyze the entire repository with huge context before implementing")
         result = evaluate_candidates(huge, [candidate("small", limit=32_000), candidate("large", limit=200_000, quality=0.9)])
         self.assertEqual(result.selected_model, "large")
+        self.assertIn("insufficient_context", result.candidates[0].rejection_reasons)
+
+    def test_fast_quality_with_large_final_request_uses_context_as_fit_only(self) -> None:
+        fast = profile_task("reply with hello", protocol_overhead_tokens=68_000)
+        result = evaluate_candidates(fast, [
+            candidate("small", limit=32_000, quality=0.6, cost=0.01),
+            candidate("fits", limit=128_000, quality=0.6, cost=0.1),
+        ])
+        self.assertEqual(fast.tier, RoutingTierName.FAST)
+        self.assertEqual(result.selected_model, "fits")
         self.assertIn("insufficient_context", result.candidates[0].rejection_reasons)
 
     def test_15_low_cost_below_quality_candidate_is_rejected(self) -> None:

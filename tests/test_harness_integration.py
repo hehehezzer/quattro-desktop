@@ -187,6 +187,32 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(request.full_url, "http://localhost:20128/api/v1/responses")
         self.assertTrue(json.loads(request.data.decode("utf-8"))["model"])
 
+    def test_direct_hello_skips_optional_retrieval_and_stays_fast(self):
+        class Response:
+            headers = {}
+
+            def read(self, _limit):
+                return b'{"output_text":"hello"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        with (
+            mock.patch.object(self.runtime, "_retrieval_context", return_value="SHOULD_NOT_LOAD") as retrieval,
+            mock.patch("quattro_harness.urllib.request.urlopen", return_value=Response()) as open_request,
+        ):
+            result = self.runtime.direct_response(project=self.project, prompt="reply with hello")
+        retrieval.assert_not_called()
+        request = open_request.call_args.args[0]
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["input"], "reply with hello")
+        self.assertEqual(result["routing"]["tier"], "FAST")
+        self.assertEqual(result["context"]["profile"], "CHAT_MINIMAL")
+        self.assertEqual(result["retrieval"]["route"], "gated")
+
     def test_simple_delegation_is_declined_without_worker(self):
         with mock.patch.object(self.runtime, "run_task") as run:
             task_id, exit_code, report = self.runtime.delegate_to_pi(
@@ -405,6 +431,59 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         transported = json.loads(environment["QUATTRO_ROUTING_ENVELOPE"])
         self.assertEqual(transported, envelope)
         self.assertNotIn("Fix a typo", environment["QUATTRO_ROUTING_ENVELOPE"])
+
+    def test_chat_minimal_gates_retrieval_coordination_and_delegation_text(self):
+        task_id = self.runtime.create_task(
+            agent="codex", project=self.project, prompt="reply with hello", mode="prompt",
+        )
+        task = self.runtime.store.get_task(task_id, include_private=True)
+        run_id = self.runtime.store.create_run(task_id)
+        with (
+            mock.patch.object(self.runtime, "_retrieval_context", return_value="SHOULD_NOT_LOAD") as retrieval,
+            mock.patch.object(self.runtime.coordinator, "context", return_value="COORDINATION_MARKER") as coordination,
+        ):
+            argv, stdin, _environment = self.runtime._agent_plan(
+                task, run_id, PolicyProfile.from_dict(task["policy"])
+            )
+        retrieval.assert_not_called()
+        coordination.assert_not_called()
+        self.assertNotIn("SHOULD_NOT_LOAD", stdin or "")
+        joined = " ".join(argv)
+        self.assertNotIn("COORDINATION_MARKER", joined)
+        self.assertNotIn("delegate one bounded read-only specialist", joined)
+        snapshot = self.runtime.store.get_task(task_id, include_private=True)["private_payload"]["routingSnapshot"]
+        self.assertEqual(snapshot["task_profile"]["tier"], "FAST")
+        self.assertEqual(snapshot["task_profile"]["context_profile"], "CHAT_MINIMAL")
+        assembled = next(
+            event["payload"] for event in self.runtime.store.display_events(task_id)
+            if event["type"] == "context.assembled"
+        )
+        self.assertEqual(assembled["contextProfile"], "CHAT_MINIMAL")
+        self.assertGreater(assembled["finalRequestTokens"], assembled["taskContextTokens"])
+        self.assertFalse(assembled["runtimeOwnedOverheadMeasured"])
+
+    def test_repository_mutation_keeps_required_quattro_context(self):
+        task_id = self.runtime.create_task(
+            agent="codex", project=self.project,
+            prompt="Clone https://github.com/example/example into the default project directory.",
+            mode="prompt",
+        )
+        task = self.runtime.store.get_task(task_id, include_private=True)
+        run_id = self.runtime.store.create_run(task_id)
+        with (
+            mock.patch.object(self.runtime, "_retrieval_context", return_value="RELEVANT_RETRIEVAL") as retrieval,
+            mock.patch.object(self.runtime.coordinator, "context", return_value="COORDINATION_MARKER") as coordination,
+        ):
+            argv, stdin, _environment = self.runtime._agent_plan(
+                task, run_id, PolicyProfile.from_dict(task["policy"])
+            )
+        retrieval.assert_called_once()
+        coordination.assert_called_once()
+        self.assertIn("RELEVANT_RETRIEVAL", stdin or "")
+        joined = " ".join(argv)
+        self.assertIn("COORDINATION_MARKER", joined)
+        self.assertIn("MANDATORY OPERATIONAL POLICY", joined)
+        self.assertIn("delegate one bounded read-only specialist", joined)
 
     def test_native_codex_effort_is_ignored_in_both_directions(self):
         account_home = self.root / "account-native-effort"

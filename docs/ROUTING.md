@@ -46,7 +46,8 @@ used.
 - task type;
 - complexity, ambiguity, risk, scope, and reasoning depth;
 - verification strength;
-- estimated context tokens and context class;
+- task-context, protocol-overhead, and final-request token estimates;
+- context class and the selected bounded context profile;
 - hard required capabilities;
 - minimum quality threshold;
 - transparent signals and component scores.
@@ -58,6 +59,57 @@ bounded signals, never the sole classifier. Operation semantics take
 precedence over stray nouns: a localized README rename remains FAST even if
 the prose mentions authentication, while a short authorization-bypass request
 is REASONING.
+
+## Routing context semantics
+
+Task difficulty and request size are independent axes. Quattro builds a bounded
+`RoutingTaskInput` from the user operation and explicit task metadata; it never
+profiles the expanded Codex bootstrap, skill catalog, permission inventory,
+AGENTS content, raw retrieval blobs, or previous transcript.
+
+- `task_context_tokens` estimates the user request plus relevant conversation,
+  retrieval, task-specific schemas, and output reserve.
+- `protocol_overhead_tokens` estimates Quattro-owned static policy,
+  coordination, and delegation instructions.
+- `final_request_tokens` is their sum and remains the compatibility value
+  exposed as legacy `estimated_tokens`.
+
+Complexity, reasoning depth, and the quality floor come only from semantic
+work, ambiguity, scope, risk, and verification. Protocol overhead cannot raise
+those values. Final request size still adds `long_context` and is a hard
+practical-context gate: a FAST request estimated at 70k rejects a 32k model but
+remains FAST when a sufficiently capable 128k model is available.
+
+Codex constructs additional system, tool, skill, sandbox, permission, AGENTS,
+environment, and session bootstrap context after Quattro launches it. Quattro
+does not read or duplicate that private request. Consequently diagnostics mark
+runtime-owned overhead as unmeasured; OmniRoute's final request pipeline remains
+authoritative for actual wire-size compatibility.
+
+## Context gating
+
+Quattro uses five coarse profiles rather than task-specific prompt templates:
+
+| Profile | Quattro-owned optional context |
+| --- | --- |
+| `CHAT_MINIMAL` | memory policy and mandatory operational policy only |
+| `CODE_SIMPLE` | bounded retrieval plus delegation policy |
+| `REPOSITORY_EXECUTION` | bounded retrieval; coordination only for mutation; delegation policy |
+| `SECURITY_REVIEW` | bounded relevant retrieval and delegation policy |
+| `DESIGN` | bounded relevant retrieval and vision requirement |
+
+The compact memory trust/storage policy and mandatory workspace rule remain
+always loaded. Memory *content* remains gated through bounded retrieval.
+Detailed cooperative-session context is omitted only when the task has no
+repository-write capability; mutation tasks retain conflict prevention and
+write-scope instructions. Quattro never loads Codex skill bodies, permission
+prefix inventories, or generated AGENTS instructions itself, so those remain
+Codex/runtime-owned and must use Codex-supported lazy loading and tool-side
+enforcement rather than binary patches.
+
+`context.assembled` records counts and categories, never raw private context.
+Run `python scripts/routing/measure_context.py` for content-free synthetic
+before/after measurements of the Quattro-owned portion.
 
 Tier semantics are minimum quality requirements, not model names:
 
@@ -307,6 +359,9 @@ such unresolved evidence. No further automatic transition is possible.
 
 ## Context efficiency
 
-Tier selection works independently of the existing deterministic retrieval
-router. Quattro continues to inject only bounded relevant retrieval and
-mandatory-policy context; it adds neither a second RAG index nor a new gateway.
+Tier selection is independent of retrieval and protocol size. Trivial chat
+skips optional retrieval, coordination, and delegation text. Project work keeps
+bounded relevant retrieval; repository mutations retain coordination. Static
+policy blocks stay in stable order to remain cache-friendly where the provider
+supports prefix caching, but Quattro does not claim a cache hit without runtime
+evidence.
