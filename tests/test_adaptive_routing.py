@@ -16,6 +16,7 @@ from quattro_agent.adaptive_routing import (
     OmniRouteAdaptiveClient,
     build_adaptive_decision,
     encode_routing_header,
+    evaluate_candidates,
     model_candidates_from_snapshot,
     update_envelope_context,
 )
@@ -161,6 +162,21 @@ class AdaptiveRoutingTests(unittest.TestCase):
         mapped = model_candidates_from_snapshot(snapshot, profile)
         self.assertIsNone(mapped[0].input_cost_per_million)
         self.assertIsNone(mapped[0].output_cost_per_million)
+
+    def test_fast_tie_break_does_not_promote_high_effort_variant(self):
+        profile = profile_task("say hello")
+        mapped = model_candidates_from_snapshot(
+            {"candidates": [
+                candidate("gpt-5.6-luna-high", price=1.0),
+                candidate("gpt-5.6-luna-low", price=1.0),
+            ]},
+            profile,
+        )
+        self.assertEqual([row.reasoning_effort for row in mapped], ["high", "low"])
+        selection = evaluate_candidates(profile, mapped)
+        self.assertEqual(selection.selected_model, "gpt-5.6-luna-low")
+        self.assertEqual(selection.candidates[0].reasoning_effort, "high")
+        self.assertEqual(selection.candidates[0].rank, 2)
 
     def test_malformed_candidate_metadata_fails_closed(self):
         profile = profile_task("fix a typo in README.md")

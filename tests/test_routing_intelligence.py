@@ -32,6 +32,7 @@ from quattro_agent.routing_intelligence import (
     normalize_benchmark_score,
     profile_task,
     profile_pre_routing_input,
+    quality_estimate,
     extract_routing_task_input,
     record_local_outcome,
     replay_snapshot,
@@ -224,6 +225,13 @@ class TaskProfileMatrixTests(unittest.TestCase):
     def test_12_trivial_docs(self) -> None:
         self.assert_profile("Update the docs label from Old to New", RoutingTierName.FAST, task_type="documentation")
 
+    def test_internal_title_generation_is_trivial_conversation(self) -> None:
+        result = profile_task("generate a task title")
+        self.assertEqual(result.task_type, "conversation")
+        self.assertEqual(result.tier, RoutingTierName.FAST)
+        self.assertEqual(result.minimum_quality, 0.45)
+        self.assertNotIn("repository_write", result.required_capabilities)
+
 
 class CandidateGateAndSelectionTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -331,6 +339,44 @@ class EvidenceAndReplayTests(unittest.TestCase):
         self.assertGreater(confidence, 0)
         self.assertEqual(canonical_model_identity("provider-a", "gpt-test-lite")[2], "lite")
         self.assertIn("external_aliases", model_identity_record("provider-a", "gpt-test-lite"))
+
+    def test_reasoning_effort_suffix_maps_to_base_benchmark_identity(self) -> None:
+        provider, canonical, variant, effort = canonical_model_identity(
+            "provider-a", "gpt-test-high"
+        )
+        self.assertEqual((provider, canonical, variant, effort), (
+            "provider-a", "gpt-test", "base", "high"
+        ))
+        profile = profile_task("Implement a repository feature and tests")
+        score, confidence = benchmark_quality(
+            candidate("gpt-test-high"), profile, [self.benchmark()]
+        )
+        self.assertIsNotNone(score)
+        self.assertGreater(confidence, 0)
+
+    def test_sufficient_local_outcomes_are_consumed_for_matching_runtime_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = pathlib.Path(temporary) / "outcomes.json"
+            for _ in range(20):
+                record_local_outcome(
+                    path,
+                    provider="provider-a",
+                    model="model-a-high",
+                    task_type="implementation",
+                    tier="STANDARD",
+                    execution_success=True,
+                    validated_success=True,
+                )
+            loaded = load_local_outcomes(path)
+        profile = profile_task("Implement a normal API feature and unit tests")
+        stats = loaded[("provider-a", "model-a-high", "implementation", "STANDARD")]
+        estimate, components = quality_estimate(
+            candidate("model-a-high", quality=0.50), profile,
+            benchmark_records=(), local_stats=stats,
+        )
+        self.assertEqual(components["local"], 1.0)
+        self.assertEqual(components["local_confidence"], 1.0)
+        self.assertGreater(estimate, 0.65)
 
     def test_local_outcomes_require_samples_before_strong_influence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

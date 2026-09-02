@@ -165,13 +165,23 @@ Candidate evaluation is lexicographic:
 
 ```text
 capability -> practical context -> availability -> quality floor
-           -> expected completion cost -> latency -> stable identity
+           -> expected completion cost -> normal effort tie-break -> latency
+           -> stable identity
 ```
 
 Cost cannot compensate for a missing capability, insufficient context,
 unavailability, or a quality estimate below the task floor. Expected completion
 cost includes a bounded geometric retry estimate and escalation reserve rather
 than comparing raw input-token price alone.
+
+When OmniRoute exposes the same model at multiple reasoning-effort suffixes,
+the effort suffix is normalized back to the base model for benchmark evidence
+(`gpt-5.6-luna-high` uses the `gpt-5.6-luna` evidence). Product variants such
+as `lite`, `mini`, or `web` remain separate. Cost remains the first ordering
+key; an equal-cost tie is resolved toward the task's lower normal effort so a
+FAST request cannot be promoted to a `-high` variant merely because that ID
+sorts first. The selected effort is retained in the sanitized candidate
+diagnostic.
 
 ## Benchmark cache and refresh
 

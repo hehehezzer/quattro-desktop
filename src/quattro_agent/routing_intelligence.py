@@ -278,6 +278,7 @@ class ModelCandidate:
     expected_output_tokens: int
     latency_ms: float
     stable_key: str = ""
+    reasoning_effort: str = "default"
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +294,7 @@ class CandidateDecision:
     quality_confidence: float = 0.0
     pricing_state: str = "unknown"
     rank: int | None = None
+    reasoning_effort: str = "default"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self) | {
@@ -342,6 +344,7 @@ def model_selection_from_dict(value: Mapping[str, Any] | None) -> ModelSelection
                 quality_confidence=float(row.get("quality_confidence", 0.0)),
                 pricing_state=str(row.get("pricing_state", "unknown")),
                 rank=(int(row["rank"]) if row.get("rank") is not None else None),
+                reasoning_effort=str(row.get("reasoning_effort", "default")),
             ))
         except (KeyError, TypeError, ValueError):
             continue
@@ -357,6 +360,11 @@ def model_selection_from_dict(value: Mapping[str, Any] | None) -> ModelSelection
 _TRIVIAL_OPERATION = re.compile(
     r"\b(?:fix\s+(?:a\s+)?typo|rename\s+[\w.`/-]+\s+to\s+[\w.`/-]+|"
     r"format|reformat|update\s+(?:the\s+)?docs?|documentation only|change\s+(?:a\s+)?label)\b",
+    re.IGNORECASE,
+)
+_TRIVIAL_INTERNAL = re.compile(
+    r"\b(?:generate|create|suggest|draft|write)\s+(?:a\s+)?"
+    r"(?:concise\s+)?(?:task|ticket|issue)\s+title\b|\btitle\s+this\s+task\b",
     re.IGNORECASE,
 )
 _TRIVIAL_CONVERSATION = re.compile(
@@ -440,6 +448,8 @@ def _context_class(tokens: int) -> ContextClass:
 
 
 def _task_type(text: str, mutation: bool) -> str:
+    if _TRIVIAL_INTERNAL.search(text):
+        return "conversation"
     if _CLONE_OPERATION.search(text):
         return "repository_execution"
     if _TRIVIAL_OPERATION.search(text) and re.search(r"\b(?:docs?|documentation|readme)\b", text, re.I):
@@ -592,7 +602,8 @@ def extract_routing_task_input(request: str, *, workflow: str = "general-task") 
     """Extract cheap routing facts without including bootstrap, skills, RAG, or history."""
     text = " ".join(request.split())[:16_000]
     clone = bool(_CLONE_OPERATION.search(text))
-    mutation = bool(_MUTATION.search(text)) or clone
+    trivial_internal = bool(_TRIVIAL_INTERNAL.search(text))
+    mutation = (bool(_MUTATION.search(text)) and not trivial_internal) or clone
     no_mutation = bool(re.search(
         r"\b(?:do not|don't|without)\s+(?:modify|change|edit|write|update|delete|remove|clone)\b",
         text,
@@ -725,7 +736,7 @@ def profile_task(
         re.IGNORECASE,
     ):
         mutation = len(list(_MUTATION.finditer(text))) > 1
-    trivial = bool(_TRIVIAL_OPERATION.search(text))
+    trivial = bool(_TRIVIAL_OPERATION.search(text) or _TRIVIAL_INTERNAL.search(text))
     trivial_conversation = bool(_TRIVIAL_CONVERSATION.fullmatch(text))
     mechanical_read = bool(_MECHANICAL_READ.search(text)) and not mutation
     diagnosis = bool(_DIAGNOSIS.search(text))
@@ -954,8 +965,10 @@ def task_type_requires_reasoning(task_type: str) -> bool:
 def canonical_model_identity(provider: str, model: str) -> tuple[str, str, str, str]:
     """Return provider, canonical model, variant and reasoning effort.
 
-    Variant suffixes deliberately remain distinct; evidence for a base model is
-    not silently assigned to lite/high/web variants.
+    Reasoning-effort suffixes are transport/runtime variants of the same model
+    and therefore normalize to the same canonical identity.  Product variants
+    such as lite/high/web remain distinct through the separate ``variant``
+    field; evidence for those variants is not silently shared.
     """
     provider_id = provider.strip().lower()
     raw = model.strip().lower()
@@ -964,12 +977,19 @@ def canonical_model_identity(provider: str, model: str) -> tuple[str, str, str, 
         if raw.endswith(f":{candidate}") or raw.endswith(f"-{candidate}"):
             effort = candidate
             break
+    # OmniRoute exposes the same Codex family at several reasoning efforts,
+    # e.g. ``gpt-5.6-luna-high``.  Strip only the recognized terminal effort
+    # token before matching the official base-model evidence.  Do not strip
+    # arbitrary suffixes: model/product variants must remain isolated.
+    canonical_model = raw
+    if effort != "default":
+        canonical_model = re.sub(rf"(?:^|[-:]){re.escape(effort)}$", "", canonical_model)
     variant = "base"
     for candidate in ("lite", "mini", "nano", "flash", "pro", "web", "preview"):
         if re.search(rf"(?:^|[-:/]){candidate}(?:$|[-:/])", raw):
             variant = candidate
             break
-    canonical = re.sub(r"^(?:[^/]+/)", "", raw)
+    canonical = re.sub(r"^(?:[^/]+/)", "", canonical_model)
     return provider_id, canonical, variant, effort
 
 
@@ -1168,6 +1188,8 @@ def quality_estimate(
     benchmark_records: Sequence[BenchmarkEvidence],
     local_stats: LocalOutcomeStats | None,
     quality_weights: Mapping[str, float] | None = None,
+    *,
+    now: datetime | None = None,
 ) -> tuple[float, dict[str, float]]:
     configured = dict(QUALITY_WEIGHTS)
     if quality_weights:
@@ -1175,7 +1197,9 @@ def quality_estimate(
             raw = quality_weights.get(key)
             if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw >= 0:
                 configured[key] = float(raw)
-    benchmark, benchmark_confidence = benchmark_quality(candidate, profile, benchmark_records)
+    benchmark, benchmark_confidence = benchmark_quality(
+        candidate, profile, benchmark_records, now=now
+    )
     local, local_confidence = local_quality(local_stats)
     components = {"metadata": min(1.0, max(0.0, candidate.metadata_quality))}
     weights = {"metadata": configured["metadata"]}
@@ -1216,6 +1240,33 @@ def expected_completion_cost(candidate: ModelCandidate, success_probability: flo
     return attempt * expected_attempts + escalation_reserve
 
 
+_REASONING_EFFORT_ORDER = {
+    "default": 0,
+    "none": 0,
+    "low": 0,
+    "medium": 1,
+    "high": 2,
+    "xhigh": 3,
+    "max": 4,
+    "ultra": 5,
+}
+
+
+def _reasoning_effort_rank(effort: str, tier: RoutingTierName) -> int:
+    """Tie-break model effort variants without overriding completion cost.
+
+    OmniRoute exposes effort variants as separate candidate model IDs.  A FAST
+    request must not select a ``-high`` variant merely because its model name
+    sorts first when the cheaper/equally priced candidate pool also has a
+    lower-effort variant.  Cost remains the primary ordering key; this is only
+    a deterministic policy tie-break after cost (and before latency/identity).
+    """
+    rank = _REASONING_EFFORT_ORDER.get(effort.lower(), 0)
+    if tier is RoutingTierName.REASONING:
+        return abs(2 - rank)
+    return rank
+
+
 def evaluate_candidates(
     profile: TaskProfile,
     candidates: Sequence[ModelCandidate],
@@ -1229,6 +1280,7 @@ def evaluate_candidates(
     decisions: list[CandidateDecision] = []
     local_outcomes = local_outcomes or {}
     required_quality = profile.minimum_quality + (0.05 if preference is PreferenceMode.QUALITY else 0.0)
+    evaluation_now = datetime.now(timezone.utc)
     for candidate in candidates:
         reasons: list[str] = []
         if (
@@ -1272,7 +1324,8 @@ def evaluate_candidates(
         if stats is not None and stats.validation_observed < max(1, local_outcome_min_samples):
             stats = None
         estimate, components = quality_estimate(
-            candidate, profile, benchmark_records, stats, quality_weights
+            candidate, profile, benchmark_records, stats, quality_weights,
+            now=evaluation_now,
         )
         if estimate < required_quality:
             reasons.append("below_quality_threshold")
@@ -1300,11 +1353,13 @@ def evaluate_candidates(
             ),
             quality_confidence=quality_confidence,
             pricing_state=pricing_state,
+            reasoning_effort=candidate.reasoning_effort,
         ))
 
     eligible = [decision for decision in decisions if decision.eligible]
     eligible.sort(key=lambda decision: (
         decision.expected_completion_cost if decision.expected_completion_cost is not None else math.inf,
+        _reasoning_effort_rank(decision.reasoning_effort, profile.tier),
         decision.latency_ms * (0.5 if profile.tier is RoutingTierName.FAST else 1.0),
         decision.provider,
         decision.model,

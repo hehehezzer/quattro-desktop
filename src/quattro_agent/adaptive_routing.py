@@ -26,6 +26,7 @@ from .routing_intelligence import (
     PreferenceMode,
     ROUTING_POLICY_VERSION,
     TaskProfile,
+    canonical_model_identity,
     evaluate_candidates,
     load_benchmark_cache,
     load_local_outcomes,
@@ -301,6 +302,9 @@ def model_candidates_from_snapshot(
         ):
             raise ValueError("candidate output pricing is invalid")
         capabilities = _candidate_capabilities(raw)
+        _provider_identity, _canonical_model, _variant, reasoning_effort = canonical_model_identity(
+            provider, model
+        )
         # Static metadata is deliberately conservative. Verified execution and
         # reasoning flags establish capability, not benchmark-level strength.
         metadata_quality = 0.50
@@ -327,6 +331,7 @@ def model_candidates_from_snapshot(
             expected_output_tokens=max(512, min(8_000, profile.estimated_tokens // 4)),
             latency_ms=math.inf,
             stable_key=route,
+            reasoning_effort=reasoning_effort,
         ))
     return tuple(result)
 
