@@ -265,6 +265,7 @@ class DeploymentManifestTests(unittest.TestCase):
             result = deployment.verify_manifest_files(manifest, source, deployed)
             self.assertFalse(result["allMatch"])
             self.assertEqual(result["driftCount"], 1)
+            self.assertTrue(result["sourceVerified"])
 
     def test_public_mapping_builds_without_removed_wallpaper_asset(self):
         self.assertNotIn("doomsday-wallpaper", DEPLOYMENT_MAPPINGS)

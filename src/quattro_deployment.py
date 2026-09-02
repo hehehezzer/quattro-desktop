@@ -453,6 +453,7 @@ def verify_manifest_files(
         "checked": len(validated["files"]) + len(validated["absentPaths"]),
         "driftCount": len(drift),
         "drift": drift,
+        "sourceVerified": True,
     }
 
 
