@@ -277,6 +277,19 @@ used for the managed child request. Quattro injects the effective value with
 `-c model_reasoning_effort="<tier effort>"` on every Codex dispatch. Task
 metadata and `routing.dispatched` are the source of truth.
 
+The effort provenance is therefore: `classify_request` selects the tier,
+`effective_reasoning_effort` maps the tier to `low`/`medium`/`high`, and
+`HarnessRuntime._agent_plan` injects that value into the Codex command before
+the child starts. Codex serializes it into the Responses request; OmniRoute's
+Responses translator preserves the explicit effort and its provider adapters
+may only perform provider-specific normalization or a capability-safe clamp.
+The optional context-size classifier does not write reasoning effort. The
+previous `medium` → `high` observation was consequently not evidence that a
+large prompt should raise task intelligence; it must be diagnosed at the
+Codex/provider adapter boundary if reproduced. Current regression coverage
+asserts native defaults cannot override the Quattro tier and that context size
+cannot change the tier.
+
 For example, `auto medium` in the parent can execute a file lookup as
 `FAST / auto/coding:cheap / low`. Conversely, a native `low` default executes a
 race/deadlock investigation as `REASONING / auto/reasoning / high`.
