@@ -20,14 +20,20 @@ CORE_DEPLOYMENT_MAPPINGS = {
         f"core-{name.removesuffix('.py')}":
             (f"src/quattro_agent/{name}", f".local/bin/quattro_agent/{name}")
         for name in (
-            "__init__.py", "__main__.py", "adapters.py", "benchmark.py", "cli.py",
+            "__init__.py", "__main__.py", "adapters.py", "adaptive_routing.py",
+            "benchmark.py", "cli.py",
             "collaboration.py", "config.py", "containment.py", "delegation.py", "errors.py",
             "mandatory_context.py", "models.py", "omniroute.py", "paths.py", "policy.py",
-            "privacy.py", "recovery.py", "retrieval.py", "routing.py", "scheduler.py",
+            "privacy.py", "recovery.py", "retrieval.py", "routing.py",
+            "routing_intelligence.py", "scheduler.py",
             "sessions.py", "store.py", "supervisor.py", "terminal_lifecycle.py",
             "validators.py", "workflow.py",
         )
     },
+    "core-initial-routing-evidence": (
+        "src/quattro_agent/data/initial-routing-evidence.json",
+        ".local/bin/quattro_agent/data/initial-routing-evidence.json",
+    ),
     **{
         f"namespace-{relative.replace('/', '-').removesuffix('.py')}":
             (f"src/quattro/{relative}", f".local/bin/quattro/{relative}")

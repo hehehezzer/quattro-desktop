@@ -65,6 +65,15 @@ class CoreDesktopBoundaryTests(unittest.TestCase):
         for source, _deployed in DESKTOP_DEPLOYMENT_MAPPINGS.values():
             self.assertFalse(source.startswith("src/quattro_agent/"))
 
+    def test_core_inventory_contains_all_runtime_python_and_data_files(self):
+        owned = {source for source, _deployed in CORE_DEPLOYMENT_MAPPINGS.values()}
+        expected = {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "src/quattro_agent").rglob("*")
+            if path.is_file() and (path.suffix == ".py" or path.parent.name == "data")
+        }
+        self.assertEqual(expected - owned, set())
+
     def test_desktop_inventory_contains_complete_qml_and_hyprland_sources(self):
         owned = {source for source, _deployed in DESKTOP_DEPLOYMENT_MAPPINGS.values()}
         expected = {
