@@ -280,8 +280,8 @@ preferred candidate for context, quota, health, or capability and then select
 the next eligible preferred candidate. This is runtime fallback, not a second
 semantic classifier.
 
-Quattro, not the native Codex session, owns effective reasoning effort for
-Quattro-managed execution. A parent Codex UI may display `auto medium`, or the
+Except for the explicit Astra choices described below, Quattro owns effective
+reasoning effort for Quattro-managed execution. A parent Codex UI may display `auto medium`, or the
 user may select `xhigh` through `/model`; that displayed/default effort is not
 used for the managed child request. Quattro injects the effective value with
 `-c model_reasoning_effort="<tier effort>"` on every Codex dispatch. Task
@@ -319,6 +319,28 @@ evidence-gated exceptional escalation. OmniRoute's Codex Responses translator
 maps client-side `ultra` to wire-level `max`, so `ultra` is never the normal
 default.
 
+## Astra low/high thinking
+
+`account-1/gpt-6-astra` and `account-2/gpt-6-astra` expose only `low` and
+`high` in the shared Codex picker. Managed Astra dispatch preserves a saved
+`low` or `high` choice. Unsupported saved efforts fall back to `high`.
+Without a saved effort, FAST uses `low` and STANDARD/REASONING uses `high`,
+including exceptional escalation. Astra launches also set Plan mode to the
+same low/high effort. Other models keep their existing tier effort policy.
+
+Each route must be provisioned as a single-target OmniRoute combo pinned to
+its named Codex connection, targeting `codex/gpt-6-astra`. If the gateway's
+synced catalog predates Astra, register the exact model through OmniRoute's
+custom model facility and validate real Responses calls on both accounts.
+A picker entry alone does not provision the gateway route.
+
+OmniRoute must also report a current Codex client version: the local
+integration was validated with `CODEX_CLIENT_VERSION=0.153.4` in the gateway's
+persistent `DATA_DIR/.env`. Restart the gateway after changing that value.
+An obsolete version can produce an upstream "requires a newer version of
+Codex" error even when account authentication is healthy. Test both low and
+high after upgrading. Do not change native account authentication stores.
+
 ## Automatic `/model` behavior
 
 When the selected Codex model is exactly `auto`, Quattro maps the local tier to
@@ -353,14 +375,14 @@ becomes eligible again on the next dispatch.
 ## Manual `/model` behavior and precedence
 
 A concrete `/model` choice is always respected. Only the model/route portion is
-preserved; native reasoning effort is still replaced. If Codex's selected model is
+preserved; native reasoning effort is still replaced for other models. If Codex's selected model is
 anything other than exactly `auto` (for example an account-pinned GPT-5.6
 route or `auto/coding` explicitly chosen by the user), Quattro does not
-replace it. It only sends the automatically selected reasoning effort.
+replace it. It sends the automatically selected reasoning effort except for the Astra policy above.
 
 The shared Codex model catalog is the single picker/direct-selection registry.
-It publishes these Quattro route modes first, followed by the six account-pinned
-GPT-5.6 family routes and the currently verified Antigravity text routes:
+It publishes these Quattro route modes first, followed by the eight account-pinned
+GPT-6 Astra and GPT-5.6 family routes and the currently verified Antigravity text routes:
 
 ```text
 auto
@@ -368,9 +390,11 @@ auto/coding:cheap
 auto/coding
 auto/reasoning
 
+account-1/gpt-6-astra
 account-1/gpt-5.6-sol
 account-1/gpt-5.6-terra
 account-1/gpt-5.6-luna
+account-2/gpt-6-astra
 account-2/gpt-5.6-sol
 account-2/gpt-5.6-terra
 account-2/gpt-5.6-luna
@@ -378,7 +402,7 @@ account-2/gpt-5.6-luna
 antigravity/* (18 text-capable routes)
 ```
 
-The six `account-*/gpt-5.6-*` entries are single-target OmniRoute combos:
+The eight account-qualified GPT-6/GPT-5.6 entries are single-target OmniRoute combos:
 each is pinned to its named Codex OAuth account and has no cross-account
 fallback. The Antigravity entries are a reviewed snapshot of the current
 text-capable provider catalog, including its `no-think/` Claude variants. The

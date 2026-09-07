@@ -101,7 +101,7 @@ Windows.
   enabled. Pi is optional and writable Pi execution remains fail-closed unless
   the runtime can enforce the requested network policy.
 - OmniRoute with the Responses-compatible local endpoint and the Quattro,
-  account-qualified GPT-5.6, and verified Antigravity route labels when direct
+  account-qualified GPT-6 Astra/GPT-5.6, and verified Antigravity route labels when direct
   or Codex execution is used. The endpoint and catalog are configurable;
   Quattro does not bundle OmniRoute.
 - Optional desktop dependencies: Hyprland Lua integration, Quickshell 0.3.x,
@@ -201,7 +201,9 @@ When the selected Codex model is exactly `auto`, Quattro requests:
 | REASONING | `auto/reasoning` | `high` |
 
 A concrete `/model` selection is preserved, while Quattro still controls the
-managed task's effective reasoning effort. OmniRoute makes the provider and
+managed task's effective reasoning effort. Account-pinned GPT-6 Astra is the
+exception: its picker offers only low/high thinking and preserves either
+saved choice. OmniRoute makes the provider and
 model choice inside the eligible pool. Quattro stores sanitized versioned
 decision snapshots and supports `quattro-agent routing profile`, `explain`,
 `replay`, `refresh-evidence`, `record-outcome`, and `status`. Details are in

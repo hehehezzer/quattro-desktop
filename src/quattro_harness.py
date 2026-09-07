@@ -800,10 +800,13 @@ class HarnessRuntime:
         routing_state = self.private_root / "routing"
         routing_config = config.get("routing", {})
         preference = PreferenceMode(str(routing_config.get("preferenceMode", "balanced")))
+        routing_effort = self._dispatch_reasoning_effort(
+            config, routing.display(), model, account_home,
+        )
         request_body: dict[str, Any] = {
             "model": model,
             "input": input_text,
-            "reasoning": {"effort": effective_reasoning_effort(config, routing.display())},
+            "reasoning": {"effort": routing_effort},
         }
         if adaptive and adaptive.envelope:
             request_body["routing"] = dict(adaptive.envelope)
@@ -873,7 +876,9 @@ class HarnessRuntime:
         }
         return {
             "schemaVersion": 1, "decision": decision, "response": output.strip(),
-            "model": model, "routing": routing.display(), "retrieval": diagnostics,
+            "model": model,
+            "routing": routing.display() | {"reasoning_effort": routing_effort},
+            "retrieval": diagnostics,
             "context": {
                 "profile": str(load_plan.profile),
                 "taskContextTokens": profile_snapshot.task_context_tokens,
@@ -912,6 +917,28 @@ class HarnessRuntime:
             return None
         value = parsed.get("model") if isinstance(parsed, Mapping) else None
         return value.strip() if isinstance(value, str) and value.strip() else None
+
+    @staticmethod
+    def _dispatch_reasoning_effort(
+        config: Mapping[str, Any], routing: Mapping[str, Any],
+        model: str | None, account_home: pathlib.Path | None,
+    ) -> str:
+        """Honor the explicit Astra low/high choice at both dispatch boundaries."""
+        effort = effective_reasoning_effort(config, routing)
+        if model not in {"account-1/gpt-6-astra", "account-2/gpt-6-astra"}:
+            return effort
+        selected = None
+        if account_home is not None:
+            try:
+                parsed = tomllib.loads((account_home / "config.toml").read_text(encoding="utf-8"))
+                selected = parsed.get("model_reasoning_effort")
+            except (OSError, tomllib.TOMLDecodeError):
+                pass
+        if isinstance(selected, str) and selected in {"low", "high"}:
+            return selected
+        # An obsolete selection such as medium must never reach Astra. With
+        # no saved choice, retain the inexpensive default for FAST work.
+        return "low" if selected is None and effort == "low" else "high"
 
     @staticmethod
     def _configured_codex_catalog(account_home: pathlib.Path | None) -> pathlib.Path | None:
@@ -1235,12 +1262,13 @@ class HarnessRuntime:
             )
         routing = private.get("routing") if isinstance(private.get("routing"), Mapping) else {}
         routing_tier = str(routing.get("tier", RoutingTier.STANDARD.value))
-        # Re-resolve effort from the Quattro tier at dispatch time. Native
-        # Codex effort is intentionally ignored; the command-line override
-        # below is the effective request authority.
-        routing_effort = effective_reasoning_effort(config, routing)
         model_selection = "automatic" if model_override else "manual"
         model_route = model_override or configured_model or "configured default"
+        # Tier effort remains authoritative except for explicit Astra routes,
+        # whose supported low/high choice is preserved from native config.
+        routing_effort = self._dispatch_reasoning_effort(
+            config, routing, model_route, account_home,
+        )
         # Normal tasks already carry the request-boundary result.  Do not
         # re-rank after Codex context assembly: final size updates the hard
         # context requirement while preserving the pre-routing order.  The
@@ -1383,6 +1411,10 @@ class HarnessRuntime:
         })
         if task["agent"] == "codex":
             memory_args: list[str] = ["-c", f"model_reasoning_effort={json.dumps(routing_effort)}"]
+            if model_route in {"account-1/gpt-6-astra", "account-2/gpt-6-astra"}:
+                memory_args.extend([
+                    "-c", f"plan_mode_reasoning_effort={json.dumps(routing_effort)}",
+                ])
             if (
                 adaptive
                 and adaptive.envelope

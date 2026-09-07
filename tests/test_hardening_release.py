@@ -29,9 +29,9 @@ import quattro_pr_review as review
 
 
 EXPECTED_ACCOUNT_MODEL_ROUTES = tuple(
-    f"account-{account}/gpt-5.6-{family}"
+    f"account-{account}/{model}"
     for account in (1, 2)
-    for family in ("sol", "terra", "luna")
+    for model in ("gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
 )
 EXPECTED_ANTIGRAVITY_TEXT_ROUTES = (
     "antigravity/gemini-3.7-flash-high",
@@ -142,11 +142,11 @@ class OmniRouteContractTests(unittest.TestCase):
         slugs = validate_model_catalog(catalog)
         self.assertEqual(slugs[:len(REQUIRED_QUATTRO_ROUTES)], REQUIRED_QUATTRO_ROUTES)
         self.assertEqual(
-            slugs[len(REQUIRED_QUATTRO_ROUTES):len(REQUIRED_QUATTRO_ROUTES) + 6],
+            slugs[len(REQUIRED_QUATTRO_ROUTES):len(REQUIRED_QUATTRO_ROUTES) + len(EXPECTED_ACCOUNT_MODEL_ROUTES)],
             EXPECTED_ACCOUNT_MODEL_ROUTES,
         )
         self.assertEqual(
-            slugs[len(REQUIRED_QUATTRO_ROUTES) + 6:],
+            slugs[len(REQUIRED_QUATTRO_ROUTES) + len(EXPECTED_ACCOUNT_MODEL_ROUTES):],
             EXPECTED_ANTIGRAVITY_TEXT_ROUTES,
         )
         self.assertEqual(len(slugs), 4 + len(EXPECTED_ACCOUNT_MODEL_ROUTES) + len(EXPECTED_ANTIGRAVITY_TEXT_ROUTES))
@@ -156,6 +156,15 @@ class OmniRouteContractTests(unittest.TestCase):
         for slug in EXPECTED_ACCOUNT_MODEL_ROUTES + EXPECTED_ANTIGRAVITY_TEXT_ROUTES:
             self.assertEqual(by_slug[slug]["visibility"], "list")
             self.assertEqual(by_slug[slug]["input_modalities"], ["text"])
+
+        for account in (1, 2):
+            astra = by_slug[f"account-{account}/gpt-6-astra"]
+            self.assertEqual(
+                [level["effort"] for level in astra["supported_reasoning_levels"]],
+                ["low", "high"],
+            )
+            self.assertIn(astra["default_reasoning_level"], {"low", "high"})
+            self.assertEqual(astra["shell_type"], "shell_command")
 
         # The image-only Antigravity route remains exposed through the local
         # image MCP bridge, not as a text Codex model picker entry.
