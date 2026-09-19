@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 import pathlib
 import re
@@ -41,6 +42,68 @@ class PublicPortabilityTests(unittest.TestCase):
             public_history.TOKEN_PATTERNS[0],
             f"commit:tests/test_intelligence.py:74:value = {fixture}"
         ))
+
+    def test_public_history_uses_real_git_grep_and_fails_closed(self):
+        script = ROOT / "scripts/check_public_history.py"
+
+        def scan(files: dict[str, str]) -> subprocess.CompletedProcess[str]:
+            with tempfile.TemporaryDirectory() as directory:
+                repository = pathlib.Path(directory)
+                subprocess.run(
+                    ["git", "init", "-q", "-b", "main"], cwd=repository, check=True
+                )
+                subprocess.run(
+                    ["git", "config", "user.name", "Test"], cwd=repository, check=True
+                )
+                subprocess.run(
+                    ["git", "config", "user.email", "test@example.invalid"],
+                    cwd=repository,
+                    check=True,
+                )
+                for relative, content in files.items():
+                    target = repository / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(content, encoding="utf-8")
+                subprocess.run(["git", "add", "."], cwd=repository, check=True)
+                subprocess.run(
+                    ["git", "commit", "-qm", "fixture"], cwd=repository, check=True
+                )
+                return subprocess.run(
+                    [sys.executable, str(script)],
+                    cwd=repository,
+                    check=False,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+
+        fixture = "s" + "k-" + "synthetic-1234567890abcdefghijkl"
+        allowed = scan({
+            "tests/test_intelligence.py": f"task-intelligence {fixture}\n",
+        })
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
+        real_key = "s" + "k-" + "livecredentialvalue123"
+        rejected = scan({"config.txt": f"value={real_key}\n"})
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("credential marker", rejected.stderr)
+
+        wrong_path = scan({"src/runtime.py": fixture + "\n"})
+        self.assertNotEqual(wrong_path.returncode, 0)
+
+    def test_public_history_reports_git_grep_execution_errors(self):
+        failed = subprocess.CompletedProcess(
+            args=["git", "grep"], returncode=128, stdout="", stderr="invalid regex"
+        )
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(public_history, "run", side_effect=["abc123\n", ""]),
+            mock.patch.object(public_history.subprocess, "run", return_value=failed),
+            mock.patch("sys.stderr", stderr),
+        ):
+            result = public_history.main()
+        self.assertEqual(result, 1)
+        self.assertIn("credential scan failed", stderr.getvalue())
 
     def test_starter_config_is_memory_off_and_credential_free(self):
         config = starter_config()

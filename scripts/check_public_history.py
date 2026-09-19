@@ -15,10 +15,13 @@ BANNED_PARTS = {"reviews", "backups", "generated-images", "auth.json", "credenti
 TOKEN_PATTERNS = (
     r"gh[opsu]_[A-Za-z0-9_]{12,}",
     r"github_pat_[A-Za-z0-9_]{12,}",
-    r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{12,}",
-    r"-----BEGIN (?:OPENSSH|RSA|EC|DSA|PGP) PRIVATE KEY-----",
+    r"(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{12,}",
+    r"-----BEGIN (OPENSSH|RSA|EC|DSA|PGP) PRIVATE KEY-----",
 )
-_HISTORICAL_SYNTHETIC_KEY = "s" + "k-" + "synthetic-1234567890abcdefghijkl"
+_HISTORICAL_SYNTHETIC_KEYS = frozenset({
+    "s" + "k-" + "1234567890abcdefghijkl",
+    "s" + "k-" + "synthetic-1234567890abcdefghijkl",
+})
 
 
 def allowed_historical_test_fixture(pattern: str, line: str) -> bool:
@@ -26,7 +29,7 @@ def allowed_historical_test_fixture(pattern: str, line: str) -> bool:
     return (
         pattern == TOKEN_PATTERNS[2]
         and ":tests/test_intelligence.py:" in line
-        and _HISTORICAL_SYNTHETIC_KEY in line
+        and any(value in line for value in _HISTORICAL_SYNTHETIC_KEYS)
     )
 
 
@@ -54,6 +57,11 @@ def main() -> int:
                 ("git", "grep", "-I", "-n", "-E", "-e", pattern, commit, "--"),
                 text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             )
+            if result.returncode not in {0, 1}:
+                findings.append(
+                    f"{commit[:12]}: credential scan failed for pattern {pattern!r}"
+                )
+                continue
             unsafe_matches = [
                 line for line in result.stdout.splitlines()
                 if not allowed_historical_test_fixture(pattern, line)
