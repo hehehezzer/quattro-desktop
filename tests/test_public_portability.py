@@ -91,6 +91,11 @@ class PublicPortabilityTests(unittest.TestCase):
         wrong_path = scan({"src/runtime.py": fixture + "\n"})
         self.assertNotEqual(wrong_path.returncode, 0)
 
+        mixed = scan({
+            "tests/test_intelligence.py": f"{fixture} {real_key}\n",
+        })
+        self.assertNotEqual(mixed.returncode, 0)
+
     def test_public_history_reports_git_grep_execution_errors(self):
         failed = subprocess.CompletedProcess(
             args=["git", "grep"], returncode=128, stdout="", stderr="invalid regex"

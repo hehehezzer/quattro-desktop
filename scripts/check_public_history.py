@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 
@@ -22,14 +23,17 @@ _HISTORICAL_SYNTHETIC_KEYS = frozenset({
     "s" + "k-" + "1234567890abcdefghijkl",
     "s" + "k-" + "synthetic-1234567890abcdefghijkl",
 })
+_PYTHON_SK_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{12,}")
 
 
 def allowed_historical_test_fixture(pattern: str, line: str) -> bool:
     """Allow only the exact synthetic sanitizer fixture committed in its test file."""
+    matches = frozenset(_PYTHON_SK_TOKEN.findall(line))
     return (
         pattern == TOKEN_PATTERNS[2]
         and ":tests/test_intelligence.py:" in line
-        and any(value in line for value in _HISTORICAL_SYNTHETIC_KEYS)
+        and bool(matches)
+        and matches <= _HISTORICAL_SYNTHETIC_KEYS
     )
 
 
