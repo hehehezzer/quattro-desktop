@@ -156,6 +156,23 @@ def _thresholds(args: argparse.Namespace):
     return load_promotion_thresholds(getattr(args, "thresholds", None))
 
 
+def _live_maturity(
+    rows: list[dict[str, Any]],
+    quality: Mapping[str, Any],
+    policy: Any,
+) -> dict[str, Any]:
+    """Add live freshness to the immutable dataset-quality gate contract."""
+    report = data_maturity(
+        rows,
+        thresholds=policy,
+        duplicate_stats=quality.get("dataMaturity", {}).get("duplicates", {}),
+    )
+    report["candidateGates"] = dict(report.get("candidateGates") or {}) | dict(
+        quality.get("candidateGates") or {}
+    )
+    return report
+
+
 def _phase_19_markdown(payload: Mapping[str, Any]) -> str:
     quality = payload.get("dataset", {}).get("quality", {})
     chronology = quality.get("chronologicalCoverage", {})
@@ -1106,11 +1123,7 @@ def intelligence_command(
         dataset_version = validate_dataset_identity(dataset_path, rows)
         _validate_registered_dataset(store, dataset_version, rows)
         quality = dataset_quality(rows, thresholds=policy)
-        live_maturity = data_maturity(
-            rows,
-            thresholds=policy,
-            duplicate_stats=quality.get("dataMaturity", {}).get("duplicates", {}),
-        )
+        live_maturity = _live_maturity(rows, quality, policy)
         active = store.active_shadow_model()
         installed_model = None
         installed_training_rows: list[dict[str, Any]] = []
@@ -1436,11 +1449,7 @@ def intelligence_command(
         version = validate_dataset_identity(dataset_path, rows)
         _validate_registered_dataset(store, version, rows)
         quality = dataset_quality(rows, thresholds=policy)
-        live_maturity = data_maturity(
-            rows,
-            thresholds=policy,
-            duplicate_stats=quality.get("dataMaturity", {}).get("duplicates", {}),
-        )
+        live_maturity = _live_maturity(rows, quality, policy)
         active = store.active_shadow_model()
         model = None
         evaluation = None
