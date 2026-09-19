@@ -19,8 +19,11 @@ Repository mutation is also a mandatory invariant: inspect Git state before the
 first edit, work on a dedicated non-`main` branch, preserve unrelated work,
 validate and review the scoped diff, commit only intended files, push and verify
 the remote branch, and open a PR targeting `main`. Implementation commits never
-go directly to `main`, and merge requires explicit authorization and passing CI.
-Tasks that do not change repository files do not require a branch or PR.
+go directly to `main`. Merge requires explicit user authorization or an
+established repository workflow that explicitly permits autonomous merge after
+all required checks and reviews pass; failing CI is never merged. An explicit
+user override for a specific task may replace this workflow. Tasks that do not
+change repository files do not require a branch or PR.
 
 The Quattro Desktop repository has an additional hard gate. Its worktree must
 be clean before any modification. A dirty tree must be preserved exactly; the

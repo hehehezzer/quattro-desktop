@@ -170,9 +170,11 @@ def build_mandatory_context(
         "file edit. Make changes only on a dedicated non-main branch; preserve unrelated "
         "work; validate and review the scoped diff; commit only intended files; push and "
         "verify the remote branch; then create a PR targeting main. Never push "
-        "implementation commits directly to main, and never merge without explicit "
-        "authorization or with failing CI. If no repository files change, no branch or PR "
-        "is required.",
+        "implementation commits directly to main. Merge only with explicit user "
+        "authorization or when an established repository workflow explicitly permits "
+        "autonomous merge after all required checks and reviews pass; never merge failing "
+        "CI. An explicit user override for a specific task may replace this workflow. If "
+        "no repository files change, no branch or PR is required.",
         f"[{QUATTRO_DESKTOP_CLEAN_POLICY_ID}] Before modifying {quattro_desktop}, "
         "require a clean worktree after checking git status, branch, HEAD, and remotes. If "
         "dirty, do not modify, stash, reset, clean, discard, commit, merge, or overwrite; "
