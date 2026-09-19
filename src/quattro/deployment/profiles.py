@@ -30,6 +30,17 @@ CORE_DEPLOYMENT_MAPPINGS = {
             "validators.py", "workflow.py",
         )
     },
+    **{
+        f"core-intelligence-{name.removesuffix('.py')}": (
+            f"src/quattro_agent/intelligence/{name}",
+            f".local/bin/quattro_agent/intelligence/{name}",
+        )
+        for name in (
+            "__init__.py", "adjudication.py", "classical.py", "commands.py",
+            "dataset.py", "evaluation.py", "features.py", "probes.py",
+            "review.py", "store.py", "telemetry.py",
+        )
+    },
     "core-initial-routing-evidence": (
         "src/quattro_agent/data/initial-routing-evidence.json",
         ".local/bin/quattro_agent/data/initial-routing-evidence.json",

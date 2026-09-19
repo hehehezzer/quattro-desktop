@@ -80,6 +80,7 @@ from quattro_agent.retrieval import (
     DENIED_NAMES, DENIED_PARTS, MAX_FILE_BYTES, SECRET_PATTERNS,
 )
 from quattro_agent.benchmark import load_cases as load_benchmark_cases, run_benchmark
+from quattro_agent.intelligence.commands import add_intelligence_parser, intelligence_command
 from quattro_agent.routing import automatic_model_override, classify_request
 from quattro_agent.routing_intelligence import (
     MAX_EVIDENCE_BYTES,
@@ -2490,6 +2491,7 @@ def routing_command(args: argparse.Namespace) -> int:
                 "actualOmniRouteSelection": snapshot.get("actual_selection"),
                 "adaptiveOverheadMs": snapshot.get("adaptive_overhead_ms", 0),
                 "adaptiveCacheHit": snapshot.get("adaptive_cache_hit", False),
+                "lifecycle": snapshot.get("lifecycle"),
                 "omnirouteInterfaceGaps": (
                     [] if snapshot.get("selection") else [
                         "per-candidate health/quota/pricing/capability snapshots are not exposed "
@@ -2830,6 +2832,7 @@ def build_parser() -> argparse.ArgumentParser:
     routing.add_argument("--latency-ms", type=float, default=0)
     routing.add_argument("--cost", type=float)
     routing.add_argument("--pretty", action="store_true")
+    add_intelligence_parser(sub)
     open_parser = sub.add_parser("open", help="open a repository or project path in Zed")
     open_parser.add_argument("path", nargs="?")
     inspect_parser = sub.add_parser("inspect", help="open PATH[:LINE[:COLUMN]] in Zed")
@@ -3336,6 +3339,15 @@ def main() -> int:
         try:
             return routing_command(args)
         except (KeyError, OSError, ValueError) as error:
+            die(str(error))
+    if command == "intelligence":
+        try:
+            return intelligence_command(
+                args,
+                state_root=STATE_ROOT,
+                task_store_path=STATE_ROOT / "private" / "harness.sqlite3",
+            )
+        except (KeyError, OSError, ValueError, sqlite3.Error) as error:
             die(str(error))
     if command == "sessions":
         if args.action == "open":

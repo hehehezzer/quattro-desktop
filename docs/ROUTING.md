@@ -22,13 +22,35 @@ The current `quattro-agent prompt` path is:
 ```text
 CLI run_prompt
   -> DIRECT/DELEGATE decision
-  -> HarnessRuntime.direct_response or HarnessRuntime.create_task
-  -> routing.classify_request
-  -> routing_intelligence.profile_task
-  -> FAST / STANDARD / REASONING minimum requirement
-  -> automatic_model_override (only when configured model == auto)
-  -> Codex Responses request through the existing OmniRoute provider
-  -> OmniRoute candidate eligibility, health/quota/cost ranking and dispatch
+  -> Quattro request boundary (latest request + bounded task/session facts)
+  -> PreRoutingInput
+  -> existing routing_intelligence.profile_task classifier
+  -> FAST / STANDARD / REASONING + quality floor
+  -> adaptive candidate preference ordering (when enhanced metadata is available)
+  -> durable task/envelope persistence
+  -> Codex execution preparation (bootstrap, tools, skills, permissions, AGENTS, history)
+  -> final_request_tokens context-capacity eligibility only
+  -> OmniRoute hard capability/runtime revalidation and provider dispatch
+```
+
+The request-boundary step is the single task-intelligence authority. It runs
+before `HarnessRuntime._agent_plan` assembles Quattro-owned retrieval and policy
+context and before the Codex child/session can construct its native Responses
+request. The persisted envelope is bounded metadata, not a serialized
+conversation. A legacy task without an envelope may use a one-time compatibility
+recovery path; new tasks never rank candidates after execution preparation.
+
+The phase ownership is explicit:
+
+```text
+PRE_ROUTING
+  user request -> TaskProfile -> tier/quality floor -> preferred candidates
+EXECUTION_PREPARATION
+  Quattro context gates -> Codex-owned bootstrap and final request assembly
+FINAL_ELIGIBILITY
+  final request size -> context fit only; no tier/quality reclassification
+DISPATCH / VALIDATION
+  OmniRoute runtime truth -> provider -> Quattro outcome evidence
 ```
 
 For delegated Codex tasks Quattro controls the `-m` route requirement and
@@ -63,7 +85,8 @@ is REASONING.
 ## Routing context semantics
 
 Task difficulty and request size are independent axes. Quattro builds a bounded
-`RoutingTaskInput` from the user operation and explicit task metadata; it never
+`PreRoutingInput` and derives `RoutingTaskInput` from it using the existing
+deterministic classifier; it never
 profiles the expanded Codex bootstrap, skill catalog, permission inventory,
 AGENTS content, raw retrieval blobs, or previous transcript.
 
@@ -84,7 +107,9 @@ Codex constructs additional system, tool, skill, sandbox, permission, AGENTS,
 environment, and session bootstrap context after Quattro launches it. Quattro
 does not read or duplicate that private request. Consequently diagnostics mark
 runtime-owned overhead as unmeasured; OmniRoute's final request pipeline remains
-authoritative for actual wire-size compatibility.
+authoritative for actual wire-size compatibility. A large protocol overhead can
+reject a candidate for context capacity, but cannot increase complexity,
+reasoning depth, quality floor, or tier.
 
 ## Context gating
 
@@ -140,13 +165,23 @@ Candidate evaluation is lexicographic:
 
 ```text
 capability -> practical context -> availability -> quality floor
-           -> expected completion cost -> latency -> stable identity
+           -> expected completion cost -> normal effort tie-break -> latency
+           -> stable identity
 ```
 
 Cost cannot compensate for a missing capability, insufficient context,
 unavailability, or a quality estimate below the task floor. Expected completion
 cost includes a bounded geometric retry estimate and escalation reserve rather
 than comparing raw input-token price alone.
+
+When OmniRoute exposes the same model at multiple reasoning-effort suffixes,
+the effort suffix is normalized back to the base model for benchmark evidence
+(`gpt-5.6-luna-high` uses the `gpt-5.6-luna` evidence). Product variants such
+as `lite`, `mini`, or `web` remain separate. Cost remains the first ordering
+key; an equal-cost tie is resolved toward the task's lower normal effort so a
+FAST request cannot be promoted to a `-high` variant merely because that ID
+sorts first. The selected effort is retained in the sanitized candidate
+diagnostic.
 
 ## Benchmark cache and refresh
 
@@ -228,7 +263,7 @@ hard capability/context requirements, ordered preferences, runtime fallback,
 and sanitized routing receipts. Candidate metadata failure records
 `adaptive_routing_unavailable` and falls back to standard tier routing.
 
-In adaptive mode Quattro reads only the public candidate API. It never reads
+In adaptive mode Quattro reads only the public candidate API at PRE_ROUTING. It never reads
 provider configuration, accounts, or credentials. The routing envelope contains
 only schema version, hard capabilities, minimum context, ordered candidate IDs,
 balanced preference mode, TaskProfile ID, and policy version. OmniRoute expands
@@ -237,12 +272,33 @@ enhanced envelope, revalidates all hard/runtime gates at dispatch, strips the
 extension before provider translation, and records a bounded metadata-only
 receipt for exact delegated-task correlation.
 
-Quattro, not the native Codex session, owns effective reasoning effort for
-Quattro-managed execution. A parent Codex UI may display `auto medium`, or the
+The first envelope carries the task-context estimate and the precomputed
+candidate order. After Codex preparation Quattro updates only its
+`requirements.minimum_context` with the final request estimate; the candidate
+order and task quality requirement remain unchanged. OmniRoute may reject a
+preferred candidate for context, quota, health, or capability and then select
+the next eligible preferred candidate. This is runtime fallback, not a second
+semantic classifier.
+
+Except for the explicit Astra choices described below, Quattro owns effective
+reasoning effort for Quattro-managed execution. A parent Codex UI may display `auto medium`, or the
 user may select `xhigh` through `/model`; that displayed/default effort is not
 used for the managed child request. Quattro injects the effective value with
 `-c model_reasoning_effort="<tier effort>"` on every Codex dispatch. Task
 metadata and `routing.dispatched` are the source of truth.
+
+The effort provenance is therefore: `classify_request` selects the tier,
+`effective_reasoning_effort` maps the tier to `low`/`medium`/`high`, and
+`HarnessRuntime._agent_plan` injects that value into the Codex command before
+the child starts. Codex serializes it into the Responses request; OmniRoute's
+Responses translator preserves the explicit effort and its provider adapters
+may only perform provider-specific normalization or a capability-safe clamp.
+The optional context-size classifier does not write reasoning effort. The
+previous `medium` → `high` observation was consequently not evidence that a
+large prompt should raise task intelligence; it must be diagnosed at the
+Codex/provider adapter boundary if reproduced. Current regression coverage
+asserts native defaults cannot override the Quattro tier and that context size
+cannot change the tier.
 
 For example, `auto medium` in the parent can execute a file lookup as
 `FAST / auto/coding:cheap / low`. Conversely, a native `low` default executes a
@@ -262,6 +318,28 @@ low, medium, high, xhigh, max, ultra
 evidence-gated exceptional escalation. OmniRoute's Codex Responses translator
 maps client-side `ultra` to wire-level `max`, so `ultra` is never the normal
 default.
+
+## Astra low/high thinking
+
+`account-1/gpt-6-astra` and `account-2/gpt-6-astra` expose only `low` and
+`high` in the shared Codex picker. Managed Astra dispatch preserves a saved
+`low` or `high` choice. Unsupported saved efforts fall back to `high`.
+Without a saved effort, FAST uses `low` and STANDARD/REASONING uses `high`,
+including exceptional escalation. Astra launches also set Plan mode to the
+same low/high effort. Other models keep their existing tier effort policy.
+
+Each route must be provisioned as a single-target OmniRoute combo pinned to
+its named Codex connection, targeting `codex/gpt-6-astra`. If the gateway's
+synced catalog predates Astra, register the exact model through OmniRoute's
+custom model facility and validate real Responses calls on both accounts.
+A picker entry alone does not provision the gateway route.
+
+OmniRoute must also report a current Codex client version: the local
+integration was validated with `CODEX_CLIENT_VERSION=0.153.4` in the gateway's
+persistent `DATA_DIR/.env`. Restart the gateway after changing that value.
+An obsolete version can produce an upstream "requires a newer version of
+Codex" error even when account authentication is healthy. Test both low and
+high after upgrading. Do not change native account authentication stores.
 
 ## Automatic `/model` behavior
 
@@ -297,21 +375,40 @@ becomes eligible again on the next dispatch.
 ## Manual `/model` behavior and precedence
 
 A concrete `/model` choice is always respected. Only the model/route portion is
-preserved; native reasoning effort is still replaced. If Codex's selected model is
+preserved; native reasoning effort is still replaced for other models. If Codex's selected model is
 anything other than exactly `auto` (for example an account-pinned GPT-5.6
 route or `auto/coding` explicitly chosen by the user), Quattro does not
-replace it. It only sends the automatically selected reasoning effort.
+replace it. It sends the automatically selected reasoning effort except for the Astra policy above.
 
 The shared Codex model catalog is the single picker/direct-selection registry.
-It publishes these Quattro route modes first, followed by the verified manual
-OmniRoute models:
+It publishes these Quattro route modes first, followed by the eight account-pinned
+GPT-6 Astra and GPT-5.6 family routes and the currently verified Antigravity text routes:
 
 ```text
 auto
 auto/coding:cheap
 auto/coding
 auto/reasoning
+
+account-1/gpt-6-astra
+account-1/gpt-5.6-sol
+account-1/gpt-5.6-terra
+account-1/gpt-5.6-luna
+account-2/gpt-6-astra
+account-2/gpt-5.6-sol
+account-2/gpt-5.6-terra
+account-2/gpt-5.6-luna
+
+antigravity/* (18 text-capable routes)
 ```
+
+The eight account-qualified GPT-6/GPT-5.6 entries are single-target OmniRoute combos:
+each is pinned to its named Codex OAuth account and has no cross-account
+fallback. The Antigravity entries are a reviewed snapshot of the current
+text-capable provider catalog, including its `no-think/` Claude variants. The
+Antigravity image-only route is intentionally not a Codex picker entry; image
+generation remains available through the credential-free local image MCP
+bridge.
 
 Selecting `auto` enables per-task adaptive routing. Selecting one of the three
 `auto/...` values pins that exact OmniRoute route for later managed requests.

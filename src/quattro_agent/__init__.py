@@ -64,7 +64,7 @@ __all__ = [
 ]
 
 from .routing import (
-    RoutingDecision, RoutingTier, automatic_model_override, classify_request,
+    RoutingDecision, RoutingTier, automatic_model_override, classify_pre_routing, classify_request,
     context_budget_tokens, deescalate_for_follow_up, effective_reasoning_effort,
     next_exceptional_effort, next_tier,
 )

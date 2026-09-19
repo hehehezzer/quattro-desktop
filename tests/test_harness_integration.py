@@ -404,18 +404,12 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.runtime.account = lambda _config, _account_id=None: {  # type: ignore[method-assign]
             "id": "account-1", "codexHome": str(account_home),
         }
-        task_id = self.runtime.create_task(
-            agent="codex", project=self.project,
-            prompt="Fix a typo in README.md", mode="prompt",
-        )
-        task = self.runtime.store.get_task(task_id, include_private=True)
-        run_id = self.runtime.store.create_run(task_id)
         envelope = {
             "schema_version": 1,
             "requirements": {"capabilities": ["code_analysis"], "minimum_context": 3000},
             "preferred_candidates": ["codex/luna", "codex/sol"],
             "preference_mode": "balanced",
-            "task_profile_id": task_id,
+            "task_profile_id": "profile-test",
             "routing_policy_version": "quattro-routing-v2",
         }
         adaptive = AdaptiveRoutingDecision(
@@ -429,16 +423,27 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             1.5,
             False,
         )
-        with mock.patch("quattro_harness.build_adaptive_decision", return_value=adaptive):
+        with mock.patch("quattro_harness.build_adaptive_decision", return_value=adaptive) as build:
+            task_id = self.runtime.create_task(
+                agent="codex", project=self.project,
+                prompt="Fix a typo in README.md", mode="prompt",
+            )
+            task = self.runtime.store.get_task(task_id, include_private=True)
+            run_id = self.runtime.store.create_run(task_id)
+            envelope["task_profile_id"] = task_id
             argv, _stdin, environment = self.runtime._agent_plan(
                 task, run_id, PolicyProfile.from_dict(task["policy"])
             )
+            self.assertEqual(build.call_count, 1, "adaptive ranking must happen only at PRE_ROUTING")
         self.assertIn(
             'model_providers.omniroute.env_http_headers={"X-Quattro-Routing" = "QUATTRO_ROUTING_ENVELOPE"}',
             argv,
         )
         transported = json.loads(environment["QUATTRO_ROUTING_ENVELOPE"])
-        self.assertEqual(transported, envelope)
+        self.assertEqual(transported["schema_version"], envelope["schema_version"])
+        self.assertEqual(transported["preferred_candidates"], envelope["preferred_candidates"])
+        self.assertEqual(transported["task_profile_id"], task_id)
+        self.assertGreater(transported["requirements"]["minimum_context"], 0)
         self.assertNotIn("Fix a typo", environment["QUATTRO_ROUTING_ENVELOPE"])
 
     def test_chat_minimal_gates_retrieval_coordination_and_delegation_text(self):

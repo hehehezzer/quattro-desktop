@@ -29,6 +29,33 @@ import quattro_agent.cli as launcher
 import quattro_pr_review as review
 
 
+EXPECTED_ACCOUNT_MODEL_ROUTES = tuple(
+    f"account-{account}/{model}"
+    for account in (1, 2)
+    for model in ("gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
+)
+EXPECTED_ANTIGRAVITY_TEXT_ROUTES = (
+    "antigravity/gemini-3.7-flash-high",
+    "antigravity/gemini-3.7-flash-medium",
+    "antigravity/gemini-3.7-flash-low",
+    "antigravity/gemini-3.7-flash-tiered",
+    "antigravity/gemini-pro-agent",
+    "antigravity/gemini-3.1-pro-low",
+    "antigravity/gemini-3.1-flash-lite",
+    "antigravity/claude-opus-4-6-thinking",
+    "antigravity/claude-sonnet-4-6",
+    "antigravity/gpt-oss-120b-medium",
+    "antigravity/claude-opus-4-6-thinking-low",
+    "antigravity/claude-opus-4-6-thinking-medium",
+    "antigravity/claude-opus-4-6-thinking-high",
+    "antigravity/claude-sonnet-4-6-low",
+    "antigravity/claude-sonnet-4-6-medium",
+    "antigravity/claude-sonnet-4-6-high",
+    "no-think/antigravity/claude-opus-4-6-thinking",
+    "no-think/antigravity/claude-sonnet-4-6",
+)
+
+
 def write_rollout(path: pathlib.Path, session_id: str, cwd: pathlib.Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
@@ -111,11 +138,45 @@ class OmniRouteContractTests(unittest.TestCase):
     def test_catalog_parity_skips_when_release_source_is_unavailable(self):
         self.assertIsNone(validate_catalog_parity(self.root / "missing.json", self.catalog))
 
-    def test_public_catalog_is_current_four_route_codex_catalog(self):
+    def test_public_catalog_contains_account_matrix_and_antigravity_text_routes(self):
         catalog = SRC / "quattro/omniroute-model-catalog.json"
-        self.assertEqual(validate_model_catalog(catalog), REQUIRED_QUATTRO_ROUTES)
+        slugs = validate_model_catalog(catalog)
+        self.assertEqual(slugs[:len(REQUIRED_QUATTRO_ROUTES)], REQUIRED_QUATTRO_ROUTES)
+        self.assertEqual(
+            slugs[len(REQUIRED_QUATTRO_ROUTES):len(REQUIRED_QUATTRO_ROUTES) + len(EXPECTED_ACCOUNT_MODEL_ROUTES)],
+            EXPECTED_ACCOUNT_MODEL_ROUTES,
+        )
+        self.assertEqual(
+            slugs[len(REQUIRED_QUATTRO_ROUTES) + len(EXPECTED_ACCOUNT_MODEL_ROUTES):],
+            EXPECTED_ANTIGRAVITY_TEXT_ROUTES,
+        )
+        self.assertEqual(len(slugs), 4 + len(EXPECTED_ACCOUNT_MODEL_ROUTES) + len(EXPECTED_ANTIGRAVITY_TEXT_ROUTES))
         models = json.loads(catalog.read_text(encoding="utf-8"))["models"]
         self.assertTrue(all(model.get("supported_reasoning_levels") for model in models))
+        by_slug = {model["slug"]: model for model in models}
+        for slug in EXPECTED_ACCOUNT_MODEL_ROUTES + EXPECTED_ANTIGRAVITY_TEXT_ROUTES:
+            self.assertEqual(by_slug[slug]["visibility"], "list")
+            self.assertEqual(by_slug[slug]["input_modalities"], ["text"])
+
+        for account in (1, 2):
+            astra = by_slug[f"account-{account}/gpt-6-astra"]
+            self.assertEqual(
+                [level["effort"] for level in astra["supported_reasoning_levels"]],
+                ["low", "high"],
+            )
+            self.assertIn(astra["default_reasoning_level"], {"low", "high"})
+            self.assertEqual(astra["shell_type"], "shell_command")
+
+        for slug in (
+            "antigravity/claude-opus-4-6-thinking",
+            "antigravity/claude-sonnet-4-6",
+        ):
+            self.assertEqual(by_slug[slug]["context_window"], 1_000_000)
+            self.assertEqual(by_slug[slug]["max_context_window"], 1_000_000)
+
+        # The image-only Antigravity route remains exposed through the local
+        # image MCP bridge, not as a text Codex model picker entry.
+        self.assertNotIn("antigravity/gemini-3.1-flash-image", by_slug)
 
     def test_loopback_only_policy_is_rejected_when_runtime_cannot_conform(self):
         self.config()

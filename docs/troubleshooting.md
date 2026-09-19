@@ -16,8 +16,9 @@ catalog. Authenticate Codex only through its own CLI.
 ## OmniRoute unavailable
 
 Confirm the gateway is running at `QUATTRO_OMNIROUTE_BASE_URL` and that its
-Responses endpoint and four Quattro route labels are enabled. Quattro reports
-the failure and does not fabricate a delegated result.
+Responses endpoint, the four Quattro route labels, the eight account-qualified
+GPT-6 Astra and GPT-5.6 routes, and the verified Antigravity text routes are
+enabled. Quattro reports the failure and does not fabricate a delegated result.
 
 ## Pi unavailable or rejected
 

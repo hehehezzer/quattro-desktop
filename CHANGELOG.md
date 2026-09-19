@@ -2,6 +2,15 @@
 
 All notable Quattro orchestration changes are documented here.
 
+## Unreleased
+
+- Add account-pinned GPT-6 Astra routes to the Codex picker with only low/high
+  thinking choices, preserving either saved choice during managed dispatch.
+- Keep Astra request and displayed reasoning effort aligned, including direct
+  Responses calls and bounded escalation.
+- Document OmniRoute custom model registration and the Codex client version
+  required by the validated Astra integration.
+
 ## 0.2.0 — 2026-09-02 — Core/Desktop architecture separation
 
 ### Added

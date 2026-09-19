@@ -16,7 +16,9 @@ from quattro_agent.adaptive_routing import (
     OmniRouteAdaptiveClient,
     build_adaptive_decision,
     encode_routing_header,
+    evaluate_candidates,
     model_candidates_from_snapshot,
+    update_envelope_context,
 )
 from quattro_agent.routing_intelligence import PreferenceMode, profile_task
 
@@ -161,6 +163,21 @@ class AdaptiveRoutingTests(unittest.TestCase):
         self.assertIsNone(mapped[0].input_cost_per_million)
         self.assertIsNone(mapped[0].output_cost_per_million)
 
+    def test_fast_tie_break_does_not_promote_high_effort_variant(self):
+        profile = profile_task("say hello")
+        mapped = model_candidates_from_snapshot(
+            {"candidates": [
+                candidate("gpt-5.6-luna-high", price=1.0),
+                candidate("gpt-5.6-luna-low", price=1.0),
+            ]},
+            profile,
+        )
+        self.assertEqual([row.reasoning_effort for row in mapped], ["high", "low"])
+        selection = evaluate_candidates(profile, mapped)
+        self.assertEqual(selection.selected_model, "gpt-5.6-luna-low")
+        self.assertEqual(selection.candidates[0].reasoning_effort, "high")
+        self.assertEqual(selection.candidates[0].rank, 2)
+
     def test_malformed_candidate_metadata_fails_closed(self):
         profile = profile_task("fix a typo in README.md")
         hostile = candidate("bad", price=1.0)
@@ -190,6 +207,23 @@ class AdaptiveRoutingTests(unittest.TestCase):
         encoded = encode_routing_header(decision.envelope)
         self.assertNotIn("fix a typo", encoded)
         self.assertNotIn(str(self.root), encoded)
+
+    def test_final_context_update_preserves_pre_routing_order(self):
+        profile = profile_task("reply with just hello")
+        decision = build_adaptive_decision(
+            client=OmniRouteAdaptiveClient(self.base),
+            profile=profile,
+            route="auto/coding:cheap",
+            benchmark_path=self.root / "benchmarks.json",
+            outcomes_path=self.root / "outcomes.json",
+            task_profile_id="task-context-only",
+        )
+        assert decision.envelope is not None
+        expanded = profile_task("reply with just hello", protocol_overhead_tokens=85_000)
+        updated = update_envelope_context(decision.envelope, expanded)
+        self.assertEqual(updated["preferred_candidates"], decision.envelope["preferred_candidates"])
+        self.assertEqual(updated["requirements"]["minimum_context"], expanded.final_request_tokens)
+        self.assertEqual(profile.tier, expanded.tier)
 
 
 if __name__ == "__main__":

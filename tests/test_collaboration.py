@@ -112,17 +112,29 @@ class CollaborationTests(unittest.TestCase):
         self.assertNotEqual(pathlib.Path(session["workingDirectory"]), self.repo)
 
     def test_limits_are_preserved_under_concurrent_reservations(self) -> None:
+        coordinator = RepositoryCoordinator(
+            self.root / "concurrent-state",
+            self.root / "concurrent-worktrees",
+            global_limit=5,
+            per_repository_limit=3,
+            git=self.git,
+            reservation_ttl_seconds=30.0,
+        )
         barrier = threading.Barrier(8)
         def reserve(index: int) -> str:
             barrier.wait()
             try:
-                return self.coordinator.reserve(self.repo, task_summary=f"task {index}", task_scope=(f"src/{index}",))["sessionId"]
+                return coordinator.reserve(
+                    self.repo,
+                    task_summary=f"task {index}",
+                    task_scope=(f"src/{index}",),
+                )["sessionId"]
             except LeaseConflict:
                 return "rejected"
         with ThreadPoolExecutor(max_workers=8) as executor:
             results = list(executor.map(reserve, range(8)))
         self.assertEqual(len([result for result in results if result != "rejected"]), 3)
-        self.assertEqual(self.coordinator.status()["global"], {"active": 3, "limit": 5})
+        self.assertEqual(coordinator.status()["global"], {"active": 3, "limit": 5})
 
 
 if __name__ == "__main__":
