@@ -3058,15 +3058,30 @@ class HarnessRuntime:
                 pass
         current_run = RunState(self.store.get_run(run["run_id"])["state"])
         if current_run is RunState.CANCELLING:
-            self.store.transition_run(
-                run["run_id"], RunState.CANCELLED, error_code="cancelled"
-            )
+            try:
+                self.store.transition_run(
+                    run["run_id"], RunState.CANCELLED, error_code="cancelled"
+                )
+            except StateTransitionError:
+                # The supervisor may complete cancellation between the state
+                # read and transition. Treat that exact terminal result as
+                # idempotent while preserving every other invalid transition.
+                refreshed_run = RunState(
+                    self.store.get_run(run["run_id"])["state"]
+                )
+                if refreshed_run is not RunState.CANCELLED:
+                    raise
         current_task = TaskState(self.store.get_task(task_id)["state"])
         if current_task is TaskState.CANCELLING:
-            self.store.transition_task(
-                task_id, TaskState.CANCELLED,
-                terminal_code="cancelled", terminal_summary=terminal_summary,
-            )
+            try:
+                self.store.transition_task(
+                    task_id, TaskState.CANCELLED,
+                    terminal_code="cancelled", terminal_summary=terminal_summary,
+                )
+            except StateTransitionError:
+                refreshed_task = TaskState(self.store.get_task(task_id)["state"])
+                if refreshed_task is not TaskState.CANCELLED:
+                    raise
         self.store.append_event(
             task_id, "task.cancel.requested",
             display={"pid": identity.pid, "reason": reason},
