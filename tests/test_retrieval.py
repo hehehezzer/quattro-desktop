@@ -134,6 +134,47 @@ class RetrievalTests(unittest.TestCase):
         )
         self.assertFalse(denied)
 
+    def test_global_git_workflow_and_quattro_gate_are_retrievable(self):
+        shared = self.root / "shared-policy"
+        shared.mkdir()
+        (shared / "AGENT-WORKFLOWS.md").write_text(
+            "# Agent Workflows\n\n"
+            "## Mandatory Git Workflow — Branch Push PR Policy\n"
+            "Repository modification rules require a dedicated non-main branch, "
+            "validation, commit, verified remote push, and PR to main.\n\n"
+            "### Quattro Desktop clean-worktree hard gate\n"
+            "Before changing Quattro Desktop, require a clean worktree. If dirty, "
+            "report BLOCKED — QUATTRO DESKTOP WORKTREE NOT CLEAN.\n",
+            encoding="utf-8",
+        )
+        RepositoryIndexer(self.store).index(
+            shared,
+            global_scope=True,
+            origin="institutional_memory",
+            trusted_non_git=True,
+        )
+
+        for query in (
+            "mandatory git workflow",
+            "branch push PR policy",
+            "repository modification rules",
+            "quattro desktop clean worktree",
+            "before changing quattro desktop",
+        ):
+            results, _ = self.store.search(
+                query,
+                repository=str(self.repo),
+                branch="main",
+                source_types=("documentation",),
+                allowed_origins=("repository", "institutional_memory"),
+                limit=5,
+            )
+            self.assertTrue(results, query)
+            self.assertEqual(results[0].path, "AGENT-WORKFLOWS.md", query)
+            self.assertEqual(
+                results[0].metadata.get("origin"), "institutional_memory", query
+            )
+
     def test_code_parser_uses_symbol_boundaries(self):
         units, edges = code_units(pathlib.Path("sample.py"), "def first():\n    return second()\n\ndef second():\n    return 2\n")
         self.assertEqual([unit["symbol"] for unit in units], ["first", "second"])

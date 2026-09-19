@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -231,6 +232,65 @@ class CrossAccountSessionTests(unittest.TestCase):
                     )
                     self.assertIsNotNone(target)
                     self.assertEqual(target["sessionId"], session_id)
+
+    def test_standalone_worker_loads_mandatory_policy_without_memory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            config = {
+                "memory": {
+                    "enabled": False,
+                    "vaultPath": str(root / "memory"),
+                    "projectVaultPath": str(root / "projects"),
+                    "enforceOnLaunch": False,
+                },
+                "workspace": {"projectRoot": str(root / "workspace")},
+            }
+            calls: list[list[str]] = []
+
+            def run(command, **_kwargs):
+                calls.append(command)
+                return types.SimpleNamespace(returncode=0)
+
+            common = (
+                mock.patch.object(launcher, "ensure_state_dirs"),
+                mock.patch.object(launcher, "load_config", return_value=config),
+                mock.patch.object(launcher, "safe_directory", return_value=project),
+                mock.patch.object(launcher, "write_runtime", return_value=root / "runtime"),
+                mock.patch.object(launcher, "update_recent"),
+                mock.patch.object(launcher, "tool_environment", return_value={}),
+                mock.patch.object(launcher, "notify"),
+                mock.patch.object(launcher, "scan_codex_sessions", return_value=[]),
+                mock.patch.object(launcher.subprocess, "run", side_effect=run),
+            )
+            with common[0], common[1], common[2], common[3], common[4], \
+                    common[5], common[6], common[7], common[8], \
+                    mock.patch.object(launcher, "require", side_effect=lambda name: name), \
+                    mock.patch.object(launcher, "prepare_codex_launch", return_value=root / "codex"), \
+                    mock.patch.object(launcher, "codex_permission_args", return_value=[]):
+                for agent in ("codex", "pi"):
+                    launcher.session_worker(types.SimpleNamespace(
+                        directory=str(project),
+                        prompt="Inspect only",
+                        account="account-1",
+                        agent=agent,
+                        session_id=f"session-{agent}",
+                        mode="prompt",
+                        native_session_ref=None,
+                    ))
+
+            self.assertEqual(len(calls), 2)
+            codex_command, pi_command = calls
+            codex_policy = next(
+                value for value in codex_command
+                if value.startswith("developer_instructions=")
+            )
+            pi_policy = pi_command[pi_command.index("--append-system-prompt") + 1]
+            for policy in (codex_policy, pi_policy):
+                self.assertIn("repository.mutation.branch_pr", policy)
+                self.assertIn("repository.quattro_desktop.clean_worktree", policy)
+            self.assertNotIn("--add-dir", codex_command)
 
     def test_one_writer_lease_per_native_session(self):
         with tempfile.TemporaryDirectory() as temporary:

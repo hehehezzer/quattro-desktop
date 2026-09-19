@@ -77,6 +77,8 @@ class MemoryTests(unittest.TestCase):
         self.assertIn(str(self.vault), policy)
         self.assertIn(str(self.project_vault), policy)
         self.assertIn("For project work", policy)
+        self.assertIn("Shared/AGENT-WORKFLOWS.md", policy)
+        self.assertIn("clean-worktree hard gate", policy)
         self.assertIn("Never store secrets", policy)
 
     def test_obsidian_uri_is_encoded(self):

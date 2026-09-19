@@ -15,6 +15,21 @@ The authoritative default project root is `workspace.projectRoot` in
 to `~/Projects`. Explicit user destinations win unless a higher-priority safety
 restriction prevents them.
 
+Repository mutation is also a mandatory invariant: inspect Git state before the
+first edit, work on a dedicated non-`main` branch, preserve unrelated work,
+validate and review the scoped diff, commit only intended files, push and verify
+the remote branch, and open a PR targeting `main`. Implementation commits never
+go directly to `main`. Merge requires explicit user authorization or an
+established repository workflow that explicitly permits autonomous merge after
+all required checks and reviews pass; failing CI is never merged. An explicit
+user override for a specific task may replace this workflow. Tasks that do not
+change repository files do not require a branch or PR.
+
+The Quattro Desktop repository has an additional hard gate. Its worktree must
+be clean before any modification. A dirty tree must be preserved exactly; the
+agent reports `BLOCKED — QUATTRO DESKTOP WORKTREE NOT CLEAN` with dirty paths
+instead of stashing, resetting, cleaning, committing, merging, or overwriting.
+
 `quattro_agent.mandatory_context` builds the compact trusted prompt section and
 resolves clone/create destinations independently of RAG. Agents can run the
 same deterministic preflight with:
