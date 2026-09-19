@@ -71,7 +71,7 @@ class IntelligenceStoreTests(unittest.TestCase):
     def test_request_sanitization_removes_credential_shapes(self) -> None:
         value = (
             "debug Authorization: Bearer secret-value-123456789 and "
-            "https://alice:password@example.test/path sk-1234567890abcdefghijkl"
+            "https://alice:password@example.test/path sk-synthetic-1234567890abcdefghijkl"
         )
         safe, redacted = sanitize_request(value)
         self.assertTrue(redacted)
@@ -129,7 +129,7 @@ class IntelligenceStoreTests(unittest.TestCase):
                 display_title="Test task",
                 policy=policy_profile("workspace-write", project_root=root),
                 private_payload={
-                    "prompt": "Fix parser with api_key=super-secret-value-123456",
+                    "prompt": "Fix parser with api_key=synthetic-super-secret-value-123456",
                     "mode": "prompt",
                     "delegation": {
                         "decision": "DELEGATE",
