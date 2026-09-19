@@ -38,8 +38,11 @@ from quattro_agent.intelligence.dataset import (
 )
 from quattro_agent.intelligence.evaluation import (
     benchmark_direct_delegate,
+    calibration_metrics,
     chronological_evaluation,
     classification_metrics,
+    disagreement_telemetry,
+    observed_outcome_evidence,
 )
 from quattro_agent.intelligence.features import (
     extract_decision_features,
@@ -61,6 +64,8 @@ from quattro_agent.intelligence.review import (
 )
 from quattro_agent.intelligence.store import IntelligenceStore
 from quattro_agent.intelligence.telemetry import record_routing_telemetry, sanitize_request
+from quattro_agent.intelligence.maturity import data_maturity
+from quattro_agent.intelligence.readiness import PromotionThresholds, promotion_gate_summary
 from quattro_agent.policy import policy_profile
 from quattro_agent.store import TaskStore
 
@@ -84,6 +89,36 @@ class IntelligenceStoreTests(unittest.TestCase):
         self.assertNotIn("secret-value", safe)
         self.assertNotIn("alice:password", safe)
         self.assertNotIn(synthetic_key, safe)
+
+    def test_runtime_telemetry_lists_are_bounded_at_storage_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = pathlib.Path(temporary) / "intelligence.sqlite3"
+            record_id = record_routing_telemetry(
+                database,
+                request="Explain WAL mode",
+                production_decision="DIRECT",
+                routing_reason="test",
+                production_confidence=0.9,
+                selected_worker=None,
+                selected_model="model",
+                selected_provider="provider",
+                selected_account="account",
+                project=None,
+                repository_present=False,
+                run_shadow=False,
+                alternatives=["x" * 2_000 for _ in range(500)],
+            )
+            self.assertIsNotNone(record_id)
+            store = IntelligenceStore(database)
+            row = store.record(str(record_id))
+            self.assertLessEqual(len(row["alternatives"]), 100)
+            self.assertLessEqual(max(len(str(item)) for item in row["alternatives"]), 512)
+            store.update_execution(
+                str(record_id),
+                {"tools": ["tool" * 500 for _ in range(500)]},
+            )
+            updated = store.record(str(record_id))
+            self.assertLessEqual(len(updated["tools"]), 100)
 
     def test_label_is_verified_and_marks_router_correction(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -805,6 +840,28 @@ class ClassicalModelTests(unittest.TestCase):
             quality_code, quality = run("quality", dataset=dataset["datasetPath"])
             self.assertEqual(quality_code, 0)
             self.assertEqual(quality["quality"]["status"], "BLOCKED_BY_DATA")
+            readiness_code, readiness = run(
+                "readiness",
+                dataset=dataset["datasetPath"],
+            )
+            self.assertEqual(readiness_code, 0)
+            self.assertEqual(readiness["status"], "BLOCKED BY DATA")
+            self.assertFalse(readiness["promotionReady"])
+            threshold_path = root / "thresholds.json"
+            threshold_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "thresholds": {
+                    "minimumIndependentUsableGroups": 1,
+                    "minimumIndependentUsableGroupsPerClass": 1,
+                },
+            }), encoding="utf-8")
+            thresholded_code, thresholded = run(
+                "readiness",
+                dataset=dataset["datasetPath"],
+                thresholds=str(threshold_path),
+            )
+            self.assertEqual(thresholded_code, 0)
+            self.assertIn("promotionGates", thresholded)
 
 
 class Phase18IntelligenceTests(unittest.TestCase):
@@ -1202,6 +1259,185 @@ class Phase19IntelligenceTests(unittest.TestCase):
         self.assertEqual(set(result["perClass"]), {"DIRECT", "DELEGATE"})
         self.assertEqual(result["perClass"]["DIRECT"]["falseNegativeRate"], 0.5)
         self.assertEqual(result["perClass"]["DELEGATE"]["falsePositiveRate"], 0.5)
+
+    def test_legacy_exposed_review_is_not_counted_as_independent_real_evidence(self) -> None:
+        quality = dataset_quality([{
+            "record_id": "legacy-real",
+            "request_text": "Inspect the repository",
+            "label": "DELEGATE",
+            "label_source": "human_gold",
+            "label_independent": False,
+            "group_fingerprint": "legacy-group",
+            "request_fingerprint": "legacy-request",
+            "split": "test",
+            "category": "coding",
+            "task_category": "repository_inspection",
+            "complexity": "medium",
+            "created_at": "2026-09-01T00:00:00+00:00",
+        }])
+        self.assertEqual(quality["reviewedRealLabelCount"], 1)
+        self.assertEqual(quality["reviewedRealIndependentGroupCount"], 0)
+
+    def test_data_maturity_reports_coverage_routes_outcomes_duplicates_and_freshness(self) -> None:
+        rows = [
+            {
+                "record_id": "maturity-direct",
+                "request_text": "Explain WAL mode without tools",
+                "label": "DIRECT",
+                "label_independent": True,
+                "group_fingerprint": "group-direct",
+                "production_decision": "DIRECT",
+                "task_category": "explanation",
+                "complexity": "low",
+                "category": "reasoning",
+                "created_at": "2026-09-01T00:00:00+00:00",
+                "outcome_success": True,
+                "selected_provider": "omniroute",
+                "selected_model": "model-a",
+            },
+            {
+                "record_id": "maturity-delegate",
+                "request_text": "Inspect the repository and run tests",
+                "label": "DELEGATE",
+                "label_independent": True,
+                "group_fingerprint": "group-delegate",
+                "production_decision": "DELEGATE",
+                "task_category": "repository_verification",
+                "complexity": "medium",
+                "category": "coding",
+                "created_at": "2026-09-02T00:00:00+00:00",
+                "outcome_success": False,
+                "selected_provider": "omniroute",
+                "selected_model": "model-b",
+            },
+            {
+                "record_id": "maturity-unlabeled",
+                "request_text": "Draft a short note",
+                "label": None,
+                "label_independent": False,
+                "group_fingerprint": "group-unlabeled",
+                "production_decision": "DIRECT",
+                "task_category": "drafting",
+                "complexity": "low",
+                "category": "general",
+                "created_at": "2026-09-03T00:00:00+00:00",
+                "outcome_success": None,
+            },
+        ]
+        report = data_maturity(
+            rows,
+            now=dt.datetime(2026, 9, 4, tzinfo=dt.timezone.utc),
+            duplicate_stats={"potentialNearDuplicatePairs": 1},
+        )
+        self.assertEqual(report["totalExamples"], 3)
+        self.assertEqual(report["eligibleExamples"], 2)
+        self.assertEqual(report["deterministicRouteBalance"], {"DELEGATE": 1, "DIRECT": 2})
+        self.assertEqual(report["outcomes"]["successes"], 1)
+        self.assertEqual(report["outcomes"]["failures"], 1)
+        self.assertIn("omniroute/model-a", report["outcomes"]["byCandidateProviderModel"])
+        self.assertEqual(report["freshness"]["asOf"], "2026-09-04T00:00:00+00:00")
+        self.assertEqual(report["duplicates"]["potentialNearDuplicatePairs"], 1)
+        self.assertEqual(report["status"], "insufficient_data")
+
+    def test_promotion_thresholds_are_configurable_and_qualifying_fixture_is_ready(self) -> None:
+        policy = PromotionThresholds.from_mapping({
+            "minimumIndependentUsableGroups": 2,
+            "minimumIndependentUsableGroupsPerClass": 1,
+            "minimumCategories": 1,
+            "minimumUsableLabelsPerCategory": 1,
+            "minimumDisagreements": 2,
+            "minimumCategoryEvaluationSamples": 2,
+            "minimumCategoryClassSamples": 1,
+        })
+        self.assertEqual(policy.minimum_categories, 1)
+        with self.assertRaisesRegex(ValueError, "unknown intelligence threshold"):
+            PromotionThresholds.from_mapping({"minimiumCategories": 1})
+        maturity = {
+            "candidateGates": {
+                name: True for name in (
+                    "independentUsableGroups", "directGroups", "delegateGroups",
+                    "validationPerClass", "testPerClass", "categoryCoverage",
+                    "blindHumanGoldBothClasses", "credibleChronology",
+                    "zeroDecisionOutcomeLeakage", "zeroCrossSplitContamination",
+                    "featureSchemaFrozen",
+                )
+            },
+            "labelCompleteness": {"rate": 1.0},
+            "classImbalance": {"ratio": 1.0},
+            "featureCoverage": {"missingRate": 0.0},
+            "rejections": {"leakage": 0},
+            "eligibleExamples": 2,
+        }
+        evaluation = {
+            "status": "evaluated",
+            "baseline": {"metrics": {
+                "balancedAccuracy": 0.70,
+                "f1": 0.70,
+                "delegateFalseNegativeRate": 0.10,
+            }},
+            "model": {"metrics": {
+                "balancedAccuracy": 0.80,
+                "f1": 0.75,
+                "delegateFalseNegativeRate": 0.05,
+            }},
+            "confidenceCalibration": {
+                "expectedCalibrationError": 0.02,
+                "brierScore": 0.04,
+            },
+            "performanceByTaskCategory": {
+                f"category-{index}": {
+                    "sampleCount": 2,
+                    "classBalance": {"DIRECT": 1, "DELEGATE": 1},
+                    "modelMetrics": {"balancedAccuracy": 0.80},
+                    "baselineMetrics": {"balancedAccuracy": 0.70},
+                }
+                for index in range(1)
+            },
+            "pairedComparison": {
+                "disagreements": 2,
+                "modelWins": 2,
+                "baselineWins": 0,
+                "exactMcNemarPValue": 0.01,
+            },
+            "benchmarkReproducibility": {"passed": True},
+        }
+        ready = promotion_gate_summary(
+            maturity=maturity,
+            evaluation=evaluation,
+            thresholds=policy,
+        )
+        self.assertTrue(ready["promotionReady"])
+        self.assertEqual(ready["status"], "READY")
+        self.assertEqual(ready["gatesFailed"], [])
+
+    def test_calibration_and_disagreement_reports_do_not_invent_counterfactuals(self) -> None:
+        examples = [
+            {"delegateProbability": 0.9, "confidence": 0.9, "correct": True, "label": "DELEGATE"},
+            {"delegateProbability": 0.1, "confidence": 0.9, "correct": True, "label": "DIRECT"},
+        ]
+        calibration = calibration_metrics(examples)
+        self.assertEqual(calibration["delegateProbability"]["sampleCount"], 2)
+        self.assertEqual(calibration["confidence"]["sampleCount"], 2)
+        rows = [{
+            "record_id": "disagreement",
+            "production_decision": "DIRECT",
+            "ml_prediction": "DELEGATE",
+            "ml_confidence": 0.8,
+            "task_category": "repository_inspection",
+            "complexity": "medium",
+            "repository_required": True,
+            "retrieval_required": True,
+            "tool_required": True,
+            "outcome_success": True,
+            "label": "DELEGATE",
+            "label_independent": True,
+        }]
+        disagreements = disagreement_telemetry(rows)
+        outcomes = observed_outcome_evidence(rows)
+        self.assertEqual(disagreements["count"], 1)
+        self.assertEqual(disagreements["representative"][0]["counterfactual"], "unavailable")
+        self.assertEqual(outcomes["counterfactualStatus"], "unavailable")
+        self.assertEqual(outcomes["disagreementObservedOutcome"]["successes"], 1)
 
 
 class Phase110IntelligenceTests(unittest.TestCase):

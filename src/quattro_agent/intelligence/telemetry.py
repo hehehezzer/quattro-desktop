@@ -101,6 +101,15 @@ def shadow_predict(
     started = time.perf_counter()
     try:
         model = DirectDelegateModel.load(artifact)
+        # Legacy artifacts remain readable for offline ablations, but they
+        # contain repository-presence/context fields that are not part of the
+        # request-time contract.  Never let one become a live shadow input.
+        if model.feature_set == "legacy_full":
+            return {
+                "model_version": str(active["model_version"]),
+                "latency_ms": round((time.perf_counter() - started) * 1_000, 3),
+                "error": "unsafe_model_features",
+            }
         prediction = model.predict(
             request,
             profile=profile or {},

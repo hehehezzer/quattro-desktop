@@ -187,7 +187,18 @@ def forbidden_payload_paths(payload: Any, *, path: str = "$") -> list[str]:
 def project_model_input(row: Mapping[str, Any]) -> dict[str, Any]:
     """Return the complete allowlisted decision-time view consumed by ML."""
     request = str(row.get("request_text") or "")
-    derived = decision_profile(request, row)
+    # Runtime records may contain a profile object assembled after routing.
+    # Only the explicit, non-production probe contract is allowed to override
+    # text-derived fields.  This keeps the public helper useful for controlled
+    # probe ingestion while preventing a caller from smuggling a post-decision
+    # value through an otherwise safe-looking key such as ``complexity``.
+    trusted_contract = (
+        row
+        if row.get("feature_provenance") == "probe_contract_v2"
+        and not bool(row.get("decision_applied"))
+        else None
+    )
+    derived = decision_profile(request, trusted_contract)
     result = {
         "request_text": request,
         "request_length": len(request),
