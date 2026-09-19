@@ -1243,8 +1243,8 @@
       "description": "Antigravity Claude Opus 4.6 (Thinking) route.",
       "default_reasoning_level": "medium",
       "priority": 3,
-      "context_window": 1048576,
-      "max_context_window": 1048576,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
       "input_modalities": [
         "text"
       ]
@@ -1307,8 +1307,8 @@
       "description": "Antigravity Claude Sonnet 4.6 (Thinking) route.",
       "default_reasoning_level": "medium",
       "priority": 3,
-      "context_window": 1048576,
-      "max_context_window": 1048576,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
       "input_modalities": [
         "text"
       ]

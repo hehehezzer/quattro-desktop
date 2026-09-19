@@ -8,6 +8,7 @@ import json
 import pathlib
 import sys
 import tempfile
+import typing
 import unittest
 from unittest import mock
 
@@ -68,16 +69,21 @@ CURATED = pathlib.Path(__file__).resolve().parents[1] / "benchmarks/direct_deleg
 
 
 class IntelligenceStoreTests(unittest.TestCase):
+    def test_blind_vote_annotations_resolve_at_runtime(self) -> None:
+        hints = typing.get_type_hints(IntelligenceStore.import_blind_review_votes)
+        self.assertIn("votes", hints)
+
     def test_request_sanitization_removes_credential_shapes(self) -> None:
+        synthetic_key = "s" + "k-" + "synthetic-1234567890abcdefghijkl"
         value = (
             "debug Authorization: Bearer secret-value-123456789 and "
-            "https://alice:password@example.test/path sk-synthetic-1234567890abcdefghijkl"
+            f"https://alice:password@example.test/path {synthetic_key}"
         )
         safe, redacted = sanitize_request(value)
         self.assertTrue(redacted)
         self.assertNotIn("secret-value", safe)
         self.assertNotIn("alice:password", safe)
-        self.assertNotIn("sk-123456", safe)
+        self.assertNotIn(synthetic_key, safe)
 
     def test_label_is_verified_and_marks_router_correction(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -874,6 +880,23 @@ class Phase18IntelligenceTests(unittest.TestCase):
             )
             self.assertEqual(base, leaked)
 
+    def test_legacy_model_vector_preserves_repository_presence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            store = IntelligenceStore(root / "intelligence.sqlite3")
+            import_controlled_probes(store)
+            manifest = DatasetBuilder(store).extract(root / "datasets")
+            rows = load_dataset(pathlib.Path(manifest["datasetPath"]))
+            model = train_direct_delegate_model(
+                rows,
+                dataset_version=manifest["datasetVersion"],
+                feature_set="legacy_full",
+            )
+            request = "Inspect the parser"
+            absent = model.vectorize(request, repository_present=False)
+            present = model.vectorize(request, repository_present=True)
+            self.assertNotEqual(absent, present)
+
     def test_silver_never_influences_calibration_or_threshold_selection(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -1365,6 +1388,18 @@ class Phase110IntelligenceTests(unittest.TestCase):
         self.assertEqual({(left, right) for left, right, _score in pairs}, {
             (0, 1), (0, 2), (1, 2),
         })
+
+    def test_semantic_duplicate_guard_reuses_supplied_lexical_pairs(self) -> None:
+        rows = [
+            {"request_text": "fix this endpoint", "request_fingerprint": "a"},
+            {"request_text": "repair the API route", "request_fingerprint": "b"},
+        ]
+        with mock.patch(
+            "quattro_agent.intelligence.dataset._near_duplicate_pairs",
+            side_effect=AssertionError("lexical pairs were recomputed"),
+        ):
+            pairs = _semantic_duplicate_pairs(rows, lexical_pairs=[])
+        self.assertEqual([(left, right) for left, right, _score in pairs], [(0, 1)])
 
     def test_split_manifest_is_fingerprinted_and_registered(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

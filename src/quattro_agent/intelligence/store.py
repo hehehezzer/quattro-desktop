@@ -11,7 +11,7 @@ import os
 import sqlite3
 import uuid
 from collections import Counter
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 

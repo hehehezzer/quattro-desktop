@@ -167,6 +167,13 @@ class OmniRouteContractTests(unittest.TestCase):
             self.assertIn(astra["default_reasoning_level"], {"low", "high"})
             self.assertEqual(astra["shell_type"], "shell_command")
 
+        for slug in (
+            "antigravity/claude-opus-4-6-thinking",
+            "antigravity/claude-sonnet-4-6",
+        ):
+            self.assertEqual(by_slug[slug]["context_window"], 1_000_000)
+            self.assertEqual(by_slug[slug]["max_context_window"], 1_000_000)
+
         # The image-only Antigravity route remains exposed through the local
         # image MCP bridge, not as a text Codex model picker entry.
         self.assertNotIn("antigravity/gemini-3.1-flash-image", by_slug)

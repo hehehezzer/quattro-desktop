@@ -216,7 +216,7 @@ class DirectDelegateModel:
         for index, value in enumerate(self._numeric(
             text,
             model_input,
-            False,
+            repository_present,
             feature_set=self.feature_set,
         )):
             vector[offset + index] = (value - self.numeric_means[index]) / self.numeric_scales[index]

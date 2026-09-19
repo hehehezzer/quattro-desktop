@@ -67,8 +67,9 @@ PYTHONPATH=src ./src/quattro-agent config init
 2. Configure that home with the provider shape in
    `examples/codex-config.toml`.
 3. Install or point `QUATTRO_MODEL_CATALOG` at the shared catalog containing
-   the four Quattro routes, the six account-qualified GPT-5.6 Sol/Terra/Luna
-   routes, and the 18 verified Antigravity text routes.
+   the four Quattro routes, the two account-pinned GPT-6 Astra routes, the six
+   account-qualified GPT-5.6 Sol/Terra/Luna routes, and the 18 verified
+   Antigravity text routes.
 4. Start OmniRoute separately and confirm its loopback Responses endpoint.
 5. Run `quattro-agent doctor --json`.
 

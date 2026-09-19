@@ -28,6 +28,8 @@ PHASE2_MODEL_REQUIREMENTS = {
     "maximumBrierScore": 0.20,
 }
 _DRIFT_TOKEN = re.compile(r"[a-z][a-z0-9_./-]{1,63}")
+_CALIBRATION_BOOTSTRAP_MAX_ITERATIONS = 200
+_CALIBRATION_BOOTSTRAP_MAX_DRAWS = 50_000
 
 
 def _wilson_interval(successes: int, total: int) -> list[float] | None:
@@ -179,33 +181,37 @@ def _calibration(examples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     intervals = {"brierScore": None, "expectedCalibrationError": None}
     if len(examples) >= 2:
         generator = random.Random(0)
+        sample_count = len(examples)
+        iterations = min(
+            _CALIBRATION_BOOTSTRAP_MAX_ITERATIONS,
+            max(1, _CALIBRATION_BOOTSTRAP_MAX_DRAWS // sample_count),
+        )
+        probabilities = [float(row["delegateProbability"]) for row in examples]
+        targets = [1.0 if row["label"] == "DELEGATE" else 0.0 for row in examples]
+        squared_errors = [
+            (probability - target) ** 2
+            for probability, target in zip(probabilities, targets)
+        ]
+        bin_indexes = [min(9, int(probability * 10)) for probability in probabilities]
         brier_samples: list[float] = []
         ece_samples: list[float] = []
-        for _index in range(500):
-            sample = [examples[generator.randrange(len(examples))] for _ in examples]
-            sample_brier = statistics.fmean(
-                (float(row["delegateProbability"]) - (1.0 if row["label"] == "DELEGATE" else 0.0)) ** 2
-                for row in sample
+        for _index in range(iterations):
+            indexes = [generator.randrange(sample_count) for _ in range(sample_count)]
+            brier_samples.append(statistics.fmean(squared_errors[index] for index in indexes))
+            counts = [0] * 10
+            probability_sums = [0.0] * 10
+            target_sums = [0.0] * 10
+            for index in indexes:
+                bin_index = bin_indexes[index]
+                counts[bin_index] += 1
+                probability_sums[bin_index] += probabilities[index]
+                target_sums[bin_index] += targets[index]
+            weighted_sample_gap = sum(
+                abs(probability_sums[index] - target_sums[index])
+                for index, count in enumerate(counts)
+                if count
             )
-            sample_bins = []
-            for lower, upper in calibration_ranges:
-                members = [
-                    row for row in sample
-                    if lower <= float(row["delegateProbability"]) < upper
-                    or (upper == 1.0 and float(row["delegateProbability"]) == 1.0)
-                ]
-                if members:
-                    mean_probability = statistics.fmean(
-                        float(row["delegateProbability"]) for row in members
-                    )
-                    observed_delegate_rate = sum(
-                        row["label"] == "DELEGATE" for row in members
-                    ) / len(members)
-                    sample_bins.append(
-                        abs(mean_probability - observed_delegate_rate) * len(members)
-                    )
-            brier_samples.append(sample_brier)
-            ece_samples.append(sum(sample_bins) / len(sample))
+            ece_samples.append(weighted_sample_gap / sample_count)
         brier_samples.sort()
         ece_samples.sort()
         lower = int(len(brier_samples) * 0.025)

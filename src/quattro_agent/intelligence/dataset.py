@@ -214,10 +214,16 @@ def _semantic_duplicate_pairs(
     records: Sequence[Mapping[str, Any]],
     *,
     threshold: float = SEMANTIC_DUPLICATE_THRESHOLD,
+    lexical_pairs: Sequence[tuple[int, int, float]] | None = None,
 ) -> list[tuple[int, int, float]]:
     """Find deterministic concept-level paraphrases missed by lexical Jaccard."""
     representations = [_semantic_tokens(record.get("request_text")) for record in records]
-    lexical = {(left, right) for left, right, _score in _near_duplicate_pairs(records)}
+    lexical = {
+        (left, right)
+        for left, right, _score in (
+            _near_duplicate_pairs(records) if lexical_pairs is None else lexical_pairs
+        )
+    }
     pairs: list[tuple[int, int, float]] = []
     for left in range(len(records)):
         left_terms = representations[left]
@@ -454,7 +460,7 @@ def dataset_quality(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     conflicting_groups = sum(len(values) > 1 for values in group_labels.values())
     duplicate_rows = len(rows) - len({str(row["request_fingerprint"]) for row in rows})
     near_pairs = _near_duplicate_pairs(rows)
-    semantic_pairs = _semantic_duplicate_pairs(rows)
+    semantic_pairs = _semantic_duplicate_pairs(rows, lexical_pairs=near_pairs)
     exact_splits: dict[str, set[str]] = {}
     for row in rows:
         exact_splits.setdefault(str(row["request_fingerprint"]), set()).add(
@@ -1235,9 +1241,12 @@ class DatasetBuilder:
                     union(index, owners[key])
                 else:
                     owners[key] = index
-        for left, right, _similarity in _near_duplicate_pairs(records):
+        near_pairs = _near_duplicate_pairs(records)
+        for left, right, _similarity in near_pairs:
             union(left, right)
-        for left, right, _similarity in _semantic_duplicate_pairs(records):
+        for left, right, _similarity in _semantic_duplicate_pairs(
+            records, lexical_pairs=near_pairs
+        ):
             union(left, right)
         component_keys: dict[int, list[str]] = {}
         for index, record in enumerate(records):

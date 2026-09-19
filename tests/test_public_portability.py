@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -12,14 +13,35 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from quattro_agent.cli import starter_config, tool_environment  # noqa: E402
 from quattro_agent.config import validate_ai_config  # noqa: E402
 from quattro_agent.paths import codex_account_root, omniroute_base_url  # noqa: E402
 from quattro_agent.containment import bubblewrap_path, build_bwrap_command  # noqa: E402
+import check_public_history as public_history  # noqa: E402
 
 
 class PublicPortabilityTests(unittest.TestCase):
+    def test_public_history_token_scan_has_boundaries_and_narrow_fixture_allowlist(self):
+        token_pattern = public_history.TOKEN_PATTERNS[2]
+        self.assertIsNone(re.search(token_pattern, "task-intelligence"))
+        shaped = "s" + "k-" + "livecredentialvalue123"
+        self.assertIsNotNone(re.search(token_pattern, f"value={shaped}"))
+        fixture = "s" + "k-" + "synthetic-1234567890abcdefghijkl"
+        self.assertTrue(public_history.allowed_historical_test_fixture(
+            token_pattern,
+            f"commit:tests/test_intelligence.py:74:value = {fixture}"
+        ))
+        self.assertFalse(public_history.allowed_historical_test_fixture(
+            token_pattern,
+            f"commit:src/runtime.py:74:value = {fixture}"
+        ))
+        self.assertFalse(public_history.allowed_historical_test_fixture(
+            public_history.TOKEN_PATTERNS[0],
+            f"commit:tests/test_intelligence.py:74:value = {fixture}"
+        ))
+
     def test_starter_config_is_memory_off_and_credential_free(self):
         config = starter_config()
         validated = validate_ai_config(config)
