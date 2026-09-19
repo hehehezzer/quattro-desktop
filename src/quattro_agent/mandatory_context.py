@@ -11,6 +11,8 @@ from typing import Any, Mapping
 
 WORKSPACE_POLICY_ID = "workspace.default_project_root"
 WORKSPACE_SOURCE = "configuration:workspace.projectRoot"
+REPOSITORY_WORKFLOW_POLICY_ID = "repository.mutation.branch_pr"
+QUATTRO_DESKTOP_CLEAN_POLICY_ID = "repository.quattro_desktop.clean_worktree"
 FAILURE_CLASSES = frozenset({
     "mandatory-context discovery failure",
     "RAG retrieval failure",
@@ -150,6 +152,12 @@ def build_mandatory_context(
     """Build compact authority text outside the retrieval/reranking budget."""
     root = project_root_from_config(config)
     destination = destination_from_request(request, project_root=root, cwd=cwd) if request else None
+    current_root = cwd.resolve(strict=False) if cwd is not None else None
+    quattro_desktop = (
+        str(current_root)
+        if current_root is not None and current_root.name == "quattro-desktop"
+        else "the Quattro Desktop repository"
+    )
     lines = [
         "MANDATORY OPERATIONAL POLICY (trusted; not RAG):",
         f"[{WORKSPACE_POLICY_ID}] Default all repository clones, repository creation, and new "
@@ -157,6 +165,19 @@ def build_mandatory_context(
         "higher-priority safety restriction prevents it.",
         "Before those operations, resolve and validate the destination; do not infer a "
         "destination from the current working directory.",
+        f"[{REPOSITORY_WORKFLOW_POLICY_ID}] Repository mutation invariant: inspect the "
+        "repository root, git status, current branch, remotes, and HEAD before the first "
+        "file edit. Make changes only on a dedicated non-main branch; preserve unrelated "
+        "work; validate and review the scoped diff; commit only intended files; push and "
+        "verify the remote branch; then create a PR targeting main. Never push "
+        "implementation commits directly to main, and never merge without explicit "
+        "authorization or with failing CI. If no repository files change, no branch or PR "
+        "is required.",
+        f"[{QUATTRO_DESKTOP_CLEAN_POLICY_ID}] Before modifying {quattro_desktop}, "
+        "require a clean worktree after checking git status, branch, HEAD, and remotes. If "
+        "dirty, do not modify, stash, reset, clean, discard, commit, merge, or overwrite; "
+        "report 'BLOCKED — QUATTRO DESKTOP WORKTREE NOT CLEAN' with the dirty paths. Once "
+        "clean, use the repository mutation invariant above.",
     ]
     if destination is not None:
         lines.append(
@@ -166,7 +187,11 @@ def build_mandatory_context(
     return MandatoryContext(
         text="\n".join(lines),
         loaded_sources=(WORKSPACE_SOURCE,),
-        activated_policies=(WORKSPACE_POLICY_ID,),
+        activated_policies=(
+            WORKSPACE_POLICY_ID,
+            REPOSITORY_WORKFLOW_POLICY_ID,
+            QUATTRO_DESKTOP_CLEAN_POLICY_ID,
+        ),
         destination=destination,
         propagated_to_subagent=delegated,
     )

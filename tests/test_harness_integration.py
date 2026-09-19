@@ -143,6 +143,11 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(len(context_events), 1)
         mandatory = context_events[0]["payload"]["mandatoryContext"]
         self.assertIn("workspace.default_project_root", mandatory["activatedPolicies"])
+        self.assertIn("repository.mutation.branch_pr", mandatory["activatedPolicies"])
+        self.assertIn(
+            "repository.quattro_desktop.clean_worktree",
+            mandatory["activatedPolicies"],
+        )
         self.assertEqual(mandatory["loadedSources"], ["configuration:workspace.projectRoot"])
         self.assertGreater(context_events[0]["payload"]["launcherPayloadTokenEstimate"], 0)
         self.assertIn(context_events[0]["payload"]["contextClass"], {"small", "moderate", "large"})
@@ -272,6 +277,10 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         )
         self.assertTrue(
             context_event["payload"]["mandatoryContext"]["propagatedToSubagent"]
+        )
+        self.assertIn(
+            "repository.mutation.branch_pr",
+            context_event["payload"]["mandatoryContext"]["activatedPolicies"],
         )
 
     def test_pi_worker_failure_returns_control_without_retry_loop(self):
