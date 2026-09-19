@@ -9,6 +9,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from quattro_agent.mandatory_context import (  # noqa: E402
+    QUATTRO_DESKTOP_CLEAN_POLICY_ID,
+    REPOSITORY_WORKFLOW_POLICY_ID,
     WORKSPACE_POLICY_ID,
     build_mandatory_context,
     destination_from_request,
@@ -74,8 +76,29 @@ class MandatoryContextTests(unittest.TestCase):
         self.assertTrue(mandatory.propagated_to_subagent)
         self.assertIn("Default all repository clones", mandatory.text)
         self.assertEqual(
-            mandatory.diagnostics()["activatedPolicies"], [WORKSPACE_POLICY_ID]
+            mandatory.diagnostics()["activatedPolicies"],
+            [
+                WORKSPACE_POLICY_ID,
+                REPOSITORY_WORKFLOW_POLICY_ID,
+                QUATTRO_DESKTOP_CLEAN_POLICY_ID,
+            ],
         )
+
+    def test_repository_mutation_policies_are_always_loaded(self) -> None:
+        mandatory = build_mandatory_context(
+            self.config,
+            request="Fix a typo",
+            cwd=pathlib.Path("/srv/quattro-desktop"),
+        )
+        self.assertIn(REPOSITORY_WORKFLOW_POLICY_ID, mandatory.activated_policies)
+        self.assertIn("dedicated non-main branch", mandatory.text)
+        self.assertIn("create a PR targeting main", mandatory.text)
+        self.assertIn("explicit user override for a specific task", mandatory.text)
+        self.assertIn("established repository workflow", mandatory.text)
+        self.assertIn("required checks and reviews pass", mandatory.text)
+        self.assertIn(QUATTRO_DESKTOP_CLEAN_POLICY_ID, mandatory.activated_policies)
+        self.assertIn("/srv/quattro-desktop", mandatory.text)
+        self.assertIn("BLOCKED — QUATTRO DESKTOP WORKTREE NOT CLEAN", mandatory.text)
 
     def test_retrieval_budget_cannot_remove_mandatory_context(self) -> None:
         mandatory = build_mandatory_context(self.config, request="Clone example/widget")

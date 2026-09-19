@@ -738,11 +738,13 @@ def session_worker(args: argparse.Namespace) -> int:
             require_project_vault(project_vault)
         except MemoryError as error:
             die(str(error))
-    policy = memory_policy(memory_vault, project_vault) if memory_enabled else ""
     mandatory = build_mandatory_context(
         config, request=args.prompt, cwd=directory,
     )
-    policy = policy + "\n\n" + mandatory.text
+    policy = "\n\n".join(part for part in (
+        memory_policy(memory_vault, project_vault) if memory_enabled else "",
+        mandatory.text,
+    ) if part)
     account_id = args.account if args.agent == "codex" else None
     path = write_runtime(args.session_id, args.agent, directory, account_id, args.mode)
     update_recent(directory, args.agent, args.session_id, args.agent == "codex")
@@ -753,9 +755,12 @@ def session_worker(args: argparse.Namespace) -> int:
             env["CODEX_HOME"] = str(prepare_codex_launch(config, account_id))
             memory_args = [
                 "-c", f"developer_instructions={json.dumps(policy)}",
-                "--add-dir", str(memory_vault),
-                "--add-dir", str(project_vault),
-            ] if memory_enabled else []
+            ]
+            if memory_enabled:
+                memory_args.extend([
+                    "--add-dir", str(memory_vault),
+                    "--add-dir", str(project_vault),
+                ])
             if args.mode == "resume":
                 resume_target = [args.native_session_ref] if getattr(args, "native_session_ref", None) else ["--all"]
                 command = [binary, *memory_args, *codex_permission_args(config), "resume", *resume_target, "-C", str(directory)]
@@ -767,7 +772,7 @@ def session_worker(args: argparse.Namespace) -> int:
                     command.append(args.prompt)
         else:
             binary = require("pi")
-            memory_args = ["--append-system-prompt", policy] if memory_enabled else []
+            memory_args = ["--append-system-prompt", policy]
             if args.mode == "prompt":
                 command = [binary, *memory_args, "-p", "--", args.prompt]
             elif args.mode == "resume":
