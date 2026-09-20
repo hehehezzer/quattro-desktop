@@ -55,6 +55,7 @@ class PromotionThresholds:
     minimum_category_class_samples: int = 10
 
     def __post_init__(self) -> None:
+        """Reject invalid threshold values before policy evaluation."""
         integer_fields = {
             "minimum_independent_usable_groups",
             "minimum_independent_usable_groups_per_class",
@@ -115,6 +116,7 @@ class PromotionThresholds:
         return cls(**normalized)
 
     def as_dict(self) -> dict[str, Any]:
+        """Return the policy using its configuration field names."""
         return {item.name: getattr(self, item.name) for item in fields(self)}
 
     def dataset_requirements(self) -> dict[str, Any]:
@@ -136,6 +138,7 @@ class PromotionThresholds:
         }
 
     def evaluation_requirements(self) -> dict[str, Any]:
+        """Return thresholds used to evaluate model promotion evidence."""
         return {
             "minimumBalancedAccuracyImprovement": self.minimum_balanced_accuracy_improvement,
             "minimumDisagreements": self.minimum_disagreements,
@@ -186,6 +189,7 @@ def _gate(
     evidence: Mapping[str, Any] | None = None,
     reason: str | None = None,
 ) -> dict[str, Any]:
+    """Build a normalized promotion-gate result."""
     status = "BLOCKED" if passed is None else "PASS" if passed else "FAIL"
     result: dict[str, Any] = {"status": status}
     if evidence:

@@ -24,6 +24,7 @@ MATURITY_SCHEMA_VERSION = 1
 
 
 def _parse_time(value: Any) -> dt.datetime | None:
+    """Parse a timezone-aware timestamp and normalize it to UTC."""
     if not value:
         return None
     try:
@@ -34,14 +35,17 @@ def _parse_time(value: Any) -> dt.datetime | None:
 
 
 def _round(value: float | None) -> float | None:
+    """Round a maturity metric to the report precision."""
     return None if value is None else round(float(value), 6)
 
 
 def _balance(rows: Sequence[Mapping[str, Any]], field: str) -> dict[str, int]:
+    """Count normalized field values in deterministic key order."""
     return dict(sorted(Counter(str(row.get(field) or "unknown") for row in rows).items()))
 
 
 def _route_balance(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    """Count rows by their deterministic production route."""
     return dict(sorted(Counter(
         str(row.get("production_decision"))
         for row in rows
@@ -50,6 +54,7 @@ def _route_balance(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
 
 
 def _observed_success(row: Mapping[str, Any]) -> bool | None:
+    """Return an observed binary outcome when the row records one."""
     value = row.get("outcome_success")
     if not isinstance(value, bool):
         value = row.get("success")
@@ -57,11 +62,13 @@ def _observed_success(row: Mapping[str, Any]) -> bool | None:
 
 
 def _outcome_report(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Summarize known outcomes without claiming counterfactual evidence."""
     known = [row for row in rows if _observed_success(row) is not None]
     successes = sum(_observed_success(row) is True for row in known)
     failures = len(known) - successes
 
     def grouped(field: str) -> dict[str, dict[str, Any]]:
+        """Aggregate known outcomes by a selected row field."""
         buckets: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
         for row in known:
             value = str(row.get(field) or "unknown")
@@ -117,6 +124,7 @@ def _outcome_report(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def _freshness(rows: Sequence[Mapping[str, Any]], *, now: dt.datetime) -> dict[str, Any]:
+    """Report age and recency coverage for parseable timestamps."""
     parsed = [_parse_time(row.get("created_at")) for row in rows]
     valid = [value for value in parsed if value is not None]
     ages = [max(0.0, (now - value).total_seconds() / 86_400) for value in valid]

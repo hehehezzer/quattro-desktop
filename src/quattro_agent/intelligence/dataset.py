@@ -377,6 +377,7 @@ def dataset_quality(
     *,
     thresholds: PromotionThresholds | None = None,
 ) -> dict[str, Any]:
+    """Audit dataset eligibility, provenance, balance, and contamination."""
     policy = thresholds or DEFAULT_PROMOTION_THRESHOLDS
     labeled = [row for row in rows if row.get("label") in {"DIRECT", "DELEGATE"}]
     real = [row for row in labeled if row.get("label_source") in REAL_LABEL_SOURCES]
