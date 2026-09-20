@@ -23,7 +23,7 @@ CORE_DEPLOYMENT_MAPPINGS = {
             "__init__.py", "__main__.py", "adapters.py", "adaptive_routing.py",
             "benchmark.py", "cli.py",
             "collaboration.py", "config.py", "containment.py", "delegation.py", "errors.py",
-            "mandatory_context.py", "models.py", "omniroute.py", "paths.py", "policy.py",
+            "mandatory_context.py", "model_registry.py", "models.py", "omniroute.py", "paths.py", "policy.py",
             "privacy.py", "recovery.py", "retrieval.py", "routing.py",
             "routing_intelligence.py", "scheduler.py",
             "sessions.py", "store.py", "supervisor.py", "terminal_lifecycle.py",
@@ -45,6 +45,10 @@ CORE_DEPLOYMENT_MAPPINGS = {
     "core-initial-routing-evidence": (
         "src/quattro_agent/data/initial-routing-evidence.json",
         ".local/bin/quattro_agent/data/initial-routing-evidence.json",
+    ),
+    "core-model-policy": (
+        "src/quattro_agent/data/model-policy.json",
+        ".local/bin/quattro_agent/data/model-policy.json",
     ),
     **{
         f"namespace-{relative.replace('/', '-').removesuffix('.py')}":

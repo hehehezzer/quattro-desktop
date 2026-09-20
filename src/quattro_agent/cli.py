@@ -82,6 +82,9 @@ from quattro_agent.retrieval import (
 from quattro_agent.benchmark import load_cases as load_benchmark_cases, run_benchmark
 from quattro_agent.intelligence.commands import add_intelligence_parser, intelligence_command
 from quattro_agent.routing import automatic_model_override, classify_request
+from quattro_agent.model_registry import (
+    default_policy_path, load_model_registry, select_execution_target,
+)
 from quattro_agent.routing_intelligence import (
     MAX_EVIDENCE_BYTES,
     PreferenceMode,
@@ -2512,7 +2515,19 @@ def routing_command(args: argparse.Namespace) -> int:
                 policy_name="workspace-write",
             )
             configured = args.model or "auto"
-            route = automatic_model_override(config, decision.tier, configured) or configured
+            execution_target = None
+            if configured == "auto":
+                execution_target = select_execution_target(
+                    task_profile_from_dict(decision.task_profile),
+                    load_model_registry(default_policy_path(), model_catalog_path()),
+                    preferred_account=str(config["defaultCodexAccount"]),
+                    available_accounts=frozenset(
+                        str(row["id"]) for row in config["accounts"] if row.get("enabled") is True
+                    ),
+                )
+                route = execution_target.route
+            else:
+                route = automatic_model_override(config, decision.tier, configured) or configured
             preference = PreferenceMode(str(config["routing"].get("preferenceMode", "balanced")))
             snapshot = routing_snapshot(
                 task_profile_from_dict(decision.task_profile),
@@ -2528,6 +2543,7 @@ def routing_command(args: argparse.Namespace) -> int:
                 "tier": decision.tier.value,
                 "reasoningEffort": decision.reasoning_effort,
                 "effectiveRoute": route,
+                "executionTarget": execution_target.to_dict() if execution_target else None,
                 "decisionSnapshot": snapshot,
             }
         print(json.dumps(result, ensure_ascii=False, indent=2 if args.pretty else None))

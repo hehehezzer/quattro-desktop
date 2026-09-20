@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import signal
 import sqlite3
@@ -34,7 +35,9 @@ from typing import Any
 from quattro_agent import (
     RoutingDecision, RoutingTier, TaskState, TaskStore, adapter_for, automatic_model_override,
     classify_pre_routing, classify_request, context_budget_tokens, effective_reasoning_effort, load_ai_config,
-    next_exceptional_effort, next_tier, policy_profile,
+    next_exceptional_effort, next_tier, policy_profile, default_policy_path,
+    execution_target_for_route, load_model_registry, select_execution_target,
+    target_matches_actual,
 )
 from quattro_agent.adapters import AgentMode, RunSpec
 from quattro_agent.adaptive_routing import (
@@ -121,6 +124,14 @@ def approximate_tokens(value: str) -> int:
     """Return a bounded display-safe token estimate without retaining content."""
     return max(0, (len(value) + 3) // 4)
 MAX_AGENT_OUTPUT_BYTES = 5_000_000
+
+
+class OmniRouteAttemptError(RuntimeError):
+    """One exact-route transport failure with explicit retry safety."""
+
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 SELECTABLE_POLICIES = {
     "audit-read-only", "review-untrusted", "workspace-write",
     "desktop-config-write", "publication-capable", "full-access-explicit",
@@ -384,6 +395,41 @@ class HarnessRuntime:
                 return row
         raise ConfigError(f"unknown or disabled Codex account: {selected}")
 
+    @staticmethod
+    def _enabled_account_ids(config: Mapping[str, Any]) -> frozenset[str]:
+        return frozenset(
+            str(row["id"]) for row in config.get("accounts", [])
+            if isinstance(row, Mapping) and row.get("enabled") is True
+        )
+
+    @staticmethod
+    def _unavailable_registry_routes(
+        adaptive: AdaptiveRoutingDecision | None,
+        registry: Sequence[Any],
+    ) -> frozenset[str]:
+        """Map verified provider/model unavailability onto account-pinned routes.
+
+        The public snapshot intentionally has no account identifiers. Therefore
+        this excludes both account routes only when the provider/model resource
+        itself is known unavailable; account-local failure remains a fallback
+        event discovered by the exact route execution.
+        """
+        if adaptive is None or adaptive.selection is None:
+            return frozenset()
+        unavailable_models = {
+            (decision.provider, decision.model)
+            for decision in adaptive.selection.candidates
+            if not decision.eligible
+            and any(
+                str(reason).startswith("unavailable:")
+                for reason in decision.rejection_reasons
+            )
+        }
+        return frozenset(
+            target.route for target in registry
+            if (target.provider, target.model) in unavailable_models
+        )
+
     def _memory(self, config: Mapping[str, Any]) -> tuple[bool, pathlib.Path, pathlib.Path, str]:
         enabled, vault, enforced = memory_settings(dict(config))
         projects = project_memory_path(dict(config))
@@ -550,6 +596,27 @@ class HarnessRuntime:
             write_scopes=ownership,
         )
         pre_profile = task_profile_from_dict(routing.task_profile)
+        execution_target = None
+        if agent == "codex" and configured_model == "auto":
+            configured_catalog = self._configured_codex_catalog(account_home)
+            if configured_catalog is not None:
+                registry = load_model_registry(default_policy_path(), configured_catalog)
+                execution_target = select_execution_target(
+                    pre_profile,
+                    registry,
+                    preferred_account=selected_account,
+                    available_accounts=self._enabled_account_ids(config),
+                    unavailable_routes=self._unavailable_registry_routes(adaptive, registry),
+                )
+        elif agent == "codex" and configured_model:
+            configured_catalog = self._configured_codex_catalog(account_home)
+            if configured_catalog is not None:
+                execution_target = execution_target_for_route(
+                    pre_profile,
+                    load_model_registry(default_policy_path(), configured_catalog),
+                    configured_model,
+                    available_accounts=self._enabled_account_ids(config),
+                )
         pre_envelope = dict(adaptive.envelope) if adaptive and adaptive.envelope else None
         pre_selection = adaptive.selection.to_dict() if adaptive and adaptive.selection else None
         if pre_envelope is not None:
@@ -585,6 +652,7 @@ class HarnessRuntime:
                         "taskContextTokens": pre_profile.task_context_tokens,
                         "preferredCandidates": list(adaptive.preferred_candidates) if adaptive else [],
                         "adaptiveMode": adaptive.negotiation.compatibility if adaptive else "standard",
+                        "executionTarget": execution_target.to_dict() if execution_target else None,
                     },
                     "delegationDecision": delegation["decision"],
                     "delegationReason": delegation["reason"],
@@ -612,6 +680,7 @@ class HarnessRuntime:
                     "routing": routing.display(),
                     "routingEnvelope": pre_envelope,
                     "routingSelection": pre_selection,
+                    "executionTarget": execution_target.to_dict() if execution_target else None,
                     "routingAdaptive": ({
                         "compatibility": adaptive.negotiation.compatibility,
                         "headerTransport": adaptive.negotiation.header_transport,
@@ -637,11 +706,15 @@ class HarnessRuntime:
                 production_confidence=float(delegation["confidence"]),
                 selected_worker=agent,
                 selected_model=(
-                    automatic_model_override(config, routing.tier, configured_model)
-                    or configured_model
+                    execution_target.route if execution_target else (
+                        automatic_model_override(config, routing.tier, configured_model)
+                        or configured_model
+                    )
                 ),
-                selected_provider="omniroute" if agent == "codex" else "pi",
-                selected_account=selected_account,
+                selected_provider=(execution_target.provider if execution_target else (
+                    "omniroute" if agent == "codex" else "pi"
+                )),
+                selected_account=(execution_target.account if execution_target else selected_account),
                 project=actual_project,
                 repository_present=(actual_project / ".git").exists(),
                 profile=routing.task_profile,
@@ -748,11 +821,7 @@ class HarnessRuntime:
         account_id: str | None = None,
         timeout_seconds: float = 60.0,
     ) -> dict[str, Any]:
-        """Execute a DIRECT request through OmniRoute without a durable task.
-
-        Quattro owns classification and bounded context assembly; OmniRoute
-        remains solely responsible for selecting the provider/model route.
-        """
+        """Execute a DIRECT request with a Quattro-owned explicit target."""
         config = self.config()
         project = project.expanduser().resolve(strict=True)
         profile = self.profile(config, project, profile_name)
@@ -777,7 +846,25 @@ class HarnessRuntime:
         )
         routing = classify_pre_routing(pre_routing_input=boundary, config=config)
         profile_snapshot = task_profile_from_dict(routing.task_profile)
-        model = automatic_model_override(config, routing.tier, configured_model) or configured_model
+        configured_catalog = self._configured_codex_catalog(account_home)
+        if configured_model == "auto" and configured_catalog is not None:
+            execution_target = select_execution_target(
+                profile_snapshot,
+                load_model_registry(default_policy_path(), configured_catalog),
+                preferred_account=str(account["id"]),
+                available_accounts=self._enabled_account_ids(config),
+            )
+            model = execution_target.route
+        else:
+            execution_target = (
+                execution_target_for_route(
+                    profile_snapshot,
+                    load_model_registry(default_policy_path(), configured_catalog),
+                    configured_model,
+                    available_accounts=self._enabled_account_ids(config),
+                ) if configured_catalog is not None else None
+            )
+            model = automatic_model_override(config, routing.tier, configured_model) or configured_model
         intelligence_record_id = record_routing_telemetry(
             self.intelligence_database,
             request=prompt,
@@ -786,8 +873,8 @@ class HarnessRuntime:
             production_confidence=float(decision["confidence"]),
             selected_worker=None,
             selected_model=model,
-            selected_provider="omniroute",
-            selected_account=str(account["id"]),
+            selected_provider=(execution_target.provider if execution_target else "omniroute"),
+            selected_account=(execution_target.account if execution_target else str(account["id"])),
             project=project,
             repository_present=(project / ".git").exists(),
             profile=profile_snapshot.to_dict(),
@@ -829,6 +916,15 @@ class HarnessRuntime:
             update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
                 "alternatives": list(adaptive.preferred_candidates),
             })
+        if execution_target is not None and configured_catalog is not None:
+            registry = load_model_registry(default_policy_path(), configured_catalog)
+            execution_target = select_execution_target(
+                profile_snapshot, registry,
+                preferred_account=str(account["id"]),
+                available_accounts=self._enabled_account_ids(config),
+                unavailable_routes=self._unavailable_registry_routes(adaptive, registry),
+            )
+            model = execution_target.route
         try:
             load_plan = context_load_plan(profile_snapshot)
             diagnostics: dict[str, Any] = {
@@ -862,7 +958,6 @@ class HarnessRuntime:
                 "validation_status": ValidationStatus.NOT_RUN.value,
             })
             raise
-        configured_catalog = self._configured_codex_catalog(account_home)
         if configured_catalog is not None:
             try:
                 validate_manual_route_requirements(
@@ -891,89 +986,58 @@ class HarnessRuntime:
         routing_state = self.private_root / "routing"
         routing_config = config.get("routing", {})
         preference = PreferenceMode(str(routing_config.get("preferenceMode", "balanced")))
-        try:
-            routing_effort = self._dispatch_reasoning_effort(
-                config, routing.display(), model, account_home,
-            )
+        execution_started = time.perf_counter()
+        routing_effort = self._dispatch_reasoning_effort(
+            config, routing.display(), model, account_home,
+        )
+        attempt_routes = [model]
+        if execution_target is not None:
+            attempt_routes.extend(execution_target.fallbacks[:2])
+        fallback_events: list[dict[str, Any]] = []
+        last_error: RuntimeError | None = None
+        body: Mapping[str, Any] | None = None
+        response_metadata: dict[str, Any] | None = None
+        for attempt_index, attempt_route in enumerate(attempt_routes):
             request_body: dict[str, Any] = {
-                "model": model,
+                "model": attempt_route,
                 "input": input_text,
                 "reasoning": {"effort": routing_effort},
             }
-            if adaptive and adaptive.envelope:
+            if adaptive and adaptive.envelope and execution_target is None:
                 request_body["routing"] = dict(adaptive.envelope)
-            payload = json.dumps(request_body).encode("utf-8")
-            request = urllib.request.Request(
-                f"{self._omniroute_base_url()}/responses", data=payload,
-                headers={"Content-Type": "application/json"}, method="POST",
-            )
-        except (OSError, RuntimeError, TypeError, ValueError, KeyError):
-            update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
-                "success": False,
-                "failure_category": "request_preparation_failed",
-                "validation_status": ValidationStatus.NOT_RUN.value,
-            })
-            raise
-        execution_started = time.perf_counter()
-        try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                body = json.loads(response.read(2_000_000).decode("utf-8"))
-                response_headers = getattr(response, "headers", {})
-                raw_cost = response_headers.get("X-OmniRoute-Response-Cost")
-                try:
-                    actual_cost = float(raw_cost) if raw_cost is not None else None
-                except (TypeError, ValueError):
-                    actual_cost = None
-                response_metadata = {
-                    "provider": response_headers.get("X-OmniRoute-Provider"),
-                    "model": response_headers.get("X-OmniRoute-Model"),
-                    "cost": actual_cost,
-                    "cost_state": "actual" if actual_cost is not None else "unknown",
-                    "latencyMs": response_headers.get("X-OmniRoute-Latency-Ms"),
-                    "requestId": response_headers.get("X-OmniRoute-Request-Id"),
-                    "comboTrace": response_headers.get("X-OmniRoute-Combo-Trace"),
-                }
-        except urllib.error.HTTPError as error:
-            detail = error.read(8_192).decode("utf-8", errors="replace")
+            try:
+                body, response_metadata = self._send_omniroute_response(
+                    request_body, timeout_seconds=timeout_seconds,
+                )
+                model = attempt_route
+                if execution_target is not None and attempt_route != execution_target.route:
+                    registry = load_model_registry(default_policy_path(), configured_catalog)
+                    fallback_target = next(item for item in registry if item.route == attempt_route)
+                    execution_target = dataclasses.replace(
+                        execution_target,
+                        provider=fallback_target.provider,
+                        account=fallback_target.account,
+                        model=fallback_target.model,
+                        route=fallback_target.route,
+                    )
+                break
+            except OmniRouteAttemptError as error:
+                last_error = error
+                fallback_events.append({
+                    "route": attempt_route, "attempt": attempt_index + 1,
+                    "error": _bounded(str(error), 500),
+                    "retryable": error.retryable,
+                })
+                if not error.retryable:
+                    break
+        if body is None or response_metadata is None:
             update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
                 "success": False,
                 "execution_time_ms": (time.perf_counter() - execution_started) * 1_000,
-                "failure_category": f"provider_http_{error.code}",
+                "failure_category": "fallbacks_exhausted",
                 "validation_status": ValidationStatus.NOT_RUN.value,
             })
-            raise RuntimeError(f"OmniRoute provider failure: HTTP {error.code}: {detail}") from error
-        except urllib.error.URLError as error:
-            update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
-                "success": False,
-                "execution_time_ms": (time.perf_counter() - execution_started) * 1_000,
-                "failure_category": "routing_unavailable",
-                "validation_status": ValidationStatus.NOT_RUN.value,
-            })
-            raise RuntimeError(f"OmniRoute routing failure: {error.reason}") from error
-        except TimeoutError as error:
-            update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
-                "success": False,
-                "execution_time_ms": (time.perf_counter() - execution_started) * 1_000,
-                "failure_category": "timeout",
-                "validation_status": ValidationStatus.NOT_RUN.value,
-            })
-            raise RuntimeError("OmniRoute timeout; no retry was attempted") from error
-        except (json.JSONDecodeError, UnicodeDecodeError, TypeError) as error:
-            update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
-                "success": False,
-                "execution_time_ms": (time.perf_counter() - execution_started) * 1_000,
-                "failure_category": "malformed_response",
-                "validation_status": ValidationStatus.NOT_RUN.value,
-            })
-            raise RuntimeError("OmniRoute returned a malformed response") from error
-        except OSError as error:
-            update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
-                "success": False,
-                "execution_time_ms": (time.perf_counter() - execution_started) * 1_000,
-                "failure_category": "provider_io_failure",
-                "validation_status": ValidationStatus.NOT_RUN.value,
-            })
-            raise RuntimeError("OmniRoute response could not be read") from error
+            raise last_error or RuntimeError("OmniRoute execution failed")
         output = body.get("output_text")
         if not isinstance(output, str) or not output.strip():
             update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
@@ -984,10 +1048,38 @@ class HarnessRuntime:
             })
             raise RuntimeError("OmniRoute returned no final response")
         usage = body.get("usage") if isinstance(body.get("usage"), Mapping) else {}
+        input_details = (
+            usage.get("input_tokens_details")
+            if isinstance(usage.get("input_tokens_details"), Mapping) else {}
+        )
+        input_tokens = usage.get("input_tokens") or usage.get("inputTokens")
+        cached_input_tokens = input_details.get("cached_tokens")
+        uncached_input_tokens = (
+            max(0, int(input_tokens) - int(cached_input_tokens or 0))
+            if isinstance(input_tokens, int) and not isinstance(input_tokens, bool) else None
+        )
+        actual_model = str(response_metadata.get("model") or "")
+        target_honored = execution_target is None or target_matches_actual(
+            execution_target,
+            actual_provider=response_metadata.get("provider"),
+            actual_model=actual_model,
+        )
+        if execution_target is not None and not target_honored:
+            update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
+                "success": False,
+                "failure_category": "execution_target_mismatch",
+                "selected_model": actual_model or None,
+                "selected_provider": response_metadata.get("provider"),
+                "selected_account": execution_target.account,
+            })
+            raise RuntimeError(
+                f"OmniRoute target mismatch: requested {execution_target.route}, "
+                f"executed {response_metadata.get('provider')}/{actual_model}"
+            )
         update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
             "selected_model": response_metadata.get("model") or model,
             "selected_provider": response_metadata.get("provider") or "omniroute",
-            "selected_account": str(account["id"]),
+            "selected_account": execution_target.account if execution_target else str(account["id"]),
             "context_tokens": profile_snapshot.final_request_tokens,
             "retrieval_used": int(diagnostics.get("selectedChunks", 0) or 0) > 0,
             "retrieved_chunk_ids": diagnostics.get("selectedChunkIds", []),
@@ -996,7 +1088,7 @@ class HarnessRuntime:
                 *(f"retrieval.{method}" for method in diagnostics.get("methods", [])),
             ],
             "execution_time_ms": (time.perf_counter() - execution_started) * 1_000,
-            "input_tokens": usage.get("input_tokens") or usage.get("inputTokens"),
+            "input_tokens": input_tokens,
             "output_tokens": usage.get("output_tokens") or usage.get("outputTokens"),
             "cost": response_metadata.get("cost"),
             "failure_category": diagnostics.get("failureClassification"),
@@ -1038,6 +1130,12 @@ class HarnessRuntime:
                 "runtimeRevalidation": "OmniRoute",
             },
         }
+        snapshot["execution_target"] = execution_target.to_dict() if execution_target else {
+            "mode": "MANUAL", "route": model,
+        }
+        snapshot["target_honored"] = target_honored
+        snapshot["fallback_events"] = fallback_events
+        snapshot["fallback_used"] = bool(fallback_events)
         return {
             "schemaVersion": 1, "decision": decision, "response": output.strip(),
             "model": model,
@@ -1052,14 +1150,28 @@ class HarnessRuntime:
                 "protocolOverheadSource": "none_for_direct_request",
             },
             "routingSnapshot": snapshot,
+            "tokenTelemetry": {
+                "availableContextTokens": next((
+                    target.context_limit for target in load_model_registry(
+                        default_policy_path(), configured_catalog
+                    ) if target.route == model
+                ), None) if configured_catalog is not None else None,
+                "selectedContextTokens": profile_snapshot.final_request_tokens,
+                "transmittedInputTokens": input_tokens,
+                "cachedInputTokens": cached_input_tokens,
+                "uncachedInputTokens": uncached_input_tokens,
+                "outputTokens": usage.get("output_tokens") or usage.get("outputTokens"),
+            },
             "adaptiveRouting": {
                 "mode": snapshot["compatibility_mode"],
                 "candidateCount": adaptive.candidate_count if adaptive else 0,
                 "preferredCandidates": list(adaptive.preferred_candidates) if adaptive else [],
                 "actualSelection": response_metadata,
                 "overheadMs": adaptive.overhead_ms if adaptive else 0.0,
+                "executionTarget": execution_target.to_dict() if execution_target else None,
+                "targetHonored": target_honored,
             },
-            "retry": "not_attempted",
+            "retry": "fallback_succeeded" if fallback_events else "not_attempted",
         }
 
     @staticmethod
@@ -1068,6 +1180,58 @@ class HarnessRuntime:
         from quattro_agent.omniroute import APPROVED_BASE_URL
 
         return APPROVED_BASE_URL.rstrip("/")
+
+    def _send_omniroute_response(
+        self, request_body: Mapping[str, Any], *, timeout_seconds: float,
+    ) -> tuple[Mapping[str, Any], dict[str, Any]]:
+        """Send one exact target through OmniRoute without choosing a fallback."""
+        payload = json.dumps(dict(request_body)).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self._omniroute_base_url()}/responses", data=payload,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                body = json.loads(response.read(2_000_000).decode("utf-8"))
+                headers = getattr(response, "headers", {})
+        except urllib.error.HTTPError as error:
+            detail = error.read(8_192).decode("utf-8", errors="replace")
+            raise OmniRouteAttemptError(
+                f"OmniRoute provider failure: HTTP {error.code}: {detail}",
+                retryable=error.code == 429 or 500 <= error.code <= 599,
+            ) from error
+        except urllib.error.URLError as error:
+            raise OmniRouteAttemptError(
+                f"OmniRoute routing failure: {error.reason}", retryable=False,
+            ) from error
+        except TimeoutError as error:
+            raise OmniRouteAttemptError("OmniRoute target timed out", retryable=False) from error
+        except (json.JSONDecodeError, UnicodeDecodeError, TypeError) as error:
+            raise OmniRouteAttemptError(
+                "OmniRoute returned a malformed response", retryable=False,
+            ) from error
+        except OSError as error:
+            raise OmniRouteAttemptError(
+                "OmniRoute response could not be read", retryable=False,
+            ) from error
+        if not isinstance(body, Mapping):
+            raise OmniRouteAttemptError(
+                "OmniRoute returned a malformed response", retryable=False,
+            )
+        raw_cost = headers.get("X-OmniRoute-Response-Cost")
+        try:
+            actual_cost = float(raw_cost) if raw_cost is not None else None
+        except (TypeError, ValueError):
+            actual_cost = None
+        return body, {
+            "provider": headers.get("X-OmniRoute-Provider"),
+            "model": headers.get("X-OmniRoute-Model"),
+            "cost": actual_cost,
+            "cost_state": "actual" if actual_cost is not None else "unknown",
+            "latencyMs": headers.get("X-OmniRoute-Latency-Ms"),
+            "requestId": headers.get("X-OmniRoute-Request-Id"),
+            "comboTrace": headers.get("X-OmniRoute-Combo-Trace"),
+        }
 
     @staticmethod
     def _configured_codex_model(account_home: pathlib.Path | None) -> str | None:
@@ -1229,6 +1393,26 @@ class HarnessRuntime:
             "fallback_used": any(row.get("decision") == "skipped_before_dispatch" for row in safe_decisions),
             "received_at": receipt.get("received_at"),
         }
+        target_payload = private.get("executionTarget") if isinstance(private, Mapping) else None
+        target_honored = None
+        if isinstance(target_payload, Mapping):
+            from quattro_agent.model_registry import ExecutionTarget
+
+            expected = ExecutionTarget(
+                mode=str(target_payload.get("mode", "EXPLICIT")),
+                provider=str(target_payload.get("provider", "")),
+                account=str(target_payload.get("account", "")),
+                model=str(target_payload.get("model", "")),
+                route=str(target_payload.get("route", "")),
+                tier=str(target_payload.get("tier", "STANDARD")),
+                reason=str(target_payload.get("reason", "")),
+                fallbacks=tuple(str(item) for item in target_payload.get("fallbacks", [])),
+            )
+            target_honored = target_matches_actual(
+                expected, actual_provider=provider, actual_model=model,
+            )
+            actual["account"] = expected.account if target_honored else None
+            actual["target_honored"] = target_honored
         refreshed_snapshot = dict(snapshot)
         refreshed_snapshot["actual_selection"] = actual
         lifecycle = dict(refreshed_snapshot.get("lifecycle", {}))
@@ -1240,7 +1424,12 @@ class HarnessRuntime:
         refreshed_private["routingSnapshot"] = refreshed_snapshot
         self.store.update_private_payload(task_id, refreshed_private)
         metadata = dict(task.get("display_metadata", {}))
-        metadata.update({"actualProvider": provider, "actualModel": model})
+        metadata.update({
+            "actualProvider": provider,
+            "actualAccount": actual.get("account"),
+            "actualModel": model,
+            "targetHonored": target_honored,
+        })
         self.store.update_display_metadata(task_id, metadata)
         self.store.append_event(
             task_id,
@@ -1251,8 +1440,23 @@ class HarnessRuntime:
                 "fallbackUsed": actual["fallback_used"],
                 "costState": "unknown",
                 "runtimeDecisions": safe_decisions,
+                "account": actual.get("account"),
+                "targetHonored": target_honored,
             },
         )
+        if target_honored is False:
+            self.store.append_event(
+                task_id, "routing.target_mismatch", run_id=None,
+                display={
+                    "requestedRoute": target_payload.get("route"),
+                    "actualProvider": provider,
+                    "actualModel": model,
+                },
+            )
+            raise RuntimeError(
+                f"OmniRoute target mismatch: requested {target_payload.get('route')}, "
+                f"executed {provider}/{model}"
+            )
 
     def _pre_route(
         self,
@@ -1346,6 +1550,43 @@ class HarnessRuntime:
                 semantic_task_profile = None
         load_plan = context_load_plan(semantic_task_profile) if semantic_task_profile else None
         model_override = automatic_model_override(config, routing_tier, configured_model)
+        execution_target = None
+        persisted_target = private.get("executionTarget")
+        if isinstance(persisted_target, Mapping):
+            configured_catalog = self._configured_codex_catalog(account_home)
+            if configured_catalog is None:
+                raise ConfigError("approved model catalog is required for an explicit target")
+            registry = load_model_registry(default_policy_path(), configured_catalog)
+            matched = next((item for item in registry if item.route == persisted_target.get("route")), None)
+            if matched is None:
+                raise ConfigError("persisted execution target is no longer approved")
+            execution_target = execution_target_for_route(
+                semantic_task_profile, [matched], matched.route,
+                available_accounts=self._enabled_account_ids(config),
+            )
+            if execution_target is None:
+                raise ConfigError("persisted execution target is no longer approved")
+            if str(persisted_target.get("mode")) == "EXPLICIT":
+                execution_target = dataclasses.replace(
+                    execution_target, mode="EXPLICIT",
+                    reason=str(persisted_target.get("reason", execution_target.reason)),
+                )
+            # Preserve the originally persisted bounded fallback order for telemetry.
+            execution_target = dataclasses.replace(
+                execution_target,
+                fallbacks=tuple(str(item) for item in persisted_target.get("fallbacks", [])),
+            )
+            model_override = execution_target.route
+        elif configured_model == "auto" and semantic_task_profile is not None and account_home is not None:
+            configured_catalog = self._configured_codex_catalog(account_home)
+            if configured_catalog is not None:
+                execution_target = select_execution_target(
+                    semantic_task_profile,
+                    load_model_registry(default_policy_path(), configured_catalog),
+                    preferred_account=str(account_id) if account_id else None,
+                    available_accounts=self._enabled_account_ids(config),
+                )
+                model_override = execution_target.route
         private_input = str(private.get("prompt", ""))
         retrieval_diagnostics: dict[str, Any] = {
             "methods": [], "selectedSources": [], "selectedChunks": 0,
@@ -1426,7 +1667,7 @@ class HarnessRuntime:
             )
         routing = private.get("routing") if isinstance(private.get("routing"), Mapping) else {}
         routing_tier = str(routing.get("tier", RoutingTier.STANDARD.value))
-        model_selection = "automatic" if model_override else "manual"
+        model_selection = "quattro-explicit" if execution_target else ("automatic" if model_override else "manual")
         model_route = model_override or configured_model or "configured default"
         # Tier effort remains authoritative except for explicit Astra routes,
         # whose supported low/high choice is preserved from native config.
@@ -1486,18 +1727,30 @@ class HarnessRuntime:
                 adaptive,
                 envelope=update_envelope_context(adaptive.envelope, dispatch_task_profile),
             )
+        if execution_target is not None and adaptive is not None:
+            exact_envelope = dict(adaptive.envelope or {
+                "schema_version": 1,
+                "tier": routing_tier,
+                "requirements": {"capabilities": [], "minimum_context": 1},
+                "preference_mode": "balanced",
+                "routing_policy_version": "quattro-routing-v2",
+            })
+            exact_envelope["preferred_candidates"] = [
+                f"{execution_target.provider}/{execution_target.model}"
+            ]
+            exact_envelope["task_profile_id"] = str(task["task_id"])
+            adaptive = dataclasses.replace(adaptive, envelope=exact_envelope)
         if (
             task["agent"] == "codex"
             and account_home is not None
-            and configured_model is not None
-            and configured_model != "auto"
+            and model_route not in {None, "auto"}
             and dispatch_task_profile is not None
         ):
             configured_catalog = self._configured_codex_catalog(account_home)
             if configured_catalog is not None:
                 validate_manual_route_requirements(
                     configured_catalog,
-                    configured_model,
+                    model_route,
                     required_capabilities=dispatch_task_profile.required_capabilities,
                     estimated_tokens=dispatch_task_profile.final_request_tokens,
                 )
@@ -1512,6 +1765,8 @@ class HarnessRuntime:
                 adaptive.negotiation.compatibility if adaptive else "standard"
             ),
             "adaptiveCandidateCount": adaptive.candidate_count if adaptive else 0,
+            "executionTarget": execution_target.to_dict() if execution_target else None,
+            "fallbackChain": list(execution_target.fallbacks) if execution_target else [],
         })
         self.store.update_display_metadata(str(task["task_id"]), metadata)
         profile_payload = routing.get("task_profile")
@@ -1567,6 +1822,7 @@ class HarnessRuntime:
             "selectedModel": configured_model or "configured default",
             "effectiveModelRoute": model_route,
             "modelRoute": model_route, "modelSelection": model_selection,
+            "executionTarget": execution_target.to_dict() if execution_target else None,
             "preRouting": dict(metadata.get("preRouting", {})),
             "finalRequestTokens": (
                 dispatch_task_profile.final_request_tokens
@@ -1579,8 +1835,10 @@ class HarnessRuntime:
             {
                 "selected_worker": str(task["agent"]),
                 "selected_model": model_route,
-                "selected_provider": "omniroute" if task["agent"] == "codex" else "pi",
-                "selected_account": account_id,
+                "selected_provider": execution_target.provider if execution_target else (
+                    "omniroute" if task["agent"] == "codex" else "pi"
+                ),
+                "selected_account": execution_target.account if execution_target else account_id,
                 "context_tokens": (
                     dispatch_task_profile.final_request_tokens
                     if dispatch_task_profile is not None else approximate_tokens(private_input)
@@ -2237,51 +2495,112 @@ class HarnessRuntime:
                     unresolved=("Agent execution is starting.",),
                     run_id=run_id,
                 )
-            argv, stdin_text, overrides = self._agent_plan(task, run_id, profile)
             interactive = user_owned_terminal
             started_monotonic = time.monotonic()
-            managed = self.supervisor.start(
-                task_id=task_id,
-                run_id=run_id,
-                argv=argv,
-                cwd=task["project_path"],
-                environment_overrides=overrides,
-                stdin_text=stdin_text,
-                # User-owned interactive/resume terminals are intentionally
-                # unbounded. The profile deadline applies only to autonomous
-                # non-interactive execution.
-                deadline_seconds=None if interactive else profile.max_seconds,
-                stdin=None if interactive else subprocess.DEVNULL,
-                stdout=None if interactive else subprocess.PIPE,
-                stderr=None if interactive else subprocess.STDOUT,
-            )
-            if coordination_top_level:
-                self.coordinator.activate(
-                    str(coordination_id),
-                    pid=managed.identity.pid,
-                    process_start_ticks=managed.identity.start_ticks,
+            target_payload = task["private_payload"].get("executionTarget")
+            attempt_routes = [None]
+            if isinstance(target_payload, Mapping) and not interactive:
+                attempt_routes = [str(target_payload.get("route"))]
+                attempt_routes.extend(str(route) for route in target_payload.get("fallbacks", [])[:2])
+            result = None
+            for target_index, attempt_route in enumerate(attempt_routes):
+                if target_index > 0:
+                    run_id = self.store.create_run(
+                        task_id,
+                        agent=str(task["agent"]),
+                        account_id=(
+                            str(attempt_route).split("/", 1)[0]
+                            if attempt_route is not None else task["private_payload"].get("accountId")
+                        ),
+                        native_session_ref=task["private_payload"].get("nativeSessionRef"),
+                    )
+                attempt_task = task
+                if attempt_route is not None and isinstance(target_payload, Mapping):
+                    account_home = pathlib.Path(str(
+                        self.account(self.config(), task["private_payload"].get("accountId"))["codexHome"]
+                    )).expanduser().resolve()
+                    catalog = self._configured_codex_catalog(account_home)
+                    registry = load_model_registry(default_policy_path(), catalog) if catalog else ()
+                    target = next((row for row in registry if row.route == attempt_route), None)
+                    if target is None:
+                        raise ConfigError(f"fallback execution target is no longer approved: {attempt_route}")
+                    attempt_private = dict(task["private_payload"])
+                    attempt_private["executionTarget"] = {
+                        **dict(target_payload),
+                        "provider": target.provider,
+                        "account": target.account,
+                        "model": target.model,
+                        "route": target.route,
+                        "fallbacks": list(target_payload.get("fallbacks", []))[target_index:],
+                    }
+                    self.store.update_private_payload(task_id, attempt_private)
+                    attempt_task = dict(task) | {"private_payload": attempt_private}
+                argv, stdin_text, overrides = self._agent_plan(attempt_task, run_id, profile)
+                managed = self.supervisor.start(
                     task_id=task_id,
+                    run_id=run_id,
+                    argv=argv,
+                    cwd=task["project_path"],
+                    environment_overrides=overrides,
+                    stdin_text=stdin_text,
+                    # User-owned interactive/resume terminals are intentionally
+                    # unbounded. The profile deadline applies only to autonomous
+                    # non-interactive execution.
+                    deadline_seconds=None if interactive else profile.max_seconds,
+                    stdin=None if interactive else subprocess.DEVNULL,
+                    stdout=None if interactive else subprocess.PIPE,
+                    stderr=None if interactive else subprocess.STDOUT,
                 )
-            if not interactive and managed.process.stdout is not None:
-                capture_thread = threading.Thread(
-                    target=_capture_bounded_output,
-                    args=(managed.process.stdout, output_path, MAX_AGENT_OUTPUT_BYTES, redaction_state),
-                    daemon=True,
+                if coordination_top_level:
+                    self.coordinator.activate(
+                        str(coordination_id),
+                        pid=managed.identity.pid,
+                        process_start_ticks=managed.identity.start_ticks,
+                        task_id=task_id,
+                    )
+                capture_thread = None
+                if not interactive and managed.process.stdout is not None:
+                    capture_thread = threading.Thread(
+                        target=_capture_bounded_output,
+                        args=(managed.process.stdout, output_path, MAX_AGENT_OUTPUT_BYTES, redaction_state),
+                        daemon=True,
+                    )
+                    capture_thread.start()
+                result = self.supervisor.wait(
+                    managed,
+                    heartbeat_callback=(
+                        refresh_coordination_heartbeat if coordination_top_level else None
+                    ),
                 )
-                capture_thread.start()
-            result = self.supervisor.wait(
-                managed,
-                heartbeat_callback=(
-                    refresh_coordination_heartbeat if coordination_top_level else None
-                ),
-            )
+                if capture_thread is not None:
+                    capture_thread.join(timeout=5)
+                    if capture_thread.is_alive():
+                        raise RuntimeError("agent output collector did not stop")
+                if result.state is RunState.SUCCEEDED or target_index + 1 >= len(attempt_routes):
+                    break
+                failure_text = (
+                    output_path.read_text(encoding="utf-8", errors="replace")
+                    if output_path.is_file() else ""
+                )
+                if not re.search(
+                    r"(?:HTTP\s*(?:429|5\d\d)|rate.?limit|quota.?exhaust|credits.?exhaust|"
+                    r"provider\s+(?:unavailable|failure)|service\s+unavailable)",
+                    failure_text[:100_000], re.IGNORECASE,
+                ):
+                    break
+                self.store.append_event(
+                    task_id, "routing.fallback", run_id=run_id,
+                    display={
+                        "fromRoute": attempt_route,
+                        "toRoute": attempt_routes[target_index + 1],
+                        "attempt": target_index + 2,
+                        "reason": "retryable_provider_failure",
+                    },
+                )
+            assert result is not None
             duration_ms = max(0, int((time.monotonic() - started_monotonic) * 1_000))
             if task["agent"] == "codex":
                 self._refresh_adaptive_receipt(task_id)
-            if capture_thread is not None:
-                capture_thread.join(timeout=5)
-                if capture_thread.is_alive():
-                    raise RuntimeError("agent output collector did not stop")
             delegation_telemetry: dict[str, Any] | None = None
             if (
                 task["private_payload"].get("delegatedWorker") is True

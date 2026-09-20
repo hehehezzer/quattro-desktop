@@ -45,9 +45,10 @@ Quattro classifier ── DIRECT ──► OmniRoute Responses ──► final r
                                       └─ validation, checkpoint, and projection
 ```
 
-Quattro owns classification, agent selection, task lifecycle, policy, and
-bounded context assembly. OmniRoute owns provider/model selection, health,
-quota, cost, capability eligibility, and fallbacks. Codex and Pi execute; they
+Quattro owns classification, agent selection, task lifecycle, policy, bounded
+context assembly, and explicit provider/account/model selection. OmniRoute owns
+transport, caching, token optimization, provider protocol adaptation, and
+runtime health signals. Codex and Pi execute; they
 do not create Quattro tasks or select providers.
 
 ## Features in this release
