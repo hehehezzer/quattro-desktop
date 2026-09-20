@@ -451,6 +451,26 @@ def _validate_registered_dataset(
         raise ValueError("dataset does not match its immutable registered manifest")
 
 
+def _installed_training_evidence(
+    root: pathlib.Path,
+    store: IntelligenceStore,
+    model: DirectDelegateModel,
+) -> list[dict[str, Any]]:
+    """Load verified provenance; absence must block installed-model scoring."""
+    try:
+        version = model.payload["dataset_version"]
+        if not isinstance(version, str) or pathlib.Path(version).name != version:
+            return []
+        path = root / "datasets" / f"{version}.jsonl"
+        rows = load_dataset(path)
+        if validate_dataset_identity(path, rows) != version:
+            return []
+        _validate_registered_dataset(store, version, rows)
+        return rows
+    except (AttributeError, OSError, KeyError, TypeError, ValueError):
+        return []
+
+
 def _read_review_file(path: pathlib.Path) -> dict[str, Any]:
     if path.is_symlink() or not path.is_file():
         raise ValueError("review input must be a regular file")
@@ -1131,16 +1151,13 @@ def intelligence_command(
             installed_model = DirectDelegateModel.load(
                 pathlib.Path(str(active["artifact_path"]))
             )
-            installed_dataset = root / "datasets" / (
-                f"{installed_model.payload['dataset_version']}.jsonl"
-            )
-            if installed_dataset.is_file():
-                installed_training_rows = load_dataset(installed_dataset)
+            installed_training_rows = _installed_training_evidence(root, store, installed_model)
         installed_evaluation = (
             benchmark_direct_delegate(
                 installed_model,
                 rows,
                 include_ablation=False,
+                model_training_rows=installed_training_rows,
                 thresholds=policy,
             )
             if installed_model else {
@@ -1451,22 +1468,23 @@ def intelligence_command(
         quality = dataset_quality(rows, thresholds=policy)
         live_maturity = _live_maturity(rows, quality, policy)
         active = store.active_shadow_model()
-        model = None
         evaluation = None
         if active:
-            artifact = pathlib.Path(str(active["artifact_path"]))
-            if artifact.is_file():
-                candidate = DirectDelegateModel.load(artifact)
-                # Readiness is an evaluation surface, not a training or
-                # activation surface.  The installed shadow may have been
-                # trained on an earlier immutable dataset; evaluate it on the
-                # current held-out artifact while reporting that provenance in
-                # the nested benchmark output.
-                model = candidate
+            try:
+                model = DirectDelegateModel.load(pathlib.Path(str(active["artifact_path"])))
+            except (AttributeError, OSError, KeyError, TypeError, ValueError):
+                evaluation = {
+                    "status": "unavailable",
+                    "reason": "active shadow model artifact could not be loaded",
+                }
+            else:
+                # Evaluate only on evidence disjoint from the installed artifact,
+                # not merely on rows held out by the newest dataset extraction.
                 evaluation = benchmark_direct_delegate(
-                    candidate,
+                    model,
                     rows,
                     include_ablation=False,
+                    model_training_rows=_installed_training_evidence(root, store, model),
                     thresholds=policy,
                 )
         gates = promotion_gate_summary(
@@ -1478,6 +1496,8 @@ def intelligence_command(
         if evaluation is not None:
             compact_evaluation = {
                 "status": evaluation.get("status"),
+                "reason": evaluation.get("reason"),
+                "holdoutEvidence": evaluation.get("holdoutEvidence"),
                 "modelVersion": evaluation.get("model", {}).get("version"),
                 "baseline": evaluation.get("baseline"),
                 "model": evaluation.get("model"),

@@ -254,13 +254,13 @@ def _confidence_calibration(examples: Sequence[Mapping[str, Any]]) -> dict[str, 
         }
     bins: list[dict[str, Any]] = []
     weighted_gap = 0.0
-    for index in range(5):
-        lower = 0.5 + index * 0.1
-        upper = 0.6 + index * 0.1
+    for index in range(10):
+        lower = index / 10
+        upper = (index + 1) / 10
         members = [
             row for row in examples
             if lower <= float(row["confidence"]) < upper
-            or (upper >= 1.0 and float(row["confidence"]) == 1.0)
+            or (index == 9 and float(row["confidence"]) == 1.0)
         ]
         if not members:
             continue
@@ -1049,20 +1049,18 @@ def _source_report(
     }
 
 
-def _installed_shadow_comparison(
-    candidate: DirectDelegateModel,
-    installed: DirectDelegateModel | None,
+def _installed_shadow_holdout(
+    installed: DirectDelegateModel,
     test_rows: Sequence[Mapping[str, Any]],
     installed_training_rows: Sequence[Mapping[str, Any]],
-) -> dict[str, Any]:
-    if installed is None:
-        return {"status": "unavailable"}
+) -> tuple[list[Mapping[str, Any]], dict[str, Any]]:
+    """Exclude all evidence seen by an installed artifact before scoring it."""
     installed_labeled = [
         row for row in installed_training_rows
         if row.get("label") in {"DIRECT", "DELEGATE"}
     ]
     if not installed_labeled:
-        return {
+        return [], {
             "status": "BLOCKED_BY_DATA",
             "reason": "installed shadow training evidence is unavailable or unverified",
             "installedModelVersion": installed.payload.get("model_version"),
@@ -1091,19 +1089,13 @@ def _installed_shadow_comparison(
         and index not in contaminated_test_indexes
     ]
     if not disjoint:
-        return {
+        return [], {
             "status": "BLOCKED_BY_DATA",
             "reason": "no test rows are disjoint from installed-model evidence",
             "installedModelVersion": installed.payload.get("model_version"),
         }
-    candidate_examples, _candidate_latencies = _evaluate_rows(candidate, disjoint)
-    installed_examples, _installed_latencies = _evaluate_rows(installed, disjoint)
-    candidate_report = _subset_report(candidate_examples)
-    installed_report = _subset_report(installed_examples)
-    return {
+    return disjoint, {
         "status": "evaluated",
-        "installedModelVersion": installed.payload.get("model_version"),
-        "candidateModelVersion": candidate.payload.get("model_version"),
         "excludedContaminatedTestCount": len(test_rows) - len(disjoint),
         "contaminationGuard": {
             "exactRequest": True,
@@ -1114,6 +1106,31 @@ def _installed_shadow_comparison(
         "disjointTestGroupCount": len({
             str(row.get("group_fingerprint") or row.get("record_id")) for row in disjoint
         }),
+    }
+
+
+def _installed_shadow_comparison(
+    candidate: DirectDelegateModel,
+    installed: DirectDelegateModel | None,
+    test_rows: Sequence[Mapping[str, Any]],
+    installed_training_rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    if installed is None:
+        return {"status": "unavailable"}
+    disjoint, guard = _installed_shadow_holdout(
+        installed, test_rows, installed_training_rows
+    )
+    if guard["status"] != "evaluated":
+        return guard
+    candidate_examples, _candidate_latencies = _evaluate_rows(candidate, disjoint)
+    installed_examples, _installed_latencies = _evaluate_rows(installed, disjoint)
+    candidate_report = _subset_report(candidate_examples)
+    installed_report = _subset_report(installed_examples)
+    return {
+        "status": "evaluated",
+        "installedModelVersion": installed.payload.get("model_version"),
+        "candidateModelVersion": candidate.payload.get("model_version"),
+        **guard,
         "candidate": candidate_report,
         "installed": installed_report,
     }
@@ -1207,6 +1224,7 @@ def benchmark_direct_delegate(
     installed_model: DirectDelegateModel | None = None,
     installed_training_rows: Sequence[Mapping[str, Any]] = (),
     include_ablation: bool = True,
+    model_training_rows: Sequence[Mapping[str, Any]] | None = None,
     thresholds: PromotionThresholds | None = None,
 ) -> dict[str, Any]:
     policy = thresholds or DEFAULT_PROMOTION_THRESHOLDS
@@ -1249,6 +1267,21 @@ def benchmark_direct_delegate(
             "datasetQuality": quality,
             "productionConclusion": "BLOCKED_BY_DATA",
         }
+    holdout_guard: dict[str, Any] = {}
+    if model_training_rows is not None:
+        test_rows, holdout_guard = _installed_shadow_holdout(
+            model, test_rows, model_training_rows
+        )
+        if holdout_guard["status"] != "evaluated":
+            return {
+                **holdout_guard,
+                "sampleCount": 0,
+                "datasetQuality": quality,
+                "productionConclusion": "BLOCKED_BY_DATA",
+            }
+        validation_rows, _validation_guard = _installed_shadow_holdout(
+            model, validation_rows, model_training_rows
+        )
     examples, latencies = _evaluate_rows(model, test_rows)
     replay_examples, _replay_latencies = _evaluate_rows(model, test_rows)
     benchmark_reproducible = examples == replay_examples
@@ -1318,6 +1351,7 @@ def benchmark_direct_delegate(
             "version": model.payload["model_version"],
             "metrics": summary["modelMetrics"],
         },
+        "holdoutEvidence": holdout_guard,
         "installedShadowComparison": _installed_shadow_comparison(
             model,
             installed_model,

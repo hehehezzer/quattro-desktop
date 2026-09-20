@@ -84,7 +84,17 @@ calibration, disagreement telemetry, and every gate's `PASS`, `FAIL`, or
 `BLOCKED` status. Use `--thresholds PATH` with offline diagnostic/training
 commands to load a small private JSON policy; defaults are defined in
 `intelligence.readiness.PromotionThresholds` and are never consulted by
-request-time routing.
+request-time routing. Policies accept either a flat object with optional
+`schemaVersion: 1` or `{ "schemaVersion": 1, "thresholds": { ... } }`;
+unknown threshold names and invalid values are rejected.
+
+Installed-shadow promotion metrics exclude exact-request, connected-group,
+lexical, and semantic overlap with the artifact's verified original dataset.
+Both `phase-1-9` and `readiness` block scoring if that evidence cannot be loaded
+or no disjoint held-out examples remain. A missing/corrupt active artifact is
+reported as unavailable by `readiness`, with model gates blocked. Class-confidence
+reliability buckets cover the full 0–1 range; nullable raw tool requirements are
+reported separately from required-field coverage.
 
 Observed provider/model/cost/latency and execution outcomes are reported only
 as outcome evidence. A row where the deterministic route and shadow prediction

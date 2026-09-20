@@ -12,6 +12,7 @@ import sqlite3
 import uuid
 from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -93,18 +94,18 @@ def _bounded_items(value: Any) -> list[Any]:
         values = [] if value is None else [value]
     else:
         try:
-            values = list(value)
+            values = iter(value)
         except TypeError:
             values = [value]
     bounded: list[Any] = []
-    for item in values[:MAX_TELEMETRY_LIST_ITEMS]:
+    for item in islice(values, MAX_TELEMETRY_LIST_ITEMS):
         if isinstance(item, Mapping):
             bounded.append({
                 _bounded_text(key, limit=128): (
                     _bounded_text(val) if not isinstance(val, (bool, int, float))
                     else val
                 )
-                for key, val in list(item.items())[:32]
+                for key, val in islice(item.items(), 32)
             })
         elif isinstance(item, (bool, int, float)):
             bounded.append(item)

@@ -21,6 +21,8 @@ from .readiness import DEFAULT_PROMOTION_THRESHOLDS, PromotionThresholds
 
 DECISIONS = frozenset({"DIRECT", "DELEGATE"})
 MATURITY_SCHEMA_VERSION = 1
+# Historical raw tool requirements can be unknown; inference recomputes them.
+NULLABLE_RAW_FEATURES = frozenset({"tool_required"})
 
 
 def _parse_time(value: Any) -> dt.datetime | None:
@@ -195,17 +197,21 @@ def data_maturity(
         sorted(values, key=lambda row: str(row.get("record_id") or ""))[0]
         for _group, values in sorted(groups.items())
     ]
-    class_balance = _balance(representatives, "label")
-    counts = [value for value in class_balance.values() if value > 0]
-    imbalance = max(counts) / min(counts) if counts else None
+    label_counts = Counter(row["label"] for row in representatives)
+    class_balance = {label: label_counts[label] for label in sorted(DECISIONS)}
+    counts = list(class_balance.values())
+    imbalance = max(counts) / min(counts) if all(counts) else None
     category_balance = _balance(representatives, "task_category")
     complexity_balance = _balance(representatives, "complexity")
     deterministic_balance = _route_balance(representatives)
 
     label_denominator = len(raw_rows)
     label_rate = len(label_valid) / label_denominator if label_denominator else 0.0
-    feature_denominator = len(raw_rows) * len(MODEL_INPUT_FIELDS)
-    feature_missing = feature_denominator - sum(raw_feature_present.values())
+    required_fields = set(MODEL_INPUT_FIELDS) - NULLABLE_RAW_FEATURES
+    feature_denominator = len(raw_rows) * len(required_fields)
+    feature_missing = feature_denominator - sum(
+        raw_feature_present[field] for field in required_fields
+    )
     feature_missing_rate = feature_missing / feature_denominator if feature_denominator else 0.0
     leakage_failures = [
         item for item in invalid_model_inputs
@@ -287,7 +293,7 @@ def data_maturity(
         "classImbalance": {
             "counts": class_balance,
             "ratio": _round(imbalance),
-            "minorityRate": _round(min(counts) / sum(counts)) if counts else None,
+            "minorityRate": _round(min(counts) / sum(counts)) if sum(counts) else None,
         },
         "labelCompleteness": {
             "complete": len(label_valid),
@@ -296,6 +302,10 @@ def data_maturity(
         },
         "featureCoverage": {
             "fieldCount": len(MODEL_INPUT_FIELDS),
+            "requiredFieldCount": len(required_fields),
+            "nullableCoveredValues": {
+                field: raw_feature_present[field] for field in sorted(NULLABLE_RAW_FEATURES)
+            },
             "coveredValues": dict(sorted(raw_feature_present.items())),
             "projectedCoveredValues": dict(sorted(projected_feature_present.items())),
             "missingValueCount": feature_missing,

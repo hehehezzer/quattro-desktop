@@ -1440,6 +1440,240 @@ class Phase19IntelligenceTests(unittest.TestCase):
         self.assertEqual(outcomes["disagreementObservedOutcome"]["successes"], 1)
 
 
+class Phase19ReviewRegressionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.state = pathlib.Path(self.temporary.name)
+        self.root = self.state / "private" / "intelligence"
+        self.store, self.rows, self.manifest = ClassicalModelTests()._dataset(self.root)
+
+    def run_command(self, action: str, **overrides: typing.Any) -> dict:
+        args = {
+            "action": action, "dataset": self.manifest["datasetPath"],
+            "pretty": False, "thresholds": None, "output": None,
+            **overrides,
+        }
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code = intelligence_command(
+                argparse.Namespace(**args), state_root=self.state,
+                task_store_path=self.state / "missing-task-store.sqlite3",
+            )
+        self.assertEqual(code, 0)
+        return json.loads(stream.getvalue())
+
+    def install_model(self) -> DirectDelegateModel:
+        model = train_direct_delegate_model(
+            self.rows, dataset_version=self.manifest["datasetVersion"]
+        )
+        path = self.root / "model.json"
+        model.save(path)
+        self.store.register_model(
+            model_version=model.payload["model_version"],
+            algorithm=model.payload["algorithm"],
+            dataset_version=self.manifest["datasetVersion"],
+            artifact_path=path, metrics={},
+        )
+        self.store.activate_shadow_model(model.payload["model_version"])
+        return model
+
+    def test_readiness_artifact_load_errors_remain_blocked_and_explain_reason(self) -> None:
+        self.install_model()
+        for error in (AttributeError, OSError, KeyError, TypeError, ValueError):
+            with self.subTest(error=error.__name__), mock.patch(
+                "quattro_agent.intelligence.commands.DirectDelegateModel.load",
+                side_effect=error("untrusted artifact detail"),
+            ):
+                result = self.run_command("readiness")
+                self.assertFalse(result["promotionReady"])
+                self.assertEqual(result["evaluation"]["status"], "unavailable")
+                self.assertEqual(result["evaluation"]["reason"],
+                                 "active shadow model artifact could not be loaded")
+                self.assertNotIn("untrusted artifact detail", json.dumps(result))
+                self.assertIn("model.calibration", result["promotionGates"]["gatesBlocked"])
+        # Also exercise an actual missing artifact, not just mocked exceptions.
+        (self.root / "model.json").unlink()
+        self.assertEqual(self.run_command("readiness")["evaluation"]["status"], "unavailable")
+
+    def test_installed_training_evidence_is_wired_in_both_command_paths(self) -> None:
+        self.install_model()
+        from quattro_agent.intelligence import commands
+        original = commands.benchmark_direct_delegate
+        for action in ("readiness", "phase-1-9"):
+            with self.subTest(action=action), mock.patch.object(
+                commands, "benchmark_direct_delegate", wraps=original
+            ) as benchmark:
+                output = self.state / f"{action}.json"
+                result = self.run_command(action, output=str(output))
+                self.assertEqual(benchmark.call_args.kwargs["model_training_rows"], self.rows)
+                if action == "readiness":
+                    self.assertFalse(result["promotionReady"])
+                    self.assertEqual(result["evaluation"]["status"], "BLOCKED_BY_DATA")
+                    self.assertIn("no test rows are disjoint", result["evaluation"]["reason"])
+
+    def test_missing_or_invalid_installed_dataset_blocks_readiness(self) -> None:
+        model = self.install_model()
+        # A distinct current dataset exists, but it cannot substitute for training evidence.
+        import_controlled_probes(self.store)
+        current = DatasetBuilder(self.store).extract(self.root / "datasets")
+        path = pathlib.Path(self.manifest["datasetPath"])
+        for content in (None, "{}\n"):
+            with self.subTest(content=content):
+                if content is None:
+                    path.unlink()
+                else:
+                    path.write_text(content, encoding="utf-8")
+                result = self.run_command("readiness", dataset=current["datasetPath"])
+                self.assertEqual(result["currentShadowModel"], model.payload["model_version"])
+                self.assertFalse(result["promotionReady"])
+                self.assertEqual(result["evaluation"]["status"], "BLOCKED_BY_DATA")
+                self.assertIn("training evidence is unavailable", result["evaluation"]["reason"])
+
+    def test_holdout_guard_excludes_all_overlap_types_before_primary_metrics(self) -> None:
+        from quattro_agent.intelligence.evaluation import _installed_shadow_holdout
+        model = self.install_model()
+        training = [{
+            "record_id": "training", "request_fingerprint": "seen-request",
+            "group_fingerprint": "seen-group", "request_text": "fix this endpoint",
+            "label": "DELEGATE",
+        }]
+        cases = [
+            ("exact", "Discuss marine ecosystems", "seen-request", "other-group"),
+            ("connected", "Describe lunar craters", "other-request", "seen-group"),
+            ("lexical", "find readme path right now", "lexical", "lexical"),
+            ("semantic", "repair the API route", "semantic", "semantic"),
+        ]
+        for kind, request, fingerprint, group in cases:
+            with self.subTest(kind=kind):
+                evidence = [dict(training[0])]
+                if kind == "lexical":
+                    evidence[0]["request_text"] = "find readme path now"
+                row = {**training[0], "record_id": kind, "request_text": request,
+                       "request_fingerprint": fingerprint, "group_fingerprint": group,
+                       "split": "test", "label_independent": True}
+                disjoint, guard = _installed_shadow_holdout(model, [row], evidence)
+                self.assertEqual(disjoint, [])
+                self.assertEqual(guard["status"], "BLOCKED_BY_DATA")
+                with mock.patch.object(model, "predict", side_effect=AssertionError("must not score")):
+                    report = benchmark_direct_delegate(
+                        model, [row], model_training_rows=evidence, include_ablation=False
+                    )
+                self.assertEqual(report["status"], "BLOCKED_BY_DATA")
+                self.assertNotIn("model", report)
+                self.assertFalse(promotion_gate_summary(
+                    maturity={}, evaluation=report
+                )["promotionReady"])
+        clean = {**self.rows[0], "record_id": "new", "split": "test",
+                 "request_text": "Describe lunar craters", "request_fingerprint": "new",
+                 "group_fingerprint": "new", "outcome_success": True}
+        report = benchmark_direct_delegate(
+            model, [clean], model_training_rows=training, include_ablation=False
+        )
+        self.assertEqual(report["status"], "evaluated")
+        self.assertEqual(report["sampleCount"], 1)
+        self.assertEqual(report["observedOutcomeEvidence"]["observedOutcomeCount"], 1)
+        self.assertEqual(report["holdoutEvidence"]["disjointTestGroupCount"], 1)
+
+    def test_confidence_bins_cover_full_probability_range_without_double_counting(self) -> None:
+        examples = [
+            {"confidence": index / 10, "correct": False,
+             "delegateProbability": index / 10, "label": "DIRECT"}
+            for index in range(11)
+        ]
+        result = calibration_metrics(examples)["confidence"]
+        self.assertEqual(len(result["bins"]), 10)
+        self.assertEqual(sum(bucket["count"] for bucket in result["bins"]), 11)
+        self.assertEqual([bucket["count"] for bucket in result["bins"]], [1] * 9 + [2])
+        self.assertEqual([bucket["range"] for bucket in result["bins"]], [
+            f"{index / 10:.1f}-{(index + 1) / 10:.1f}" for index in range(10)
+        ])
+        self.assertEqual(result["expectedCalibrationError"], 0.5)
+        self.assertEqual(result["brierScore"], 0.35)
+
+    def test_class_balance_includes_absent_class_and_guards_empty_totals(self) -> None:
+        for label in ("DIRECT", "DELEGATE"):
+            rows = [{**self.rows[0], "label": label}]
+            report = data_maturity(rows)
+            self.assertEqual(report["classImbalance"]["counts"][label], 1)
+            self.assertEqual(sum(report["classImbalance"]["counts"].values()), 1)
+            self.assertEqual(len(report["classImbalance"]["counts"]), 2)
+            self.assertIsNone(report["classImbalance"]["ratio"])
+            self.assertEqual(report["classImbalance"]["minorityRate"], 0)
+            self.assertFalse(promotion_gate_summary(maturity=report, evaluation=None)["promotionReady"])
+        empty = data_maturity([])["classImbalance"]
+        self.assertEqual(empty["counts"], {"DIRECT": 0, "DELEGATE": 0})
+        self.assertIsNone(empty["ratio"])
+        self.assertIsNone(empty["minorityRate"])
+
+    def test_nullable_tool_requirement_does_not_reduce_required_feature_coverage(self) -> None:
+        from quattro_agent.intelligence.features import MODEL_INPUT_FIELDS, project_model_input
+        row = {**self.rows[0], **project_model_input(self.rows[0]), "tool_required": None}
+        report = data_maturity([row])
+        coverage = report["featureCoverage"]
+        self.assertEqual(coverage["missingRate"], 0)
+        self.assertEqual(coverage["missingValueCount"], 0)
+        self.assertEqual(coverage["requiredFieldCount"], len(MODEL_INPUT_FIELDS) - 1)
+        self.assertEqual(coverage["nullableCoveredValues"], {"tool_required": 0})
+        self.assertTrue(report["candidateGates"]["featureCoverage"])
+        row.pop("complexity")
+        coverage = data_maturity([row])["featureCoverage"]
+        self.assertEqual(coverage["missingValueCount"], 1)
+        self.assertEqual(coverage["missingRate"], round(1 / (len(MODEL_INPUT_FIELDS) - 1), 6))
+
+    def test_flat_versioned_thresholds_and_nested_validation(self) -> None:
+        from quattro_agent.intelligence.readiness import load_promotion_thresholds
+        path = self.state / "thresholds.json"
+        flat = {"schemaVersion": 1, "minimumCategories": 2}
+        nested = {"schemaVersion": 1, "thresholds": {"minimumCategories": 2}}
+        for payload in (flat, nested):
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(load_promotion_thresholds(path).minimum_categories, 2)
+            result = self.run_command("readiness", thresholds=str(path))
+            self.assertEqual(result["dataMaturity"]["thresholds"]["minimum_categories"], 2)
+        for payload in (
+            {"schemaVersion": 2}, {"schemaVersion": 1, "typo": 2},
+            {"schemaVersion": 1, "thresholds": []},
+            {"schemaVersion": 1, "thresholds": {"typo": 2}},
+        ):
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_promotion_thresholds(path)
+
+    def test_telemetry_iterables_are_consumed_lazily_and_bounded(self) -> None:
+        from collections.abc import Mapping
+        from quattro_agent.intelligence.store import _bounded_items, MAX_TELEMETRY_LIST_ITEMS
+
+        def oversized():
+            for index in range(MAX_TELEMETRY_LIST_ITEMS):
+                yield index
+            raise AssertionError("consumed beyond list limit")
+
+        class LazyMapping(Mapping):
+            def __iter__(self):
+                raise AssertionError("must iterate items directly")
+
+            def __len__(self):
+                raise AssertionError("must not materialize mapping")
+
+            def __getitem__(self, key):
+                raise AssertionError("must iterate items directly")
+
+            def items(self):
+                for index in range(32):
+                    yield str(index), "x" * 1000
+                raise AssertionError("consumed beyond mapping limit")
+
+        self.assertEqual(_bounded_items(oversized()), list(range(MAX_TELEMETRY_LIST_ITEMS)))
+        mapping = _bounded_items(LazyMapping())
+        self.assertEqual(len(mapping[0]), 32)
+        self.assertTrue(all(len(value) == 512 for value in mapping[0].values()))
+        self.assertEqual(_bounded_items(None), [])
+        for scalar in (True, 3, 0.5, "text", b"bytes"):
+            self.assertEqual(len(_bounded_items(scalar)), 1)
+        self.store.update_execution(self.rows[0]["record_id"], {"tools": oversized()})
+
+
 class Phase110IntelligenceTests(unittest.TestCase):
     @staticmethod
     def _record(store: IntelligenceStore, record_id: str, request: str) -> str:

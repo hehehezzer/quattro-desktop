@@ -173,7 +173,9 @@ def load_promotion_thresholds(path: str | os.PathLike[str] | None = None) -> Pro
         raise ValueError("intelligence thresholds file must contain an object")
     if "schemaVersion" in payload and payload["schemaVersion"] != READINESS_POLICY_SCHEMA_VERSION:
         raise ValueError("unsupported intelligence thresholds schema")
-    values = payload.get("thresholds", payload)
+    values = payload.get("thresholds", {
+        key: value for key, value in payload.items() if key != "schemaVersion"
+    })
     if not isinstance(values, Mapping):
         raise ValueError("intelligence thresholds must be an object")
     return PromotionThresholds.from_mapping(values)
