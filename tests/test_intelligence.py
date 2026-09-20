@@ -91,6 +91,7 @@ class IntelligenceStoreTests(unittest.TestCase):
         self.assertNotIn(synthetic_key, safe)
 
     def test_runtime_telemetry_lists_are_bounded_at_storage_boundary(self) -> None:
+        """Storage caps oversized runtime telemetry lists and values."""
         with tempfile.TemporaryDirectory() as temporary:
             database = pathlib.Path(temporary) / "intelligence.sqlite3"
             record_id = record_routing_telemetry(
@@ -787,6 +788,7 @@ class ClassicalModelTests(unittest.TestCase):
         self.assertEqual(report["invalidTimestampCount"], 1)
 
     def test_cli_training_gate_blocks_small_dataset_and_shadow_activation(self) -> None:
+        """Training rejects immature data without activating a shadow model."""
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             state = root / "state"
@@ -1261,6 +1263,7 @@ class Phase19IntelligenceTests(unittest.TestCase):
         self.assertEqual(result["perClass"]["DELEGATE"]["falsePositiveRate"], 0.5)
 
     def test_legacy_exposed_review_is_not_counted_as_independent_real_evidence(self) -> None:
+        """Legacy non-blind reviews remain ineligible as independent evidence."""
         quality = dataset_quality([{
             "record_id": "legacy-real",
             "request_text": "Inspect the repository",
@@ -1279,6 +1282,7 @@ class Phase19IntelligenceTests(unittest.TestCase):
         self.assertEqual(quality["reviewedRealIndependentGroupCount"], 0)
 
     def test_data_maturity_reports_coverage_routes_outcomes_duplicates_and_freshness(self) -> None:
+        """Maturity reports cover evidence, outcomes, duplicates, and recency."""
         rows = [
             {
                 "record_id": "maturity-direct",
@@ -1340,6 +1344,7 @@ class Phase19IntelligenceTests(unittest.TestCase):
         self.assertEqual(report["status"], "insufficient_data")
 
     def test_promotion_thresholds_are_configurable_and_qualifying_fixture_is_ready(self) -> None:
+        """Custom thresholds can admit a fixture that satisfies every gate."""
         policy = PromotionThresholds.from_mapping({
             "minimumIndependentUsableGroups": 2,
             "minimumIndependentUsableGroupsPerClass": 1,
@@ -1411,6 +1416,7 @@ class Phase19IntelligenceTests(unittest.TestCase):
         self.assertEqual(ready["gatesFailed"], [])
 
     def test_calibration_and_disagreement_reports_do_not_invent_counterfactuals(self) -> None:
+        """Evaluation distinguishes observed outcomes from counterfactuals."""
         examples = [
             {"delegateProbability": 0.9, "confidence": 0.9, "correct": True, "label": "DELEGATE"},
             {"delegateProbability": 0.1, "confidence": 0.9, "correct": True, "label": "DIRECT"},

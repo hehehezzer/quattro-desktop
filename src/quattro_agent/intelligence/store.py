@@ -85,6 +85,7 @@ def _nonnegative_number(value: Any, field: str) -> float | None:
 
 
 def _bounded_text(value: Any, *, limit: int = MAX_TELEMETRY_ITEM_CHARS) -> str:
+    """Normalize text and cap its persisted length."""
     return str(value)[:limit]
 
 
@@ -532,6 +533,7 @@ class IntelligenceStore:
             )
 
     def record_routing(self, payload: Mapping[str, Any]) -> str:
+        """Persist a bounded routing decision and return its record ID."""
         source_task_id = payload.get("source_task_id")
         existing_id = None
         if source_task_id and not payload.get("record_id"):
@@ -623,6 +625,7 @@ class IntelligenceStore:
         return record_id
 
     def update_execution(self, record_id: str, payload: Mapping[str, Any]) -> None:
+        """Attach bounded execution telemetry to an existing routing record."""
         allowed = {
             "selected_worker", "selected_model", "selected_provider", "selected_account",
             "context_tokens", "inference_error_code", "execution_time_ms", "input_tokens",

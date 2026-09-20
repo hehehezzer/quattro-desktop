@@ -50,6 +50,7 @@ def _latest(directory: pathlib.Path, pattern: str) -> pathlib.Path | None:
 
 
 def add_intelligence_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
+    """Register the intelligence command and its supported arguments."""
     parser = subparsers.add_parser(
         "intelligence",
         help="collect, label, train, shadow, and benchmark routing intelligence",
@@ -153,6 +154,7 @@ def _source_revision() -> str:
 
 
 def _thresholds(args: argparse.Namespace):
+    """Load the promotion policy selected by the command arguments."""
     return load_promotion_thresholds(getattr(args, "thresholds", None))
 
 
@@ -174,12 +176,14 @@ def _live_maturity(
 
 
 def _phase_19_markdown(payload: Mapping[str, Any]) -> str:
+    """Render the Phase 1.9 readiness report as Markdown."""
     quality = payload.get("dataset", {}).get("quality", {})
     chronology = quality.get("chronologicalCoverage", {})
     maturity = payload.get("dataMaturity", {})
     promotion = payload.get("promotionGates", {})
     evaluation = payload.get("installedShadowEvaluation", {})
     def compact_metrics(report: Mapping[str, Any]) -> dict[str, Any]:
+        """Select the headline metrics used in the Markdown report."""
         metrics = report.get("metrics", report)
         if not isinstance(metrics, Mapping):
             return {}
@@ -640,6 +644,7 @@ def intelligence_command(
     state_root: pathlib.Path,
     task_store_path: pathlib.Path,
 ) -> int:
+    """Execute an intelligence CLI action against the private state store."""
     root = state_root / "private" / "intelligence"
     store = IntelligenceStore(root / "intelligence.sqlite3")
     builder = DatasetBuilder(store)

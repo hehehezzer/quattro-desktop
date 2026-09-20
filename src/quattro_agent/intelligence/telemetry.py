@@ -94,6 +94,7 @@ def shadow_predict(
     profile: Mapping[str, Any] | None,
     repository_present: bool,
 ) -> dict[str, Any]:
+    """Run safe advisory inference with the active shadow model."""
     active = store.active_shadow_model()
     if not active:
         return {"error": "model_unavailable"}

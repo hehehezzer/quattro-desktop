@@ -453,6 +453,7 @@ def observed_outcome_evidence(rows: Sequence[Mapping[str, Any]]) -> dict[str, An
     known = [row for row in rows if _observed_success(row) is not None]
 
     def by(field: str) -> dict[str, dict[str, Any]]:
+        """Group known outcomes by one recorded execution field."""
         groups: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
         for row in known:
             value = str(row.get(field) or "unknown")
@@ -541,6 +542,7 @@ def _error_examples(examples: Sequence[Mapping[str, Any]], kind: str) -> list[di
 
 
 def _subset_report(examples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Build comparative metrics for one evaluation subset."""
     labels = [str(row["label"]) for row in examples]
     baseline = [str(row["baseline"]) for row in examples]
     model = [str(row["prediction"]) for row in examples]
@@ -626,6 +628,7 @@ def _phase2_assessment(
     benchmark_reproducible: bool,
     thresholds: PromotionThresholds | None = None,
 ) -> dict[str, Any]:
+    """Assess whether independent evaluation evidence meets Phase 2 gates."""
     policy = thresholds or DEFAULT_PROMOTION_THRESHOLDS
     reasons = list(quality.get("reasons") or ())
     requirements = policy.evaluation_requirements()
@@ -1227,6 +1230,7 @@ def benchmark_direct_delegate(
     model_training_rows: Sequence[Mapping[str, Any]] | None = None,
     thresholds: PromotionThresholds | None = None,
 ) -> dict[str, Any]:
+    """Benchmark deterministic and learned routing on eligible evidence."""
     policy = thresholds or DEFAULT_PROMOTION_THRESHOLDS
     validation_rows = [
         row for row in rows
