@@ -360,6 +360,7 @@ def train_direct_delegate_model(
     feature_set: str = "safe_metadata",
     calibrate: bool = True,
     source_revision: str = "unknown",
+    sealed_group_fingerprints: frozenset[str] | set[str] = frozenset(),
 ) -> DirectDelegateModel:
     """Fit deterministic batch-gradient logistic regression on the train split."""
     if not 1 <= max_features <= 100_000:
@@ -378,6 +379,24 @@ def train_direct_delegate_model(
         and row.get("label") in {"DIRECT", "DELEGATE"}
         and bool(row.get("label_independent", True))
     ]
+    fitted_rows = [
+        row for row in rows
+        if row.get("split") in {"train", "validation"}
+        and row.get("label") in {"DIRECT", "DELEGATE"}
+        and bool(row.get("label_independent", True))
+    ]
+    sealed_training = sorted({
+        str(row.get("group_fingerprint") or row.get("record_id"))
+        for row in fitted_rows
+        if bool(row.get("holdout_sealed"))
+        or str(row.get("group_fingerprint") or row.get("record_id"))
+        in sealed_group_fingerprints
+    })
+    if sealed_training:
+        raise ValueError(
+            "BLOCKED_BY_DATA: sealed holdout groups cannot enter training or calibration: "
+            f"{sealed_training[:5]}"
+        )
     invalid_sources = sorted({
         str(row.get("label_source") or "")
         for row in raw_train_rows

@@ -37,7 +37,7 @@ CORE_DEPLOYMENT_MAPPINGS = {
         )
         for name in (
             "__init__.py", "adjudication.py", "classical.py", "commands.py",
-            "dataset.py", "evaluation.py", "features.py", "maturity.py", "probes.py",
+            "dataset.py", "evaluation.py", "evidence.py", "features.py", "maturity.py", "probes.py",
             "readiness.py",
             "review.py", "store.py", "telemetry.py",
         )

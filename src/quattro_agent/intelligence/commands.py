@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import pathlib
@@ -27,17 +28,20 @@ from .dataset import (
     validate_dataset_identity,
 )
 from .evaluation import benchmark_direct_delegate
-from .features import decision_profile
+from .evidence import evidence_acquisition_progress
+from .features import REVIEW_TASK_CATEGORIES, decision_profile
 from .maturity import data_maturity
 from .readiness import load_promotion_thresholds, promotion_gate_summary
 from .probes import import_controlled_probes
 from .review import (
     BLIND_REVIEW_KIND,
+    COMPLEXITY_CORRECTIONS,
     REASON_CATEGORIES,
     RUBRIC_VERSION,
     blind_review_payload,
     public_review_item,
     review_progress as blind_review_progress,
+    upgrade_blind_review_payload,
     validate_blind_review_payload,
 )
 from .store import IntelligenceStore
@@ -62,6 +66,7 @@ def add_intelligence_parser(subparsers: argparse._SubParsersAction[Any]) -> None
             "predict", "eval", "benchmark", "report", "quality",
             "readiness",
             "review-queue", "review-batch", "review-import", "review-audit",
+            "review", "review-priorities", "review-adjudicate", "seal-holdout",
             "blind-review-queue", "blind-review-batch", "blind-review-import",
             "blind-review-audit", "blind-review-correct",
             "generate-probes", "auto-label", "phase-1-8", "phase-1-9",
@@ -90,7 +95,9 @@ def add_intelligence_parser(subparsers: argparse._SubParsersAction[Any]) -> None
     parser.add_argument("--production-decision", choices=("DIRECT", "DELEGATE"))
     parser.add_argument("--reviewer")
     parser.add_argument("--vote-id")
-    parser.add_argument("--verdict", choices=("DIRECT", "DELEGATE", "UNCERTAIN"))
+    parser.add_argument(
+        "--verdict", choices=("DIRECT", "DELEGATE", "UNCERTAIN", "REJECT")
+    )
     parser.add_argument("--reason-category", choices=REASON_CATEGORIES)
     parser.add_argument("--correction-reason")
     parser.add_argument("--pretty", action="store_true")
@@ -164,8 +171,9 @@ def _live_maturity(
     policy: Any,
 ) -> dict[str, Any]:
     """Add live freshness to the immutable dataset-quality gate contract."""
+    policy_rows = [row for row in rows if not bool(row.get("holdout_sealed"))]
     report = data_maturity(
-        rows,
+        policy_rows,
         thresholds=policy,
         duplicate_stats=quality.get("dataMaturity", {}).get("duplicates", {}),
     )
@@ -620,8 +628,22 @@ def _interactive_blind_review_batch(
         if len(note) > 2_000:
             print("Note exceeds 2000 characters; item left pending.", flush=True)
             continue
+        category = input(
+            "Optional task category correction (blank to omit): "
+        ).strip()
+        if category and category not in REVIEW_TASK_CATEGORIES:
+            print("Unknown task category; item left pending.", flush=True)
+            continue
+        complexity = input(
+            "Optional complexity correction [low/medium/high] (blank to omit): "
+        ).strip().lower()
+        if complexity and complexity not in COMPLEXITY_CORRECTIONS:
+            print("Unknown complexity; item left pending.", flush=True)
+            continue
         item["label"] = verdict
         item["reasonCategory"] = reason or None
+        item["taskCategoryCorrection"] = category or None
+        item["complexityCorrection"] = complexity or None
         item["note"] = note
         item["reviewStatus"] = "completed"
         payload["progress"] = blind_review_progress(payload)
@@ -636,6 +658,77 @@ def _interactive_blind_review_batch(
         "skippedThisRun": skipped,
         "progress": payload["progress"],
     }
+
+
+def _blind_votes_from_payload(
+    payload: Mapping[str, Any],
+    *,
+    reviewed_at: str,
+) -> list[dict[str, Any]]:
+    """Convert a validated reviewer artifact into store-bound vote events."""
+    return [
+        {
+            "item_id": item["itemId"],
+            "verdict": item["label"],
+            "reason_category": item["reasonCategory"],
+            "note": item["note"],
+            "reviewed_at": reviewed_at,
+            "visible_request": item["request"],
+            "visible_requirements": item["requirements"],
+            "task_category_correction": item.get("taskCategoryCorrection"),
+            "complexity_correction": item.get("complexityCorrection"),
+        }
+        for item in payload["items"]
+        if item.get("label") in {"DIRECT", "DELEGATE", "UNCERTAIN"}
+    ]
+
+
+def _evidence_progress(
+    store: IntelligenceStore,
+    rows: list[dict[str, Any]],
+    policy: Any,
+) -> dict[str, Any]:
+    return evidence_acquisition_progress(
+        rows,
+        blind_audit=store.blind_review_audit(),
+        holdout_summary=store.sealed_holdout_summary(),
+        thresholds=policy,
+    )
+
+
+def _ordinary_evaluation_rows(
+    store: IntelligenceStore,
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Exclude sealed final-holdout families from ordinary tuning reports."""
+    sealed_record_ids = store.sealed_holdout_record_ids()
+    sealed_groups = {
+        str(row.get("group_fingerprint") or row.get("record_id"))
+        for row in rows
+        if str(row.get("record_id")) in sealed_record_ids
+        or bool(row.get("holdout_sealed"))
+    }
+    return [
+        row for row in rows
+        if str(row.get("group_fingerprint") or row.get("record_id"))
+        not in sealed_groups
+    ]
+
+
+def _open_ordinary_evaluation(
+    store: IntelligenceStore,
+    rows: list[dict[str, Any]],
+    *,
+    dataset_version: str,
+    purpose: str,
+) -> list[dict[str, Any]]:
+    evaluation_rows = _ordinary_evaluation_rows(store, rows)
+    store.record_evaluation_exposure(
+        evaluation_rows,
+        dataset_version=dataset_version,
+        purpose=purpose,
+    )
+    return evaluation_rows
 
 
 def intelligence_command(
@@ -695,9 +788,13 @@ def intelligence_command(
             raise ValueError(
                 "intelligence blind-review-queue requires --reviewer"
             )
+        current_dataset = _latest(root / "datasets", "dd-dataset-*.jsonl")
+        current_rows = load_dataset(current_dataset) if current_dataset else []
+        progress = _evidence_progress(store, current_rows, policy)
         candidates = store.create_blind_review_batch(
             reviewer=reviewer,
             limit=args.limit,
+            acquisition_targets=progress["nextCollectionTargets"],
         )
         payload = blind_review_payload([
             public_review_item(row["item_id"], row["request_text"])
@@ -717,7 +814,7 @@ def intelligence_command(
         if not args.input:
             raise ValueError("intelligence blind-review-batch requires --input")
         path = pathlib.Path(args.input).expanduser().resolve()
-        payload = _read_review_file(path)
+        payload = upgrade_blind_review_payload(_read_review_file(path))
         validate_blind_review_payload(payload)
         result = _interactive_blind_review_batch(path, payload)
         _print({
@@ -733,29 +830,18 @@ def intelligence_command(
         reviewer = str(getattr(args, "reviewer", None) or "")
         if not reviewer.strip():
             raise ValueError("intelligence blind-review-import requires --reviewer")
-        payload = _read_review_file(pathlib.Path(args.input).expanduser().resolve())
+        payload = upgrade_blind_review_payload(
+            _read_review_file(pathlib.Path(args.input).expanduser().resolve())
+        )
         validate_blind_review_payload(payload)
         now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds")
-        votes = [
-            {
-                "item_id": item["itemId"],
-                "verdict": item["label"],
-                "reason_category": item["reasonCategory"],
-                "note": item["note"],
-                "reviewed_at": now,
-                "visible_request": item["request"],
-                "visible_requirements": item["requirements"],
-            }
-            for item in payload["items"]
-            if item.get("label") in {"DIRECT", "DELEGATE", "UNCERTAIN"}
-        ]
+        votes = _blind_votes_from_payload(payload, reviewed_at=now)
         result = store.import_blind_review_votes(votes, reviewer=reviewer)
         _print({
             "schemaVersion": 1,
             "status": "blind_reviews_imported",
             "rubricVersion": RUBRIC_VERSION,
             **result,
-            "audit": store.blind_review_audit(),
         }, pretty)
         return 0
     if args.action == "blind-review-audit":
@@ -787,7 +873,150 @@ def intelligence_command(
             "schemaVersion": 1,
             "status": "blind_review_corrected",
             "replacementVoteId": replacement,
-            "audit": store.blind_review_audit(),
+        }, pretty)
+        return 0
+    if args.action == "review":
+        reviewer = str(getattr(args, "reviewer", None) or "").strip()
+        if not reviewer:
+            raise ValueError("intelligence review requires --reviewer")
+        session_id = hashlib.sha256(reviewer.encode("utf-8")).hexdigest()[:16]
+        path = (
+            pathlib.Path(args.input).expanduser().resolve()
+            if args.input else root / "review-sessions" / f"{session_id}.json"
+        )
+        if path.is_file():
+            payload = upgrade_blind_review_payload(_read_review_file(path))
+            validate_blind_review_payload(payload)
+        else:
+            current_dataset = _latest(root / "datasets", "dd-dataset-*.jsonl")
+            current_rows = load_dataset(current_dataset) if current_dataset else []
+            progress = _evidence_progress(store, current_rows, policy)
+            candidates = store.create_blind_review_batch(
+                reviewer=reviewer,
+                limit=args.limit,
+                acquisition_targets=progress["nextCollectionTargets"],
+            )
+            payload = blind_review_payload([
+                public_review_item(row["item_id"], row["request_text"])
+                for row in candidates
+            ])
+            _write_private_json(path, payload)
+        review_result = _interactive_blind_review_batch(path, payload)
+        now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds")
+        import_result = store.import_blind_review_votes(
+            _blind_votes_from_payload(payload, reviewed_at=now), reviewer=reviewer
+        )
+        snapshot = None
+        if import_result["imported"]:
+            snapshot = builder.extract(root / "datasets")
+        complete = review_result["progress"]["pending"] == 0
+        if complete:
+            path.unlink(missing_ok=True)
+        _print({
+            "schemaVersion": 1,
+            "status": "review_complete" if complete else "review_paused",
+            "session": str(path),
+            "resumable": not complete,
+            **review_result,
+            "import": import_result,
+            "datasetVersion": snapshot.get("datasetVersion") if snapshot else None,
+        }, pretty)
+        return 0
+    if args.action == "review-priorities":
+        dataset_path = (
+            pathlib.Path(args.dataset).expanduser().resolve()
+            if args.dataset else _latest(root / "datasets", "dd-dataset-*.jsonl")
+        )
+        if dataset_path is None or not dataset_path.is_file():
+            raise ValueError("no extracted intelligence dataset is available")
+        rows = load_dataset(dataset_path)
+        _print({
+            "schemaVersion": 1,
+            "status": "prioritized",
+            "reviewerPayloadBlind": True,
+            "evidenceAcquisition": _evidence_progress(store, rows, policy),
+        }, pretty)
+        return 0
+    if args.action == "review-adjudicate":
+        reviewer = str(getattr(args, "reviewer", None) or "").strip()
+        verdict = str(getattr(args, "verdict", None) or args.label or "")
+        if not args.value or not verdict or not reviewer or not args.notes.strip():
+            raise ValueError(
+                "review-adjudicate requires RECORD_ID LABEL (or --verdict REJECT) "
+                "--reviewer ID --notes REASON"
+            )
+        if verdict != "REJECT":
+            raise ValueError(
+                "accepted adjudication must use a third blind review; "
+                "manual review-adjudicate supports --verdict REJECT only"
+            )
+        adjudication_id = store.adjudicate_blind_review(
+            args.value,
+            adjudicator=reviewer,
+            verdict=verdict,
+            reason=args.notes,
+        )
+        _print({
+            "schemaVersion": 1,
+            "status": "adjudicated",
+            "recordId": args.value,
+            "adjudicationId": adjudication_id,
+        }, pretty)
+        return 0
+    if args.action == "seal-holdout":
+        dataset_path = (
+            pathlib.Path(args.dataset).expanduser().resolve()
+            if args.dataset else _latest(root / "datasets", "dd-dataset-*.jsonl")
+        )
+        if dataset_path is None or not dataset_path.is_file():
+            raise ValueError("no extracted intelligence dataset is available")
+        rows = load_dataset(dataset_path)
+        version = validate_dataset_identity(dataset_path, rows)
+        _validate_registered_dataset(store, version, rows)
+        exposed_record_ids = store.exposed_record_ids()
+        exposed_groups = {
+            str(row.get("group_fingerprint") or row.get("record_id"))
+            for row in rows if str(row.get("record_id")) in exposed_record_ids
+        }
+        by_group: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if (
+                row.get("split") != "test"
+                or row.get("label_source") != "human_gold"
+                or row.get("evidence_quality") not in {"consensus", "adjudicated"}
+                or bool(row.get("holdout_sealed"))
+            ):
+                continue
+            group = str(row.get("group_fingerprint") or row.get("record_id"))
+            if group in exposed_groups:
+                continue
+            by_group.setdefault(group, row)
+        balanced: dict[str, list[dict[str, Any]]] = {
+            label: sorted(
+                [row for row in by_group.values() if row.get("label") == label],
+                key=lambda row: (
+                    str(row.get("created_at") or ""), str(row.get("record_id"))
+                ),
+                reverse=True,
+            )
+            for label in ("DIRECT", "DELEGATE")
+        }
+        target = max(2, min(int(args.limit), 500))
+        per_class = target // 2
+        if any(len(balanced[label]) < per_class for label in balanced):
+            raise ValueError(
+                "insufficient balanced untouched human-gold test evidence to seal holdout"
+            )
+        members = balanced["DIRECT"][:per_class] + balanced["DELEGATE"][:per_class]
+        sealed = store.seal_holdout(dataset_version=version, members=members)
+        _print({
+            "schemaVersion": 1,
+            "status": "sealed",
+            "holdoutId": sealed["holdout_id"],
+            "datasetVersion": version,
+            "memberCount": sealed["member_count"],
+            "integritySha256": sealed["integrity_sha256"],
+            "createdAt": sealed["created_at"],
         }, pretty)
         return 0
     if args.action == "review-queue":
@@ -953,6 +1182,9 @@ def intelligence_command(
         rows = load_dataset(dataset_path)
         dataset_version = validate_dataset_identity(dataset_path, rows)
         _validate_registered_dataset(store, dataset_version, rows)
+        evaluation_rows = _open_ordinary_evaluation(
+            store, rows, dataset_version=dataset_version, purpose="phase-1-10"
+        )
         quality = dataset_quality(rows, thresholds=policy)
         review_contract = blind_review_payload([])
         validate_blind_review_payload(review_contract)
@@ -1001,16 +1233,15 @@ def intelligence_command(
             installed_model = DirectDelegateModel.load(
                 pathlib.Path(str(active["artifact_path"]))
             )
-            installed_dataset = root / "datasets" / (
-                f"{installed_model.payload['dataset_version']}.jsonl"
+            installed_training_rows = _installed_training_evidence(
+                root, store, installed_model
             )
-            if installed_dataset.is_file():
-                installed_training_rows = load_dataset(installed_dataset)
         installed_evaluation = (
             benchmark_direct_delegate(
                 installed_model,
-                rows,
+                evaluation_rows,
                 include_ablation=False,
+                model_training_rows=installed_training_rows,
                 thresholds=policy,
             )
             if installed_model else {
@@ -1027,13 +1258,14 @@ def intelligence_command(
                 dataset_version=dataset_version,
                 feature_set="safe_metadata",
                 source_revision=_source_revision(),
+                sealed_group_fingerprints=store.sealed_holdout_groups(),
             )
             model_version = str(candidate.payload["model_version"])
             artifact_path = root / "models" / f"{model_version}.json"
             candidate.save(artifact_path)
             candidate_benchmark = benchmark_direct_delegate(
                 candidate,
-                rows,
+                evaluation_rows,
                 installed_model=installed_model,
                 installed_training_rows=installed_training_rows,
                 thresholds=policy,
@@ -1147,6 +1379,9 @@ def intelligence_command(
         rows = load_dataset(dataset_path)
         dataset_version = validate_dataset_identity(dataset_path, rows)
         _validate_registered_dataset(store, dataset_version, rows)
+        evaluation_rows = _open_ordinary_evaluation(
+            store, rows, dataset_version=dataset_version, purpose="phase-1-9"
+        )
         quality = dataset_quality(rows, thresholds=policy)
         live_maturity = _live_maturity(rows, quality, policy)
         active = store.active_shadow_model()
@@ -1160,7 +1395,7 @@ def intelligence_command(
         installed_evaluation = (
             benchmark_direct_delegate(
                 installed_model,
-                rows,
+                evaluation_rows,
                 include_ablation=False,
                 model_training_rows=installed_training_rows,
                 thresholds=policy,
@@ -1179,13 +1414,14 @@ def intelligence_command(
                 dataset_version=dataset_version,
                 feature_set="safe_metadata",
                 source_revision=_source_revision(),
+                sealed_group_fingerprints=store.sealed_holdout_groups(),
             )
             model_version = str(candidate.payload["model_version"])
             artifact_path = root / "models" / f"{model_version}.json"
             candidate.save(artifact_path)
             candidate_benchmark = benchmark_direct_delegate(
                 candidate,
-                rows,
+                evaluation_rows,
                 installed_model=installed_model,
                 installed_training_rows=installed_training_rows,
                 thresholds=policy,
@@ -1306,11 +1542,17 @@ def intelligence_command(
             rows,
             dataset_version=dataset_version,
             feature_set="safe_metadata",
+            sealed_group_fingerprints=store.sealed_holdout_groups(),
         )
         model_version = str(model.payload["model_version"])
         artifact_path = root / "models" / f"{model_version}.json"
         model.save(artifact_path)
-        benchmark = benchmark_direct_delegate(model, rows, thresholds=policy)
+        evaluation_rows = _open_ordinary_evaluation(
+            store, rows, dataset_version=dataset_version, purpose="phase-1-8"
+        )
+        benchmark = benchmark_direct_delegate(
+            model, evaluation_rows, thresholds=policy
+        )
         store.register_model(
             model_version=model_version,
             algorithm=ALGORITHM,
@@ -1383,6 +1625,7 @@ def intelligence_command(
                 rows,
                 dataset_version=dataset_version,
                 source_revision=_source_revision(),
+                sealed_group_fingerprints=store.sealed_holdout_groups(),
             )
         except ValueError as error:
             if str(error).startswith("BLOCKED_BY_DATA"):
@@ -1397,7 +1640,10 @@ def intelligence_command(
         model_version = str(model.payload["model_version"])
         artifact_path = root / "models" / f"{model_version}.json"
         model.save(artifact_path)
-        report = benchmark_direct_delegate(model, rows, thresholds=policy)
+        evaluation_rows = _open_ordinary_evaluation(
+            store, rows, dataset_version=dataset_version, purpose="train-benchmark"
+        )
+        report = benchmark_direct_delegate(model, evaluation_rows, thresholds=policy)
         store.register_model(
             model_version=model_version,
             algorithm=ALGORITHM,
@@ -1470,8 +1716,9 @@ def intelligence_command(
         rows = load_dataset(dataset_path)
         version = validate_dataset_identity(dataset_path, rows)
         _validate_registered_dataset(store, version, rows)
-        quality = dataset_quality(rows, thresholds=policy)
-        live_maturity = _live_maturity(rows, quality, policy)
+        analysis_rows = _ordinary_evaluation_rows(store, rows)
+        quality = dataset_quality(analysis_rows, thresholds=policy)
+        live_maturity = _live_maturity(analysis_rows, quality, policy)
         active = store.active_shadow_model()
         evaluation = None
         if active:
@@ -1485,9 +1732,12 @@ def intelligence_command(
             else:
                 # Evaluate only on evidence disjoint from the installed artifact,
                 # not merely on rows held out by the newest dataset extraction.
+                evaluation_rows = _open_ordinary_evaluation(
+                    store, rows, dataset_version=version, purpose="readiness"
+                )
                 evaluation = benchmark_direct_delegate(
                     model,
-                    rows,
+                    evaluation_rows,
                     include_ablation=False,
                     model_training_rows=_installed_training_evidence(root, store, model),
                     thresholds=policy,
@@ -1517,6 +1767,7 @@ def intelligence_command(
                 ),
                 "observedOutcomeEvidence": evaluation.get("observedOutcomeEvidence"),
             }
+        evidence_progress = _evidence_progress(store, analysis_rows, policy)
         _print({
             "schemaVersion": 1,
             "status": gates["status"],
@@ -1531,6 +1782,7 @@ def intelligence_command(
                 ),
             },
             "dataMaturity": live_maturity,
+            "evidenceAcquisition": evidence_progress,
             "evaluation": compact_evaluation,
             "promotionGates": gates,
             "promotionReady": gates["promotionReady"],
@@ -1559,7 +1811,13 @@ def intelligence_command(
                 "evaluation dataset must match the model training dataset; "
                 "external-test evaluation requires a separate disjointness-verified workflow"
             )
-        report = benchmark_direct_delegate(model, rows, thresholds=policy)
+        evaluation_rows = _open_ordinary_evaluation(
+            store,
+            rows,
+            dataset_version=evaluation_dataset_version,
+            purpose=args.action,
+        )
+        report = benchmark_direct_delegate(model, evaluation_rows, thresholds=policy)
         payload = {
             "schemaVersion": 1,
             "datasetVersion": evaluation_dataset_version,

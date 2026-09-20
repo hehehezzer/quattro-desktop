@@ -17,8 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from ..privacy import redact_secret_text
+from .features import REVIEW_TASK_CATEGORIES
 from .review import (
     BLIND_REVIEW_SCHEMA_VERSION,
+    COMPLEXITY_CORRECTIONS,
     REASON_CATEGORIES,
     RUBRIC_VERSION,
     agreement_metrics,
@@ -29,9 +31,9 @@ from .review import (
 )
 
 
-SCHEMA_VERSION = 3
-REVIEW_SCHEMA_VERSION = 1
-DATASET_SCHEMA_VERSION = "direct-delegate-dataset-v10"
+SCHEMA_VERSION = 4
+REVIEW_SCHEMA_VERSION = 2
+DATASET_SCHEMA_VERSION = "direct-delegate-dataset-v11"
 FEATURE_SCHEMA_VERSION = "direct-delegate-features-v2"
 VERIFIED_LABEL_SOURCES = frozenset({
     "human_verified",
@@ -353,10 +355,61 @@ class IntelligenceStore:
                     rubric_version TEXT NOT NULL,
                     vote_ids_json TEXT NOT NULL,
                     reason TEXT NOT NULL,
+                    provenance TEXT NOT NULL DEFAULT 'consensus_human_blind',
+                    adjudication_id TEXT,
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS blind_review_resolution_record
                     ON blind_review_resolution_events(record_id,event_id);
+
+                CREATE TABLE IF NOT EXISTS blind_review_adjudications (
+                    adjudication_id TEXT PRIMARY KEY,
+                    record_id TEXT NOT NULL REFERENCES routing_records(record_id)
+                        ON DELETE CASCADE,
+                    adjudicator TEXT NOT NULL,
+                    verdict TEXT NOT NULL CHECK(verdict IN ('DIRECT','DELEGATE','REJECT')),
+                    reason TEXT NOT NULL,
+                    vote_ids_json TEXT NOT NULL,
+                    reviewed_at TEXT NOT NULL,
+                    imported_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS blind_review_adjudications_record
+                    ON blind_review_adjudications(record_id,reviewed_at);
+
+                CREATE TABLE IF NOT EXISTS sealed_holdouts (
+                    holdout_id TEXT PRIMARY KEY,
+                    dataset_version TEXT NOT NULL REFERENCES dataset_versions(dataset_version),
+                    integrity_sha256 TEXT NOT NULL,
+                    member_count INTEGER NOT NULL CHECK(member_count > 0),
+                    provenance_summary_json TEXT NOT NULL,
+                    sealed INTEGER NOT NULL DEFAULT 1 CHECK(sealed IN (0,1)),
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS sealed_holdout_members (
+                    holdout_id TEXT NOT NULL REFERENCES sealed_holdouts(holdout_id),
+                    group_fingerprint TEXT NOT NULL,
+                    record_id TEXT NOT NULL,
+                    label TEXT NOT NULL CHECK(label IN ('DIRECT','DELEGATE')),
+                    evidence_created_at TEXT NOT NULL,
+                    PRIMARY KEY(holdout_id,group_fingerprint)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS sealed_holdout_group_once
+                    ON sealed_holdout_members(group_fingerprint);
+                CREATE UNIQUE INDEX IF NOT EXISTS sealed_holdout_record_once
+                    ON sealed_holdout_members(record_id);
+
+                CREATE TABLE IF NOT EXISTS evaluation_exposures (
+                    record_id TEXT PRIMARY KEY,
+                    dataset_version TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    exposed_at TEXT NOT NULL
+                );
+                CREATE TRIGGER IF NOT EXISTS immutable_evaluation_exposure_update
+                    BEFORE UPDATE ON evaluation_exposures BEGIN
+                    SELECT RAISE(ABORT,'evaluation exposures are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_evaluation_exposure_delete
+                    BEFORE DELETE ON evaluation_exposures BEGIN
+                    SELECT RAISE(ABORT,'evaluation exposures are append-only'); END;
 
                 CREATE TABLE IF NOT EXISTS dataset_versions (
                     dataset_version TEXT PRIMARY KEY,
@@ -376,6 +429,31 @@ class IntelligenceStore:
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TRIGGER IF NOT EXISTS immutable_blind_vote_update
+                    BEFORE UPDATE ON blind_review_votes BEGIN
+                    SELECT RAISE(ABORT,'blind review votes are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_blind_vote_delete
+                    BEFORE DELETE ON blind_review_votes BEGIN
+                    SELECT RAISE(ABORT,'blind review votes are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_resolution_update
+                    BEFORE UPDATE ON blind_review_resolution_events BEGIN
+                    SELECT RAISE(ABORT,'resolution events are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_resolution_delete
+                    BEFORE DELETE ON blind_review_resolution_events BEGIN
+                    SELECT RAISE(ABORT,'resolution events are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_adjudication_update
+                    BEFORE UPDATE ON blind_review_adjudications BEGIN
+                    SELECT RAISE(ABORT,'adjudications are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_adjudication_delete
+                    BEFORE DELETE ON blind_review_adjudications BEGIN
+                    SELECT RAISE(ABORT,'adjudications are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_holdout_member_update
+                    BEFORE UPDATE ON sealed_holdout_members BEGIN
+                    SELECT RAISE(ABORT,'sealed holdout members are immutable'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_holdout_member_delete
+                    BEFORE DELETE ON sealed_holdout_members BEGIN
+                    SELECT RAISE(ABORT,'sealed holdout members are immutable'); END;
                 """
             )
             row = connection.execute(
@@ -464,6 +542,66 @@ class IntelligenceStore:
                     "ALTER TABLE routing_label_history ADD COLUMN "
                     "labeling_method TEXT NOT NULL DEFAULT 'legacy_verified'"
                 )
+            resolution_columns = {
+                str(value[1]) for value in connection.execute(
+                    "PRAGMA table_info(blind_review_resolution_events)"
+                )
+            }
+            if "provenance" not in resolution_columns:
+                connection.execute(
+                    "ALTER TABLE blind_review_resolution_events ADD COLUMN "
+                    "provenance TEXT NOT NULL DEFAULT 'consensus_human_blind'"
+                )
+            if "adjudication_id" not in resolution_columns:
+                connection.execute(
+                    "ALTER TABLE blind_review_resolution_events ADD COLUMN "
+                    "adjudication_id TEXT"
+                )
+            vote_columns = {
+                str(value[1]) for value in connection.execute(
+                    "PRAGMA table_info(blind_review_votes)"
+                )
+            }
+            if "task_category_correction" not in vote_columns:
+                connection.execute(
+                    "ALTER TABLE blind_review_votes ADD COLUMN "
+                    "task_category_correction TEXT"
+                )
+            if "complexity_correction" not in vote_columns:
+                connection.execute(
+                    "ALTER TABLE blind_review_votes ADD COLUMN "
+                    "complexity_correction TEXT"
+                )
+            holdout_columns = {
+                str(value[1]) for value in connection.execute(
+                    "PRAGMA table_info(sealed_holdouts)"
+                )
+            }
+            if "sealed" not in holdout_columns:
+                connection.execute(
+                    "ALTER TABLE sealed_holdouts ADD COLUMN "
+                    "sealed INTEGER NOT NULL DEFAULT 1 CHECK(sealed IN (0,1))"
+                )
+            connection.executescript(
+                """
+                DROP TRIGGER IF EXISTS immutable_holdout_update;
+                DROP TRIGGER IF EXISTS immutable_holdout_delete;
+                DROP TRIGGER IF EXISTS immutable_holdout_member_insert;
+                CREATE TRIGGER immutable_holdout_update
+                    BEFORE UPDATE ON sealed_holdouts WHEN OLD.sealed = 1 BEGIN
+                    SELECT RAISE(ABORT,'sealed holdouts are immutable'); END;
+                CREATE TRIGGER immutable_holdout_delete
+                    BEFORE DELETE ON sealed_holdouts WHEN OLD.sealed = 1 BEGIN
+                    SELECT RAISE(ABORT,'sealed holdouts are immutable'); END;
+                CREATE TRIGGER immutable_holdout_member_insert
+                    BEFORE INSERT ON sealed_holdout_members
+                    WHEN EXISTS(
+                        SELECT 1 FROM sealed_holdouts
+                        WHERE holdout_id = NEW.holdout_id AND sealed = 1
+                    ) BEGIN
+                    SELECT RAISE(ABORT,'sealed holdout members are immutable'); END;
+                """
+            )
             if row is not None and int(row[0]) < SCHEMA_VERSION:
                 connection.execute(
                     "UPDATE intelligence_meta SET value = ? WHERE key = 'schema_version'",
@@ -715,6 +853,184 @@ class IntelligenceStore:
         with self._reader() as connection:
             rows = connection.execute(query, parameters).fetchall()
         return [self._normalize_record(row) for row in rows]
+
+    def dataset_evidence_snapshot(self) -> dict[str, Any]:
+        """Read every dataset input from one coherent SQLite snapshot."""
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN")
+            records = [
+                self._normalize_record(row) for row in connection.execute(
+                    "SELECT * FROM routing_records ORDER BY created_at,record_id"
+                ).fetchall()
+            ]
+            labels = {
+                str(row["record_id"]): self._normalize_record(row)
+                for row in connection.execute(
+                    """SELECT r.*, l.label AS verified_label,
+                              l.source AS label_source,
+                              l.review_status AS review_status,
+                              l.confidence AS label_confidence,
+                              l.labeling_method AS labeling_method,
+                              l.notes AS label_notes
+                       FROM routing_records r JOIN routing_labels l USING(record_id)
+                       ORDER BY r.created_at,r.record_id"""
+                ).fetchall()
+            }
+            reviews = {
+                str(row["record_id"]): dict(row)
+                for row in connection.execute(
+                    """SELECT review.* FROM routing_reviews review
+                       JOIN (
+                           SELECT record_id,max(review_id) AS review_id
+                           FROM routing_reviews GROUP BY record_id
+                       ) latest USING(record_id,review_id)"""
+                ).fetchall()
+            }
+            resolutions = {
+                str(row["record_id"]): dict(row)
+                for row in connection.execute(
+                    """SELECT event.* FROM blind_review_resolution_events event
+                       JOIN (
+                           SELECT record_id,max(event_id) AS event_id
+                           FROM blind_review_resolution_events GROUP BY record_id
+                       ) latest USING(record_id,event_id)
+                       WHERE event.action = 'accepted'"""
+                ).fetchall()
+            }
+            votes = [dict(row) for row in self._active_blind_votes(connection)]
+            adjudications = {
+                str(row["record_id"]): str(row["verdict"])
+                for row in connection.execute(
+                    "SELECT record_id,verdict FROM blind_review_adjudications"
+                ).fetchall()
+            }
+            by_record: dict[str, list[dict[str, Any]]] = {}
+            for vote in votes:
+                by_record.setdefault(str(vote["record_id"]), []).append(vote)
+            states: dict[str, str] = {}
+            corrections: dict[str, dict[str, Any]] = {}
+            for record_id, record_votes in by_record.items():
+                if record_id in resolutions:
+                    states[record_id] = (
+                        "adjudicated"
+                        if record_id in adjudications
+                        or resolutions[record_id].get("provenance")
+                        == "adjudicated_human"
+                        else "consensus"
+                    )
+                    correction: dict[str, Any] = {}
+                    for field, public in (
+                        ("task_category_correction", "task_category"),
+                        ("complexity_correction", "complexity"),
+                    ):
+                        values = [
+                            str(vote[field]) for vote in record_votes if vote.get(field)
+                        ]
+                        ranked = Counter(values).most_common()
+                        if ranked and ranked[0][1] >= 2 and not (
+                            len(ranked) > 1 and ranked[0][1] == ranked[1][1]
+                        ):
+                            correction[public] = ranked[0][0]
+                            correction[f"{public}_provenance"] = (
+                                "adjudicated_human"
+                                if len(set(values)) > 1
+                                else "consensus_human_blind"
+                            )
+                    if correction:
+                        corrections[record_id] = correction
+                    continue
+                if adjudications.get(record_id) == "REJECT":
+                    states[record_id] = "rejected"
+                    continue
+                verdicts = {str(vote["verdict"]) for vote in record_votes}
+                binary = verdicts & DECISIONS
+                if verdicts == {"UNCERTAIN"}:
+                    states[record_id] = "rejected"
+                elif len(binary) > 1 or (binary and "UNCERTAIN" in verdicts):
+                    states[record_id] = "disputed"
+                else:
+                    states[record_id] = "single_review"
+            sealed_rows = connection.execute(
+                """SELECT member.record_id FROM sealed_holdout_members member
+                   JOIN sealed_holdouts cohort USING(holdout_id)
+                   WHERE cohort.sealed = 1"""
+            ).fetchall()
+            holdout_payloads: list[dict[str, Any]] = []
+            for cohort in connection.execute(
+                "SELECT * FROM sealed_holdouts WHERE sealed = 1 "
+                "ORDER BY created_at,holdout_id"
+            ).fetchall():
+                members = connection.execute(
+                    "SELECT * FROM sealed_holdout_members WHERE holdout_id = ? "
+                    "ORDER BY group_fingerprint",
+                    (cohort["holdout_id"],),
+                ).fetchall()
+                provenance = _decode(str(cohort["provenance_summary_json"]), {})
+                canonical = _json({
+                    "datasetVersion": str(cohort["dataset_version"]),
+                    "members": [{
+                        "groupFingerprint": str(member["group_fingerprint"]),
+                        "recordId": str(member["record_id"]),
+                        "label": str(member["label"]),
+                        "createdAt": str(member["evidence_created_at"]),
+                    } for member in members],
+                    "provenanceSummary": provenance,
+                })
+                holdout_payloads.append({
+                    "holdoutId": str(cohort["holdout_id"]),
+                    "datasetVersion": str(cohort["dataset_version"]),
+                    "memberCount": len(members),
+                    "integritySha256": str(cohort["integrity_sha256"]),
+                    "integrityValid": hashlib.sha256(
+                        canonical.encode("utf-8")
+                    ).hexdigest() == str(cohort["integrity_sha256"]),
+                    "createdAt": str(cohort["created_at"]),
+                    "sourceGroupIds": [
+                        str(member["group_fingerprint"]) for member in members
+                    ],
+                    "provenanceSummary": provenance,
+                })
+            source_revision = {
+                "recordCount": len(records),
+                "labelHistoryMaxId": int(connection.execute(
+                    "SELECT coalesce(max(history_id),0) FROM routing_label_history"
+                ).fetchone()[0]),
+                "reviewMaxId": int(connection.execute(
+                    "SELECT coalesce(max(review_id),0) FROM routing_reviews"
+                ).fetchone()[0]),
+                "blindVoteCount": len(votes),
+                "resolutionEventMaxId": int(connection.execute(
+                    "SELECT coalesce(max(event_id),0) "
+                    "FROM blind_review_resolution_events"
+                ).fetchone()[0]),
+                "adjudicationCount": len(adjudications),
+                "sealedHoldoutCount": len(holdout_payloads),
+            }
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return {
+            "records": records,
+            "labels": labels,
+            "reviews": reviews,
+            "blind_resolutions": resolutions,
+            "blind_states": states,
+            "blind_corrections": corrections,
+            "sealed_record_ids": frozenset(str(row[0]) for row in sealed_rows),
+            "holdout_summary": {
+                "sealed": bool(holdout_payloads),
+                "cohortCount": len(holdout_payloads),
+                "allIntegrityValid": all(
+                    bool(value["integrityValid"]) for value in holdout_payloads
+                ),
+                "latest": holdout_payloads[-1] if holdout_payloads else None,
+            },
+            "source_revision": source_revision,
+        }
 
     def label_record(
         self,
@@ -1016,21 +1332,38 @@ class IntelligenceStore:
         connection: sqlite3.Connection,
         record_id: str,
     ) -> None:
+        if connection.execute(
+            "SELECT 1 FROM blind_review_adjudications WHERE record_id = ?",
+            (record_id,),
+        ).fetchone() is not None:
+            return
         votes = self._active_blind_votes(connection, record_id=record_id)
         verdicts = [str(vote["verdict"]) for vote in votes]
         reviewer_count = len({str(vote["reviewer"]) for vote in votes})
         binary = {value for value in verdicts if value in DECISIONS}
-        accepted_label = (
-            next(iter(binary))
-            if reviewer_count >= 2
-            and len(binary) == 1
-            and "UNCERTAIN" not in verdicts
-            else None
-        )
+        binary_counts = Counter(value for value in verdicts if value in DECISIONS)
+        accepted_label = None
+        accepted_provenance = None
+        if reviewer_count >= 2 and len(binary) == 1 and "UNCERTAIN" not in verdicts:
+            accepted_label = next(iter(binary))
+            accepted_provenance = "consensus_human_blind"
+        elif reviewer_count >= 3 and "UNCERTAIN" not in verdicts and binary_counts:
+            ranked = binary_counts.most_common()
+            if len(ranked) == 1 or (
+                ranked[0][1] >= 2 and ranked[0][1] > ranked[1][1]
+            ):
+                accepted_label = ranked[0][0]
+                accepted_provenance = "adjudicated_human"
         latest = self._latest_resolution_event(connection, record_id)
         latest_action = str(latest["action"]) if latest is not None else None
         latest_label = str(latest["label"]) if latest is not None and latest["label"] else None
+        latest_provenance = (
+            str(latest["provenance"]) if latest is not None else None
+        )
         vote_ids = [str(vote["vote_id"]) for vote in votes]
+        latest_vote_ids = (
+            _decode(str(latest["vote_ids_json"]), []) if latest is not None else []
+        )
         now = utc_now()
         if accepted_label is None:
             if latest_action == "accepted":
@@ -1047,7 +1380,12 @@ class IntelligenceStore:
                     ),
                 )
             return
-        if latest_action == "accepted" and latest_label == accepted_label:
+        if (
+            latest_action == "accepted"
+            and latest_label == accepted_label
+            and latest_provenance == accepted_provenance
+            and sorted(map(str, latest_vote_ids)) == sorted(vote_ids)
+        ):
             return
         if latest_action == "accepted" and latest_label != accepted_label:
             connection.execute(
@@ -1064,14 +1402,20 @@ class IntelligenceStore:
             )
         connection.execute(
             """INSERT INTO blind_review_resolution_events(
-                   record_id,action,label,rubric_version,vote_ids_json,reason,created_at
-               ) VALUES(?,'accepted',?,?,?,?,?)""",
+                   record_id,action,label,rubric_version,vote_ids_json,reason,
+                   provenance,created_at
+               ) VALUES(?,'accepted',?,?,?,?,?,?)""",
             (
                 record_id,
                 accepted_label,
                 RUBRIC_VERSION,
                 _json(vote_ids),
-                "two or more independent blind reviewers unanimously agreed",
+                (
+                    "a third independent blind review resolved the disagreement"
+                    if accepted_provenance == "adjudicated_human"
+                    else "two or more independent blind reviewers unanimously agreed"
+                ),
+                accepted_provenance,
                 now,
             ),
         )
@@ -1081,6 +1425,7 @@ class IntelligenceStore:
         *,
         reviewer: str,
         limit: int = 50,
+        acquisition_targets: Mapping[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Create hidden item mappings and return only reviewer-safe fields."""
         safe_reviewer, _redacted = redact_secret_text(str(reviewer).strip())
@@ -1090,6 +1435,22 @@ class IntelligenceStore:
         batch_id = f"brb_{uuid.uuid4().hex}"
         with self._transaction(immediate=True) as connection:
             active = self._active_blind_votes(connection)
+            pending_items = connection.execute(
+                """SELECT item.item_id,item.record_id,record.request_text
+                   FROM blind_review_items item
+                   JOIN routing_records record USING(record_id)
+                   LEFT JOIN blind_review_votes vote ON vote.item_id = item.item_id
+                   WHERE item.assigned_reviewer = ? AND vote.vote_id IS NULL
+                   ORDER BY item.created_at,item.item_id LIMIT ?""",
+                (safe_reviewer, bounded_limit),
+            ).fetchall()
+            pending_record_ids = {str(item["record_id"]) for item in pending_items}
+            pending_result = [{
+                "item_id": str(item["item_id"]),
+                "request_text": str(item["request_text"]),
+            } for item in pending_items]
+            if len(pending_result) >= bounded_limit:
+                return pending_result
             reviewed_by_reviewer = {
                 str(vote["record_id"])
                 for vote in active
@@ -1102,10 +1463,15 @@ class IntelligenceStore:
             }
             category_counts = Counter()
             bucket_counts = Counter()
+            counted_records: set[str] = set()
             for vote in active:
+                record_id = str(vote["record_id"])
+                if record_id in counted_records:
+                    continue
+                counted_records.add(record_id)
                 record = connection.execute(
                     "SELECT request_text FROM routing_records WHERE record_id = ?",
-                    (vote["record_id"],),
+                    (record_id,),
                 ).fetchone()
                 if record is not None:
                     category_counts[sampling_category(str(record["request_text"]))] += 1
@@ -1117,11 +1483,40 @@ class IntelligenceStore:
                      AND request_text <> ''
                    ORDER BY created_at,record_id"""
             ).fetchall()
+            normalized_rows = [dict(row) for row in rows]
+            # Import lazily to avoid the dataset/store module initialization cycle.
+            from .dataset import connected_component_fingerprints
+            components = connected_component_fingerprints(normalized_rows)
+            reviewed_components = {
+                components[record_id]
+                for record_id in reviewed_by_reviewer if record_id in components
+            }
+            pending_components = {
+                components[record_id]
+                for record_id in pending_record_ids if record_id in components
+            }
+            accepted = set(self.blind_human_resolutions())
+            accepted_components = {
+                components[record_id]
+                for record_id in accepted if record_id in components
+            }
             deduplicated: dict[str, dict[str, Any]] = {}
-            for row in rows:
-                if str(row["record_id"]) in reviewed_by_reviewer:
+            for row in normalized_rows:
+                if str(row["record_id"]) in reviewed_by_reviewer | pending_record_ids:
                     continue
-                deduplicated.setdefault(str(row["request_fingerprint"]), dict(row))
+                component = components[str(row["record_id"])]
+                if component in (
+                    accepted_components | reviewed_components | pending_components
+                ):
+                    continue
+                existing = deduplicated.get(component)
+                # Preserve the exact record already reviewed by somebody else
+                # so the next independent vote targets the same judgment.
+                if existing is None or (
+                    str(row["record_id"]) in reviewed_by_others
+                    and str(existing["record_id"]) not in reviewed_by_others
+                ):
+                    deduplicated[component] = row
             repeated_candidates = [
                 row for row in deduplicated.values()
                 if str(row["record_id"]) in reviewed_by_others
@@ -1130,12 +1525,14 @@ class IntelligenceStore:
                 row for row in deduplicated.values()
                 if str(row["record_id"]) not in reviewed_by_others
             ]
-            repeated_target = min(len(repeated_candidates), max(1, bounded_limit // 2))
+            remaining_limit = bounded_limit - len(pending_result)
+            repeated_target = min(len(repeated_candidates), max(1, remaining_limit // 2))
             repeated_selected = deterministic_sample_order(
                 repeated_candidates,
                 seed=f"{RUBRIC_VERSION}:repeat",
                 category_counts=category_counts,
                 bucket_counts=bucket_counts,
+                acquisition_targets=acquisition_targets,
                 limit=repeated_target,
             )
             repeated_ids = {str(row["record_id"]) for row in repeated_selected}
@@ -1147,13 +1544,14 @@ class IntelligenceStore:
             ]
             disagreement_target = min(
                 len(disagreement_candidates),
-                max(0, bounded_limit // 4),
+                max(0, remaining_limit // 4),
             )
             disagreement_selected = deterministic_sample_order(
                 disagreement_candidates,
                 seed=f"{RUBRIC_VERSION}:disagreement",
                 category_counts=category_counts,
                 bucket_counts=bucket_counts,
+                acquisition_targets=acquisition_targets,
                 limit=disagreement_target,
             )
             selected_ids = repeated_ids | {
@@ -1168,18 +1566,22 @@ class IntelligenceStore:
                 seed=f"{RUBRIC_VERSION}:fresh",
                 category_counts=category_counts,
                 bucket_counts=bucket_counts,
-                limit=bounded_limit - len(selected),
+                acquisition_targets=acquisition_targets,
+                limit=remaining_limit - len(selected),
             )
             selected.sort(key=lambda row: hashlib.sha256(
                 f"{batch_id}:display:{row['record_id']}".encode("utf-8")
             ).hexdigest())
             now = utc_now()
-            result: list[dict[str, Any]] = []
+            result: list[dict[str, Any]] = list(pending_result)
             for row in selected:
                 item_id = f"br_{uuid.uuid4().hex}"
                 category = sampling_category(str(row["request_text"]))
                 bucket = sampling_bucket(str(row["request_text"]))
                 selection_reason = (
+                    "independent_second_review"
+                    if str(row["record_id"]) in reviewed_by_others
+                    else
                     "deterministic_shadow_disagreement"
                     if row["production_decision"] in DECISIONS
                     and row["ml_prediction"] in DECISIONS
@@ -1222,7 +1624,8 @@ class IntelligenceStore:
         if not safe_reviewer or len(safe_reviewer) > 200:
             raise ValueError("blind review import requires valid reviewer provenance")
         prepared: list[tuple[
-            str, str, str | None, str, str, str, dict[str, bool]
+            str, str, str | None, str, str, str, dict[str, bool],
+            str | None, str | None,
         ]] = []
         for index, vote in enumerate(votes):
             item_id = str(vote.get("item_id") or "")
@@ -1232,6 +1635,8 @@ class IntelligenceStore:
             reviewed_at = str(vote.get("reviewed_at") or "")
             visible_request = str(vote.get("visible_request") or "")
             visible_requirements = vote.get("visible_requirements")
+            task_category_correction = vote.get("task_category_correction")
+            complexity_correction = vote.get("complexity_correction")
             if not item_id or verdict not in {"DIRECT", "DELEGATE", "UNCERTAIN"}:
                 raise ValueError(f"blind review vote {index} is invalid")
             if reason is not None:
@@ -1242,6 +1647,18 @@ class IntelligenceStore:
                     )
             if len(note) > 2_000:
                 raise ValueError(f"blind review vote {index} note exceeds 2000 characters")
+            if task_category_correction is not None:
+                task_category_correction = str(task_category_correction)
+                if task_category_correction not in REVIEW_TASK_CATEGORIES:
+                    raise ValueError(
+                        f"blind review vote {index} has an invalid task category correction"
+                    )
+            if complexity_correction is not None:
+                complexity_correction = str(complexity_correction)
+                if complexity_correction not in COMPLEXITY_CORRECTIONS:
+                    raise ValueError(
+                        f"blind review vote {index} has an invalid complexity correction"
+                    )
             if not visible_request or not isinstance(visible_requirements, Mapping):
                 raise ValueError(
                     f"blind review vote {index} is missing reviewer-visible evidence"
@@ -1260,6 +1677,8 @@ class IntelligenceStore:
                 parsed.astimezone(dt.timezone.utc).isoformat(timespec="milliseconds"),
                 visible_request,
                 {str(key): bool(value) for key, value in visible_requirements.items()},
+                task_category_correction,
+                complexity_correction,
             ))
         imported = 0
         skipped = 0
@@ -1267,7 +1686,10 @@ class IntelligenceStore:
         with self._transaction(immediate=True) as connection:
             resolved: list[tuple[
                 sqlite3.Row,
-                tuple[str, str, str | None, str, str, str, dict[str, bool]],
+                tuple[
+                    str, str, str | None, str, str, str, dict[str, bool],
+                    str | None, str | None,
+                ],
             ]] = []
             pending_reviewer_records: set[tuple[str, str]] = set()
             for index, vote in enumerate(prepared):
@@ -1304,7 +1726,8 @@ class IntelligenceStore:
                     )
                 existing = connection.execute(
                     """SELECT current.verdict,current.reason_category,current.note,
-                              current.reviewed_at
+                              current.reviewed_at,current.task_category_correction,
+                              current.complexity_correction
                        FROM blind_review_votes current
                        LEFT JOIN blind_review_votes newer
                          ON newer.supersedes_vote_id = current.vote_id
@@ -1314,7 +1737,11 @@ class IntelligenceStore:
                     (item["record_id"], safe_reviewer),
                 ).fetchone()
                 if existing is not None:
-                    if tuple(existing)[:3] == (vote[1], vote[2], vote[3]):
+                    if (
+                        tuple(existing)[:3] == (vote[1], vote[2], vote[3])
+                        and existing["task_category_correction"] == vote[7]
+                        and existing["complexity_correction"] == vote[8]
+                    ):
                         skipped += 1
                         continue
                     raise ValueError("blind review votes are immutable; use correction flow")
@@ -1327,8 +1754,9 @@ class IntelligenceStore:
                     """INSERT INTO blind_review_votes(
                            vote_id,item_id,record_id,reviewer,verdict,reason_category,note,
                            rubric_version,reviewed_at,imported_at,supersedes_vote_id,
-                           correction_reason
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,NULL,NULL)""",
+                           correction_reason,task_category_correction,
+                           complexity_correction
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?)""",
                     (
                         vote_id,
                         vote[0],
@@ -1340,6 +1768,8 @@ class IntelligenceStore:
                         item["rubric_version"],
                         vote[4],
                         now,
+                        vote[7],
+                        vote[8],
                     ),
                 )
                 affected.add(str(item["record_id"]))
@@ -1379,6 +1809,20 @@ class IntelligenceStore:
             if str(original["reviewer"]) != safe_reviewer:
                 raise ValueError("only the original reviewer can correct a blind vote")
             if connection.execute(
+                "SELECT 1 FROM blind_review_adjudications WHERE record_id = ?",
+                (original["record_id"],),
+            ).fetchone() is not None:
+                raise ValueError("adjudicated blind reviews cannot be corrected")
+            latest_resolution = self._latest_resolution_event(
+                connection, str(original["record_id"])
+            )
+            if (
+                latest_resolution is not None
+                and latest_resolution["action"] == "accepted"
+                and latest_resolution["provenance"] == "adjudicated_human"
+            ):
+                raise ValueError("adjudicated blind reviews cannot be corrected")
+            if connection.execute(
                 "SELECT 1 FROM blind_review_votes WHERE supersedes_vote_id = ?",
                 (vote_id,),
             ).fetchone() is not None:
@@ -1409,6 +1853,123 @@ class IntelligenceStore:
             self._reconcile_blind_resolution(connection, str(original["record_id"]))
         return replacement
 
+    def adjudicate_blind_review(
+        self,
+        record_id: str,
+        *,
+        adjudicator: str,
+        verdict: str,
+        reason: str,
+        reviewed_at: str | None = None,
+    ) -> str:
+        """Resolve a disputed record with an independent append-only judgment."""
+        safe_adjudicator, _redacted = redact_secret_text(str(adjudicator).strip())
+        safe_reason, _redacted = redact_secret_text(str(reason).strip())
+        verdict = str(verdict).upper()
+        if not safe_adjudicator or len(safe_adjudicator) > 200:
+            raise ValueError("blind adjudication requires valid adjudicator provenance")
+        if verdict != "REJECT":
+            raise ValueError(
+                "accepted adjudication requires a third imported blind vote"
+            )
+        if not safe_reason or len(safe_reason) > 2_000:
+            raise ValueError("blind adjudication requires a bounded reason")
+        timestamp = reviewed_at or utc_now()
+        try:
+            parsed = dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("blind adjudication timestamp is invalid") from error
+        if parsed.tzinfo is None:
+            raise ValueError("blind adjudication timestamp requires a timezone")
+        timestamp = parsed.astimezone(dt.timezone.utc).isoformat(timespec="milliseconds")
+        with self._transaction(immediate=True) as connection:
+            votes = self._active_blind_votes(connection, record_id=record_id)
+            reviewers = {str(vote["reviewer"]) for vote in votes}
+            verdicts = {str(vote["verdict"]) for vote in votes}
+            if len(reviewers) < 2 or len(verdicts) < 2:
+                raise ValueError("blind adjudication requires two conflicting independent votes")
+            if safe_adjudicator in reviewers:
+                raise ValueError("blind adjudicator must be independent of prior reviewers")
+            if connection.execute(
+                "SELECT 1 FROM blind_review_adjudications WHERE record_id = ?",
+                (record_id,),
+            ).fetchone() is not None:
+                raise ValueError("blind adjudication is immutable and already exists")
+            vote_ids = sorted(str(vote["vote_id"]) for vote in votes)
+            adjudication_id = f"bra_{uuid.uuid4().hex}"
+            now = utc_now()
+            connection.execute(
+                """INSERT INTO blind_review_adjudications(
+                       adjudication_id,record_id,adjudicator,verdict,reason,
+                       vote_ids_json,reviewed_at,imported_at
+                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    adjudication_id, record_id, safe_adjudicator, verdict,
+                    safe_reason, _json(vote_ids), timestamp, now,
+                ),
+            )
+            latest = self._latest_resolution_event(connection, record_id)
+            if latest is not None and str(latest["action"]) == "accepted":
+                connection.execute(
+                    """INSERT INTO blind_review_resolution_events(
+                           record_id,action,label,rubric_version,vote_ids_json,reason,
+                           provenance,adjudication_id,created_at
+                       ) VALUES(?,'retracted',NULL,?,?,?,?,?,?)""",
+                    (
+                        record_id, RUBRIC_VERSION, _json(vote_ids),
+                        "independent adjudication superseded the prior resolution",
+                        "adjudicated_human", adjudication_id, now,
+                    ),
+                )
+        return adjudication_id
+
+    def blind_review_quality_states(self) -> dict[str, str]:
+        """Return one explicit current quality state per reviewed record."""
+        with self._reader() as connection:
+            votes = [dict(row) for row in self._active_blind_votes(connection)]
+            resolutions = {
+                str(row["record_id"]): dict(row)
+                for row in connection.execute(
+                    """SELECT event.* FROM blind_review_resolution_events event
+                       JOIN (
+                           SELECT record_id,max(event_id) AS event_id
+                           FROM blind_review_resolution_events GROUP BY record_id
+                       ) latest USING(record_id,event_id)
+                       WHERE event.action = 'accepted'"""
+                ).fetchall()
+            }
+            adjudications = {
+                str(row["record_id"]): str(row["verdict"])
+                for row in connection.execute(
+                    "SELECT record_id,verdict FROM blind_review_adjudications"
+                ).fetchall()
+            }
+        by_record: dict[str, list[dict[str, Any]]] = {}
+        for vote in votes:
+            by_record.setdefault(str(vote["record_id"]), []).append(vote)
+        states: dict[str, str] = {}
+        for record_id, record_votes in by_record.items():
+            if record_id in resolutions:
+                states[record_id] = (
+                    "adjudicated"
+                    if record_id in adjudications
+                    or resolutions[record_id].get("provenance") == "adjudicated_human"
+                    else "consensus"
+                )
+                continue
+            if adjudications.get(record_id) == "REJECT":
+                states[record_id] = "rejected"
+                continue
+            verdicts = {str(vote["verdict"]) for vote in record_votes}
+            binary = verdicts & DECISIONS
+            if verdicts == {"UNCERTAIN"}:
+                states[record_id] = "rejected"
+            elif len(binary) > 1 or (binary and "UNCERTAIN" in verdicts):
+                states[record_id] = "disputed"
+            else:
+                states[record_id] = "single_review"
+        return states
+
     def blind_human_resolutions(self) -> dict[str, dict[str, Any]]:
         """Return only currently accepted blind consensus labels."""
         with self._reader() as connection:
@@ -1422,6 +1983,50 @@ class IntelligenceStore:
             ).fetchall()
         return {str(row["record_id"]): dict(row) for row in rows}
 
+    def blind_review_corrections(self) -> dict[str, dict[str, Any]]:
+        """Resolve optional taxonomy annotations independently from gold labels."""
+        resolutions = self.blind_human_resolutions()
+        with self._reader() as connection:
+            votes = [dict(row) for row in self._active_blind_votes(connection)]
+        by_record: dict[str, list[dict[str, Any]]] = {}
+        for vote in votes:
+            record_id = str(vote["record_id"])
+            if record_id in resolutions:
+                by_record.setdefault(record_id, []).append(vote)
+
+        def majority(
+            record_votes: Sequence[Mapping[str, Any]], field: str
+        ) -> tuple[str | None, str | None]:
+            values = [str(vote[field]) for vote in record_votes if vote.get(field)]
+            counts = Counter(values).most_common()
+            if not counts or counts[0][1] < 2:
+                return None, None
+            if len(counts) > 1 and counts[0][1] == counts[1][1]:
+                return None, None
+            provenance = (
+                "adjudicated_human" if len(set(values)) > 1
+                else "consensus_human_blind"
+            )
+            return counts[0][0], provenance
+
+        result: dict[str, dict[str, Any]] = {}
+        for record_id, record_votes in by_record.items():
+            category, category_provenance = majority(
+                record_votes, "task_category_correction"
+            )
+            complexity, complexity_provenance = majority(
+                record_votes, "complexity_correction"
+            )
+            if category is None and complexity is None:
+                continue
+            result[record_id] = {
+                "task_category": category,
+                "task_category_provenance": category_provenance,
+                "complexity": complexity,
+                "complexity_provenance": complexity_provenance,
+            }
+        return result
+
     def blind_review_audit(self) -> dict[str, Any]:
         with self._reader() as connection:
             votes = [dict(row) for row in self._active_blind_votes(connection)]
@@ -1430,6 +2035,7 @@ class IntelligenceStore:
                 "FROM blind_review_items ORDER BY item_id"
             ).fetchall()
             resolutions = self.blind_human_resolutions()
+            quality_states = self.blind_review_quality_states()
             legacy_labels = {
                 str(row["record_id"]): str(row["label"])
                 for row in connection.execute(
@@ -1487,6 +2093,20 @@ class IntelligenceStore:
             "acceptedHumanGoldClassBalance": dict(sorted(Counter(
                 str(value["label"]) for value in resolutions.values()
             ).items())),
+            "acceptedProvenanceBalance": dict(sorted(Counter(
+                str(value.get("provenance") or "consensus_human_blind")
+                for value in resolutions.values()
+            ).items())),
+            "individualVoteProvenance": {
+                "human_blind": len(votes),
+            },
+            "qualityStates": dict(sorted(Counter(quality_states.values()).items())),
+            "taskCategoryCorrectionCount": sum(
+                bool(vote.get("task_category_correction")) for vote in votes
+            ),
+            "complexityCorrectionCount": sum(
+                bool(vote.get("complexity_correction")) for vote in votes
+            ),
             "agreement": agreement_metrics(votes),
             "sampleCategoryBalance": dict(sorted(category_balance.items())),
             "selectionReasonBalance": dict(sorted(selection_balance.items())),
@@ -1835,6 +2455,289 @@ class IntelligenceStore:
         if not isinstance(value, dict):
             raise ValueError("stored dataset manifest is invalid")
         return value
+
+    def seal_holdout(
+        self,
+        *,
+        dataset_version: str,
+        members: Sequence[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Persist immutable evaluation-cohort membership with an integrity hash."""
+        normalized: list[dict[str, str]] = []
+        seen_groups: set[str] = set()
+        for index, member in enumerate(members):
+            group = str(member.get("group_fingerprint") or "")
+            record_id = str(member.get("record_id") or "")
+            label = str(member.get("label") or "")
+            created_at = str(member.get("created_at") or "")
+            if not group or not record_id or label not in DECISIONS:
+                raise ValueError(f"sealed holdout member {index} is invalid")
+            try:
+                parsed = dt.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError as error:
+                raise ValueError(
+                    f"sealed holdout member {index} timestamp is invalid"
+                ) from error
+            if parsed.tzinfo is None:
+                raise ValueError(
+                    f"sealed holdout member {index} timestamp requires a timezone"
+                )
+            if group in seen_groups:
+                raise ValueError("sealed holdout contains duplicate independent groups")
+            seen_groups.add(group)
+            normalized.append({
+                "groupFingerprint": group,
+                "recordId": record_id,
+                "label": label,
+                "createdAt": parsed.astimezone(dt.timezone.utc).isoformat(
+                    timespec="milliseconds"
+                ),
+            })
+        if not normalized:
+            raise ValueError("sealed holdout requires at least one independent group")
+        normalized.sort(key=lambda value: value["groupFingerprint"])
+        proposed_record_ids = {
+            member["recordId"] for member in normalized
+        }
+        provenance_summary = dict(sorted(Counter(
+            str(member.get("gold_provenance") or member.get("label_source") or "unknown")
+            for member in members
+        ).items()))
+        canonical = _json({
+            "datasetVersion": dataset_version,
+            "members": normalized,
+            "provenanceSummary": provenance_summary,
+        })
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        holdout_id = f"dd-holdout-{digest[:16]}"
+        with self._transaction(immediate=True) as connection:
+            dataset_row = connection.execute(
+                "SELECT manifest_json FROM dataset_versions WHERE dataset_version = ?",
+                (dataset_version,),
+            ).fetchone()
+            if dataset_row is None:
+                raise KeyError(f"unknown dataset version: {dataset_version}")
+            dataset_manifest = _decode(str(dataset_row[0]), {})
+            if dataset_manifest.get("datasetSchemaVersion") != DATASET_SCHEMA_VERSION:
+                raise ValueError(
+                    "final holdouts require a current unexposed dataset snapshot"
+                )
+            existing = connection.execute(
+                "SELECT * FROM sealed_holdouts WHERE holdout_id = ? AND sealed = 1",
+                (holdout_id,),
+            ).fetchone()
+            if existing is not None:
+                return dict(existing)
+            current_records = [
+                self._normalize_record(row) for row in connection.execute(
+                    "SELECT * FROM routing_records ORDER BY created_at,record_id"
+                ).fetchall()
+            ]
+            current_record_ids = {
+                str(record["record_id"]) for record in current_records
+            }
+            exact_exposure = connection.execute(
+                "SELECT 1 FROM evaluation_exposures WHERE "
+                f"record_id IN ({','.join('?' for _ in normalized)}) LIMIT 1",
+                tuple(member["recordId"] for member in normalized),
+            ).fetchone()
+            if exact_exposure is not None:
+                raise ValueError(
+                    "sealed holdout families must be reserved before evaluation exposure"
+                )
+            if current_records:
+                if not proposed_record_ids <= current_record_ids:
+                    raise ValueError("sealed holdout source records are unavailable")
+                from .dataset import connected_component_fingerprints
+                current_components = connected_component_fingerprints(current_records)
+                for member in normalized:
+                    if current_components[member["recordId"]] != member["groupFingerprint"]:
+                        raise ValueError(
+                            "sealed holdout member component identity is stale"
+                        )
+                existing_anchors = {
+                    str(row[0]) for row in connection.execute(
+                        """SELECT member.record_id
+                           FROM sealed_holdout_members member
+                           JOIN sealed_holdouts cohort USING(holdout_id)
+                           WHERE cohort.sealed = 1"""
+                    ).fetchall()
+                }
+                existing_components = {
+                    current_components[record_id]
+                    for record_id in existing_anchors
+                    if record_id in current_components
+                }
+                proposed_components = {
+                    current_components[record_id]
+                    for record_id in proposed_record_ids
+                }
+                if proposed_components & existing_components:
+                    raise ValueError("one or more holdout families are already sealed")
+                exposed_record_ids = {
+                    str(row[0]) for row in connection.execute(
+                        "SELECT record_id FROM evaluation_exposures"
+                    ).fetchall()
+                }
+                exposed_components = {
+                    current_components[record_id]
+                    for record_id in exposed_record_ids
+                    if record_id in current_components
+                }
+                if proposed_components & exposed_components:
+                    raise ValueError(
+                        "sealed holdout families must be reserved before evaluation exposure"
+                    )
+            conflicts = connection.execute(
+                "SELECT group_fingerprint FROM sealed_holdout_members WHERE "
+                f"group_fingerprint IN ({','.join('?' for _ in normalized)})",
+                tuple(member["groupFingerprint"] for member in normalized),
+            ).fetchall()
+            if conflicts:
+                raise ValueError("one or more holdout groups are already sealed")
+            created_at = utc_now()
+            connection.execute(
+                """INSERT INTO sealed_holdouts(
+                       holdout_id,dataset_version,integrity_sha256,member_count,
+                       provenance_summary_json,sealed,created_at
+                   ) VALUES(?,?,?,?,?,0,?)""",
+                (
+                    holdout_id, dataset_version, digest, len(normalized),
+                    _json(provenance_summary), created_at,
+                ),
+            )
+            connection.executemany(
+                """INSERT INTO sealed_holdout_members(
+                       holdout_id,group_fingerprint,record_id,label,evidence_created_at
+                   ) VALUES(?,?,?,?,?)""",
+                [(
+                    holdout_id, member["groupFingerprint"], member["recordId"],
+                    member["label"], member["createdAt"],
+                ) for member in normalized],
+            )
+            connection.execute(
+                "UPDATE sealed_holdouts SET sealed = 1 WHERE holdout_id = ?",
+                (holdout_id,),
+            )
+        return {
+            "holdout_id": holdout_id,
+            "dataset_version": dataset_version,
+            "integrity_sha256": digest,
+            "member_count": len(normalized),
+            "provenance_summary_json": _json(provenance_summary),
+            "created_at": created_at,
+        }
+
+    def record_evaluation_exposure(
+        self,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        dataset_version: str,
+        purpose: str,
+    ) -> int:
+        """Mark unsealed test evidence as opened by an evaluation workflow."""
+        safe_purpose, _redacted = redact_secret_text(str(purpose).strip())
+        if not safe_purpose or len(safe_purpose) > 100:
+            raise ValueError("evaluation exposure requires a bounded purpose")
+        prepared = sorted({
+            str(row.get("record_id"))
+            for row in rows
+            if row.get("split") == "test"
+            and row.get("record_id")
+            and not bool(row.get("holdout_sealed"))
+        })
+        if not prepared:
+            return 0
+        now = utc_now()
+        with self._transaction(immediate=True) as connection:
+            before = int(connection.execute(
+                "SELECT count(*) FROM evaluation_exposures"
+            ).fetchone()[0])
+            connection.executemany(
+                """INSERT INTO evaluation_exposures(
+                       record_id,dataset_version,purpose,exposed_at
+                   ) VALUES(?,?,?,?) ON CONFLICT(record_id) DO NOTHING""",
+                [(record_id, dataset_version, safe_purpose, now) for record_id in prepared],
+            )
+            after = int(connection.execute(
+                "SELECT count(*) FROM evaluation_exposures"
+            ).fetchone()[0])
+        return after - before
+
+    def exposed_record_ids(self) -> frozenset[str]:
+        with self._reader() as connection:
+            rows = connection.execute(
+                "SELECT record_id FROM evaluation_exposures"
+            ).fetchall()
+        return frozenset(str(row[0]) for row in rows)
+
+    def sealed_holdout_groups(self) -> frozenset[str]:
+        with self._reader() as connection:
+            rows = connection.execute(
+                "SELECT group_fingerprint FROM sealed_holdout_members"
+            ).fetchall()
+        return frozenset(str(row[0]) for row in rows)
+
+    def sealed_holdout_record_ids(self) -> frozenset[str]:
+        """Return stable source-record identities reserved by sealed cohorts."""
+        with self._reader() as connection:
+            rows = connection.execute(
+                """SELECT member.record_id FROM sealed_holdout_members member
+                   JOIN sealed_holdouts cohort USING(holdout_id)
+                   WHERE cohort.sealed = 1"""
+            ).fetchall()
+        return frozenset(str(row[0]) for row in rows)
+
+    def sealed_holdout_summary(self) -> dict[str, Any]:
+        """Return bounded cohort metadata and verify stored membership hashes."""
+        with self._reader() as connection:
+            cohorts = connection.execute(
+                "SELECT * FROM sealed_holdouts WHERE sealed = 1 "
+                "ORDER BY created_at,holdout_id"
+            ).fetchall()
+            payloads: list[dict[str, Any]] = []
+            for cohort in cohorts:
+                members = connection.execute(
+                    "SELECT * FROM sealed_holdout_members WHERE holdout_id = ? "
+                    "ORDER BY group_fingerprint",
+                    (cohort["holdout_id"],),
+                ).fetchall()
+                canonical = _json({
+                    "datasetVersion": str(cohort["dataset_version"]),
+                    "members": [{
+                        "groupFingerprint": str(member["group_fingerprint"]),
+                        "recordId": str(member["record_id"]),
+                        "label": str(member["label"]),
+                        "createdAt": str(member["evidence_created_at"]),
+                    } for member in members],
+                    "provenanceSummary": _decode(
+                        str(cohort["provenance_summary_json"]), {}
+                    ),
+                })
+                actual = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+                payloads.append({
+                    "holdoutId": str(cohort["holdout_id"]),
+                    "datasetVersion": str(cohort["dataset_version"]),
+                    "memberCount": len(members),
+                    "integritySha256": str(cohort["integrity_sha256"]),
+                    "integrityValid": actual == str(cohort["integrity_sha256"]),
+                    "createdAt": str(cohort["created_at"]),
+                    "sourceGroupIds": [
+                        str(member["group_fingerprint"]) for member in members
+                    ],
+                    "provenanceSummary": _decode(
+                        str(cohort["provenance_summary_json"]), {}
+                    ),
+                })
+        latest = payloads[-1] if payloads else None
+        return {
+            "sealed": bool(payloads),
+            "cohortCount": len(payloads),
+            "allIntegrityValid": all(
+                bool(value["integrityValid"]) for value in payloads
+            ),
+            "latest": latest,
+        }
 
     def register_model(
         self,

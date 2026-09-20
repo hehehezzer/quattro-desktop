@@ -38,6 +38,10 @@ class PromotionThresholds:
     minimum_test_per_class: int = 30
     minimum_categories: int = 4
     minimum_usable_labels_per_category: int = 30
+    minimum_complexity_bands: int = 3
+    minimum_usable_labels_per_complexity_band: int = 30
+    minimum_human_gold_groups: int = 60
+    minimum_human_gold_groups_per_class: int = 10
     maximum_dominant_category_rate: float = 0.60
     minimum_label_completeness: float = 0.95
     maximum_class_imbalance_ratio: float = 2.0
@@ -63,6 +67,10 @@ class PromotionThresholds:
             "minimum_test_per_class",
             "minimum_categories",
             "minimum_usable_labels_per_category",
+            "minimum_complexity_bands",
+            "minimum_usable_labels_per_complexity_band",
+            "minimum_human_gold_groups",
+            "minimum_human_gold_groups_per_class",
             "minimum_disagreements",
             "minimum_category_evaluation_samples",
             "minimum_category_class_samples",
@@ -130,6 +138,14 @@ class PromotionThresholds:
             "minimumTestPerClass": self.minimum_test_per_class,
             "minimumCategories": self.minimum_categories,
             "minimumUsableLabelsPerCategory": self.minimum_usable_labels_per_category,
+            "minimumComplexityBands": self.minimum_complexity_bands,
+            "minimumUsableLabelsPerComplexityBand": (
+                self.minimum_usable_labels_per_complexity_band
+            ),
+            "minimumHumanGoldGroups": self.minimum_human_gold_groups,
+            "minimumHumanGoldGroupsPerClass": (
+                self.minimum_human_gold_groups_per_class
+            ),
             "maximumDominantCategoryRate": self.maximum_dominant_category_rate,
             "minimumLabelCompleteness": self.minimum_label_completeness,
             "maximumClassImbalanceRatio": self.maximum_class_imbalance_ratio,

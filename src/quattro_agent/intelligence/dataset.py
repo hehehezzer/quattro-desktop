@@ -16,6 +16,7 @@ from typing import Any
 
 from ..routing_intelligence import profile_task
 from .features import (
+    TASK_CATEGORIES,
     decision_profile,
     feature_audit,
     forbidden_payload_paths,
@@ -23,6 +24,7 @@ from .features import (
 )
 from .maturity import data_maturity
 from .readiness import DEFAULT_PROMOTION_THRESHOLDS, PromotionThresholds
+from .review import RUBRIC_VERSION
 from .store import DATASET_SCHEMA_VERSION, FEATURE_SCHEMA_VERSION, IntelligenceStore
 from .telemetry import (
     record_routing_telemetry,
@@ -78,6 +80,7 @@ SUPPORTED_DATASET_SCHEMA_VERSIONS = frozenset({
     "direct-delegate-dataset-v7",
     "direct-delegate-dataset-v8",
     "direct-delegate-dataset-v9",
+    "direct-delegate-dataset-v10",
     DATASET_SCHEMA_VERSION,
 })
 # Kept as a public compatibility mapping for existing callers.  New code
@@ -243,6 +246,64 @@ def _semantic_duplicate_pairs(
     return pairs
 
 
+def connected_component_fingerprints(
+    records: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
+    """Return exact/session/lexical/semantic connected-component identities.
+
+    Evidence acquisition and dataset extraction share this implementation so
+    a review queue cannot count a family as independent when extraction would
+    later collapse it.
+    """
+    parents = list(range(len(records)))
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    owners: dict[str, int] = {}
+    for index, record in enumerate(records):
+        for key in (
+            f"request:{record.get('request_fingerprint') or record.get('record_id')}",
+            f"session:{record.get('group_fingerprint') or record.get('record_id')}",
+        ):
+            if key in owners:
+                union(index, owners[key])
+            else:
+                owners[key] = index
+    lexical_pairs = _near_duplicate_pairs(records)
+    for left, right, _similarity in lexical_pairs:
+        union(left, right)
+    for left, right, _similarity in _semantic_duplicate_pairs(
+        records, lexical_pairs=lexical_pairs
+    ):
+        union(left, right)
+    component_keys: dict[int, list[str]] = {}
+    for index, record in enumerate(records):
+        component_keys.setdefault(find(index), []).extend((
+            f"request:{record.get('request_fingerprint') or record.get('record_id')}",
+            f"session:{record.get('group_fingerprint') or record.get('record_id')}",
+        ))
+    identities = {
+        root: hashlib.sha256(
+            "|".join(sorted(set(keys))).encode("utf-8")
+        ).hexdigest()
+        for root, keys in component_keys.items()
+    }
+    return {
+        str(record.get("record_id")): identities[find(index)]
+        for index, record in enumerate(records)
+    }
+
+
 def _target_counts(total: int) -> dict[str, int]:
     validation = max(1, round(total * 0.15)) if total >= 3 else 0
     test = max(1, round(total * 0.15)) if total >= 3 else 0
@@ -379,13 +440,23 @@ def dataset_quality(
 ) -> dict[str, Any]:
     """Audit dataset eligibility, provenance, balance, and contamination."""
     policy = thresholds or DEFAULT_PROMOTION_THRESHOLDS
-    labeled = [row for row in rows if row.get("label") in {"DIRECT", "DELEGATE"}]
+    policy_rows = [row for row in rows if not bool(row.get("holdout_sealed"))]
+    labeled = [
+        row for row in policy_rows if row.get("label") in {"DIRECT", "DELEGATE"}
+    ]
     real = [row for row in labeled if row.get("label_source") in REAL_LABEL_SOURCES]
     by_source: dict[str, list[Mapping[str, Any]]] = {
         source: [row for row in labeled if row.get("label_source") == source]
         for source in ("human_gold", "probe_gold", "silver")
     }
     source_priority = {"human_gold": 0, "probe_gold": 1, "silver": 2}
+    latest_created_at_by_group: dict[str, str] = {}
+    for row in policy_rows:
+        group = str(row.get("group_fingerprint") or row.get("record_id"))
+        parsed = _parse_time(str(row.get("created_at") or ""))
+        current = _parse_time(latest_created_at_by_group.get(group))
+        if parsed is not None and (current is None or parsed > current):
+            latest_created_at_by_group[group] = str(row.get("created_at"))
     usable_by_group: dict[str, Mapping[str, Any]] = {}
     for row in labeled:
         if not bool(row.get("label_independent")):
@@ -396,7 +467,12 @@ def dataset_quality(
             str(row.get("label_source")), 9
         ) < source_priority.get(str(current.get("label_source")), 9):
             usable_by_group[group] = row
-    independent_usable = list(usable_by_group.values())
+    independent_usable = [
+        dict(row) | {
+            "created_at": latest_created_at_by_group.get(group, row.get("created_at"))
+        }
+        for group, row in usable_by_group.items()
+    ]
     legacy_or_unproven = [
         row for row in labeled if not bool(row.get("label_independent"))
     ]
@@ -409,13 +485,17 @@ def dataset_quality(
         for split in ("train", "validation", "test")
     }
     usable_task_categories = Counter(
-        str(row.get("task_category") or "unknown") for row in independent_usable
+        str(
+            row.get("evidence_task_category")
+            or row.get("task_category")
+            or "unknown"
+        ) for row in independent_usable
     )
     usable_categories = Counter(
         str(row.get("category") or "unknown") for row in independent_usable
     )
     excluded = [
-        row for row in rows
+        row for row in policy_rows
         if row.get("review_outcome") == "EXCLUDE"
         and row.get("source_kind") != "curated_benchmark"
     ]
@@ -428,7 +508,13 @@ def dataset_quality(
         if group in seen_groups:
             continue
         seen_groups.add(group)
-        independent_real.append(row)
+        independent_real.append(
+            dict(row) | {
+                "created_at": latest_created_at_by_group.get(
+                    group, row.get("created_at")
+                )
+            }
+        )
     excluded_groups = {str(row["group_fingerprint"]) for row in excluded}
     real_balance = Counter(str(row["label"]) for row in independent_real)
     split_balance = {
@@ -438,7 +524,9 @@ def dataset_quality(
         for split in ("train", "validation", "test")
     }
     categories = Counter(str(row.get("category") or "unknown") for row in independent_real)
-    complexities = Counter(str(row.get("complexity") or "unknown") for row in independent_real)
+    complexities = Counter(str(
+        row.get("evidence_complexity") or row.get("complexity") or "unknown"
+    ) for row in independent_real)
     coding = Counter(
         "coding" if str(row.get("category") or "unknown") == "coding" else "non_coding"
         for row in independent_real
@@ -490,7 +578,7 @@ def dataset_quality(
     }
     maturity_times = [
         parsed for parsed in (
-            _parse_time(str(row.get("created_at") or "")) for row in rows
+            _parse_time(str(row.get("created_at") or "")) for row in policy_rows
         )
         if parsed is not None
     ]
@@ -503,7 +591,7 @@ def dataset_quality(
         1970, 1, 1, tzinfo=dt.timezone.utc
     )
     maturity = data_maturity(
-        rows,
+        policy_rows,
         thresholds=policy,
         now=maturity_now,
         duplicate_stats=duplicate_stats,
@@ -671,9 +759,17 @@ def dataset_quality(
     )
     chronology["splitTemporalOrder"] = split_temporal_order
     chronology["credibleHumanGoldChronology"] = (
-        len(independent_human_chronology) >= 60
-        and all(chronological_train_balance[label] >= 10 for label in ("DIRECT", "DELEGATE"))
-        and all(chronological_evaluation_balance[label] >= 10 for label in ("DIRECT", "DELEGATE"))
+        len(independent_human_chronology) >= policy.minimum_human_gold_groups
+        and all(
+            chronological_train_balance[label]
+            >= policy.minimum_human_gold_groups_per_class
+            for label in ("DIRECT", "DELEGATE")
+        )
+        and all(
+            chronological_evaluation_balance[label]
+            >= policy.minimum_human_gold_groups_per_class
+            for label in ("DIRECT", "DELEGATE")
+        )
         and split_temporal_order
     )
     if not chronology["credibleHumanGoldChronology"]:
@@ -919,6 +1015,47 @@ def load_dataset(path: pathlib.Path) -> list[dict[str, Any]]:
         ) not in {"human_gold", "probe_gold", "silver", "excluded"}:
             raise ValueError(f"dataset line {line_number} has an invalid label source")
         if value.get("schema_version") == DATASET_SCHEMA_VERSION:
+            if not isinstance(value.get("holdout_sealed"), bool):
+                raise ValueError(
+                    f"dataset line {line_number} is missing sealed holdout provenance"
+                )
+            if value.get("evidence_quality") not in {
+                "unlabeled", "single_review", "disputed", "consensus",
+                "adjudicated", "rejected", "contaminated",
+                "curated_fixture", "machine_consensus", "legacy_exposed",
+            }:
+                raise ValueError(
+                    f"dataset line {line_number} has invalid evidence quality"
+                )
+            if value.get("gold_provenance") not in {
+                None, "human_blind", "consensus_human_blind",
+                "adjudicated_human", "curated_fixture",
+            }:
+                raise ValueError(
+                    f"dataset line {line_number} has invalid gold provenance"
+                )
+            if value.get("evidence_task_category") not in TASK_CATEGORIES:
+                raise ValueError(
+                    f"dataset line {line_number} has invalid evidence task category"
+                )
+            if value.get("evidence_complexity") not in {"low", "medium", "high"}:
+                raise ValueError(
+                    f"dataset line {line_number} has invalid evidence complexity"
+                )
+            correction_provenance = value.get("taxonomy_correction_provenance")
+            if not isinstance(correction_provenance, Mapping) or set(
+                correction_provenance
+            ) != {"taskCategory", "complexity"}:
+                raise ValueError(
+                    f"dataset line {line_number} has invalid taxonomy correction provenance"
+                )
+            if any(
+                item not in {None, "consensus_human_blind", "adjudicated_human"}
+                for item in correction_provenance.values()
+            ):
+                raise ValueError(
+                    f"dataset line {line_number} has untrusted taxonomy correction provenance"
+                )
             if not isinstance(value.get("labeling_method"), str):
                 raise ValueError(
                     f"dataset line {line_number} is missing labeling method provenance"
@@ -1262,57 +1399,32 @@ class DatasetBuilder:
     def extract(self, output_directory: pathlib.Path) -> dict[str, Any]:
         output_directory = output_directory.expanduser().resolve(strict=False)
         prior_splits = _authoritative_prior_splits(output_directory)
-        records = self.store.list_records()
-        labels = {row["record_id"]: row for row in self.store.labeled_records()}
-        reviews = self.store.latest_reviews()
-        blind_resolutions = self.store.blind_human_resolutions()
-        parents = list(range(len(records)))
-
-        def find(index: int) -> int:
-            while parents[index] != index:
-                parents[index] = parents[parents[index]]
-                index = parents[index]
-            return index
-
-        def union(left: int, right: int) -> None:
-            left_root = find(left)
-            right_root = find(right)
-            if left_root != right_root:
-                parents[right_root] = left_root
-
-        owners: dict[str, int] = {}
-        for index, record in enumerate(records):
-            for key in (
-                f"request:{record['request_fingerprint']}",
-                f"session:{record['group_fingerprint']}",
-            ):
-                if key in owners:
-                    union(index, owners[key])
-                else:
-                    owners[key] = index
-        near_pairs = _near_duplicate_pairs(records)
-        for left, right, _similarity in near_pairs:
-            union(left, right)
-        for left, right, _similarity in _semantic_duplicate_pairs(
-            records, lexical_pairs=near_pairs
-        ):
-            union(left, right)
-        component_keys: dict[int, list[str]] = {}
-        for index, record in enumerate(records):
-            component_keys.setdefault(find(index), []).extend((
-                f"request:{record['request_fingerprint']}",
-                f"session:{record['group_fingerprint']}",
-            ))
-        component_fingerprints = {
-            root: hashlib.sha256("|".join(sorted(set(keys))).encode("utf-8")).hexdigest()
-            for root, keys in component_keys.items()
+        evidence = self.store.dataset_evidence_snapshot()
+        records = evidence["records"]
+        labels = evidence["labels"]
+        reviews = evidence["reviews"]
+        blind_resolutions = evidence["blind_resolutions"]
+        blind_states = evidence["blind_states"]
+        blind_corrections = evidence["blind_corrections"]
+        component_fingerprints = connected_component_fingerprints(records)
+        sealed_record_ids = evidence["sealed_record_ids"]
+        record_ids = {str(record["record_id"]) for record in records}
+        missing_sealed_records = sorted(sealed_record_ids - record_ids)
+        if missing_sealed_records:
+            raise ValueError(
+                "sealed holdout source records are missing from evidence: "
+                f"{missing_sealed_records[:5]}"
+            )
+        sealed_groups = {
+            component_fingerprints[record_id] for record_id in sealed_record_ids
         }
         prepared: list[dict[str, Any]] = []
         for index, record in enumerate(records):
-            group = component_fingerprints[find(index)]
+            group = component_fingerprints[str(record["record_id"])]
             label = labels.get(record["record_id"])
             review = reviews.get(record["record_id"])
             blind_resolution = blind_resolutions.get(record["record_id"])
+            blind_correction = blind_corrections.get(record["record_id"], {})
             safe_features = decision_profile(
                 record["request_text"],
                 record if record.get("source_kind") in {
@@ -1360,8 +1472,21 @@ class DatasetBuilder:
                 "estimated_tokens": record["estimated_tokens"],
                 "task_type": record["task_type"],
                 "complexity": safe_features["complexity"],
+                "evidence_complexity": (
+                    blind_correction.get("complexity") or safe_features["complexity"]
+                ),
                 "category": safe_features["category"],
                 "task_category": safe_features["task_category"],
+                "evidence_task_category": (
+                    blind_correction.get("task_category")
+                    or safe_features["task_category"]
+                ),
+                "taxonomy_correction_provenance": {
+                    "taskCategory": blind_correction.get(
+                        "task_category_provenance"
+                    ),
+                    "complexity": blind_correction.get("complexity_provenance"),
+                },
                 "repository_present": record["repository_present"],
                 "repository_required": safe_features["repository_required"],
                 "retrieval_required": safe_features["retrieval_required"],
@@ -1399,6 +1524,22 @@ class DatasetBuilder:
                     else float(label.get("label_confidence", 1.0)) if label else None
                 ),
                 "labeling_method": labeling_method,
+                "gold_provenance": (
+                    blind_resolution.get("provenance")
+                    if blind_resolution is not None else
+                    "curated_fixture"
+                    if source == "probe_gold" else None
+                ),
+                "evidence_quality": (
+                    "adjudicated"
+                    if blind_resolution is not None
+                    and blind_resolution.get("provenance") == "adjudicated_human"
+                    else "consensus" if blind_resolution is not None
+                    else "curated_fixture" if source == "probe_gold"
+                    else "machine_consensus" if source == "silver"
+                    else "legacy_exposed" if labeling_method == "legacy_exposed_review"
+                    else blind_states.get(str(record["record_id"]), "unlabeled")
+                ),
                 "label_independent": independent,
                 "exclusion_reason": (
                     str(review.get("notes") or review.get("outcome"))
@@ -1418,7 +1559,12 @@ class DatasetBuilder:
                     if blind_resolution is not None
                     else review.get("reviewed_at") if review else None
                 ),
+                "label_resolution_event_id": (
+                    int(blind_resolution["event_id"])
+                    if blind_resolution is not None else None
+                ),
                 "split": None,
+                "holdout_sealed": group in sealed_groups,
             })
         component_labels: dict[str, set[str]] = {}
         for row in prepared:
@@ -1434,6 +1580,7 @@ class DatasetBuilder:
             if str(row["component_fingerprint"]) not in conflicting_components:
                 continue
             row["label_conflict"] = True
+            row["evidence_quality"] = "contaminated"
             row["label"] = None
             row["label_source"] = "excluded"
             row["label_trust"] = "excluded"
@@ -1459,6 +1606,17 @@ class DatasetBuilder:
                     "chronological blind split conflicts with frozen final-test membership"
                 )
             frozen_assignments[group] = split
+        for group in sealed_groups:
+            if group not in {
+                str(row["component_fingerprint"]) for row in prepared
+            }:
+                continue
+            existing = frozen_assignments.get(group)
+            if existing is not None and existing != "test":
+                raise ValueError(
+                    "sealed holdout component conflicts with prior non-test assignment"
+                )
+            frozen_assignments[group] = "test"
         split_groups = _stratified_group_splits(
             prepared,
             frozen_assignments=frozen_assignments,
@@ -1477,6 +1635,7 @@ class DatasetBuilder:
             "datasetVersion": dataset_version,
             "strategy": "connected_exact_lexical_semantic_group_stratified_70_15_15",
             "chronologicalBlindBoundaryApplied": bool(chronological_assignments),
+            "sealedHoldoutGroupCount": len(sealed_groups),
             "assignments": [
                 {
                     "groupFingerprint": group,
@@ -1498,18 +1657,54 @@ class DatasetBuilder:
         labeled = [row for row in rows if row["label"] is not None]
         quarantined_conflicts = [row for row in rows if row["label_conflict"]]
         quality = dataset_quality(rows)
+        try:
+            existing_manifest = self.store.dataset_manifest(dataset_version)
+        except KeyError:
+            snapshot_created_at = dt.datetime.now(dt.timezone.utc).isoformat(
+                timespec="milliseconds"
+            )
+        else:
+            snapshot_created_at = str(
+                existing_manifest.get("creationTimestamp")
+                or dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds")
+            )
         manifest = {
+            "schemaVersion": 2,
             "datasetVersion": dataset_version,
             "datasetSchemaVersion": DATASET_SCHEMA_VERSION,
             "featureVersion": FEATURE_SCHEMA_VERSION,
+            "rubricVersion": RUBRIC_VERSION,
+            "componentAlgorithm": {
+                "lexicalJaccardThreshold": NEAR_DUPLICATE_JACCARD_THRESHOLD,
+                "semanticThreshold": SEMANTIC_DUPLICATE_THRESHOLD,
+                "semanticRepresentationVersion": SEMANTIC_REPRESENTATION_VERSION,
+            },
+            "thresholdPolicy": DEFAULT_PROMOTION_THRESHOLDS.as_dict(),
             "contentSha256": digest,
             "recordCount": len(rows),
+            "creationTimestamp": snapshot_created_at,
+            "sourceEvidenceCutoff": max(
+                (str(row.get("created_at") or "") for row in rows), default=""
+            ) or None,
+            "sourceEvidenceCount": len(records),
+            "sourceEvidenceRevision": evidence["source_revision"],
+            "independentGroupCount": len(split_groups),
             "labeledCount": len(labeled),
             "unlabeledCount": len(rows) - len(labeled),
             "quarantinedConflictRowCount": len(quarantined_conflicts),
             "classBalance": dict(sorted(Counter(row["label"] for row in labeled).items())),
             "splitCounts": dict(sorted(Counter(row["split"] for row in labeled).items())),
             "labelSources": dict(sorted(Counter(row["label_source"] for row in labeled).items())),
+            "goldProvenanceDistribution": dict(sorted(Counter(
+                str(row.get("gold_provenance") or "none") for row in rows
+            ).items())),
+            "labelResolutionEventIds": sorted({
+                int(row["label_resolution_event_id"])
+                for row in rows if row.get("label_resolution_event_id") is not None
+            }),
+            "evidenceQualityDistribution": dict(sorted(Counter(
+                str(row.get("evidence_quality") or "unlabeled") for row in rows
+            ).items())),
             "reviewOutcomeBalance": dict(sorted(Counter(
                 str(row.get("review_outcome") or "pending") for row in rows
             ).items())),
@@ -1522,8 +1717,13 @@ class DatasetBuilder:
             "categoryBalance": dict(sorted(Counter(
                 str(row.get("category") or "unknown") for row in labeled
             ).items())),
+            "evidenceTaskCategoryBalance": dict(sorted(Counter(
+                str(row.get("evidence_task_category") or row.get("task_category") or "unknown")
+                for row in labeled
+            ).items())),
             "complexityBalance": dict(sorted(Counter(
-                str(row.get("complexity") or "unknown") for row in labeled
+                str(row.get("evidence_complexity") or row.get("complexity") or "unknown")
+                for row in labeled
             ).items())),
             "codingBalance": dict(sorted(Counter(
                 "coding" if str(row.get("category") or "unknown") == "coding"
@@ -1553,6 +1753,15 @@ class DatasetBuilder:
             "splitManifestFingerprint": split_manifest_digest,
             "splitManifestGroupCount": len(split_groups),
             "chronologicalBlindBoundaryApplied": bool(chronological_assignments),
+            "sealedHoldout": evidence["holdout_summary"],
+            "chronologicalBoundary": quality.get("chronologicalCoverage", {}).get(
+                "chronologicalCutoffTimestamp"
+            ),
+            "excludedCount": sum(row.get("label_source") == "excluded" for row in rows),
+            "excludedReasons": dict(sorted(Counter(
+                str(row.get("exclusion_reason") or "unlabeled")
+                for row in rows if row.get("label_source") == "excluded"
+            ).items())),
             "splitManifestPath": str(split_manifest_path),
             "leakageGuard": (
                 "identical, lexical-near, and deterministic semantic-near requests plus "
