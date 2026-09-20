@@ -58,7 +58,11 @@ quattro-agent intelligence seal-holdout --dataset DATASET.jsonl --limit 60
 
 `sync` projects historical durable tasks into sanitized telemetry. It does not
 create labels. `dataset` writes an immutable versioned JSONL dataset and a
-manifest. `train` uses only independence-proven labels and fails closed until
+manifest. Report-only single or disputed blind votes do not change model-facing
+dataset rows; repeating extraction reuses the existing immutable snapshot while
+retaining the current source revision in the command result. A newly accepted
+consensus or adjudication changes the materialized rows and creates a new
+snapshot. `train` uses only independence-proven labels and fails closed until
 all data-readiness gates pass. `--activate-shadow` makes the saved
 model available for advisory inference; its output never changes production
 routing. `benchmark` reports both the current deterministic router and the ML

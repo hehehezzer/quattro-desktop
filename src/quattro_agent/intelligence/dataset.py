@@ -1658,8 +1658,11 @@ class DatasetBuilder:
         quarantined_conflicts = [row for row in rows if row["label_conflict"]]
         quality = dataset_quality(rows)
         try:
-            existing_manifest = self.store.dataset_manifest(dataset_version)
+            existing_manifest: dict[str, Any] | None = self.store.dataset_manifest(
+                dataset_version
+            )
         except KeyError:
+            existing_manifest = None
             snapshot_created_at = dt.datetime.now(dt.timezone.utc).isoformat(
                 timespec="milliseconds"
             )
@@ -1771,6 +1774,24 @@ class DatasetBuilder:
             "quality": quality,
             "datasetPath": str(dataset_path),
         }
+        snapshot_reused = bool(
+            existing_manifest is not None
+            and existing_manifest.get("contentSha256") == digest
+        )
+        if snapshot_reused:
+            # Single/disputed blind votes are audit evidence until a resolution
+            # exists.  They can advance the source revision without changing
+            # any model-facing dataset row.  Preserve the immutable materialized
+            # snapshot rather than rewriting its lineage manifest in place.
+            manifest = dict(existing_manifest)
+            manifest["datasetPath"] = str(dataset_path)
+            manifest["splitManifestPath"] = str(split_manifest_path)
         _atomic_lines(manifest_path, [manifest])
         self.store.save_dataset_manifest(dataset_version, manifest)
-        return manifest | {"manifestPath": str(manifest_path)}
+        result = manifest | {
+            "manifestPath": str(manifest_path),
+            "snapshotReused": snapshot_reused,
+        }
+        if snapshot_reused:
+            result["currentSourceEvidenceRevision"] = evidence["source_revision"]
+        return result

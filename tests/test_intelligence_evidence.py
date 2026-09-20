@@ -399,6 +399,34 @@ class BlindReviewContractTests(unittest.TestCase):
 
 
 class EvidenceStateTests(unittest.TestCase):
+    def test_single_blind_vote_reuses_unchanged_immutable_dataset_snapshot(self) -> None:
+        """Report-only single votes must not make extraction fail closed."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            store = IntelligenceStore(root / "intelligence.sqlite3")
+            record_id = _record(store, "legacy-record", "Explain a queue")
+            store.label_record(
+                record_id,
+                "DIRECT",
+                source="human_verified",
+                reviewer="legacy-reviewer",
+                labeling_method="legacy_exposed_review",
+            )
+            from quattro_agent.intelligence.dataset import DatasetBuilder
+
+            builder = DatasetBuilder(store)
+            first = builder.extract(root / "datasets")
+            _vote(store, reviewer="reviewer-a", verdict="DIRECT")
+            second = builder.extract(root / "datasets")
+
+            self.assertEqual(first["datasetVersion"], second["datasetVersion"])
+            self.assertEqual(first["contentSha256"], second["contentSha256"])
+            self.assertFalse(first["snapshotReused"])
+            self.assertTrue(second["snapshotReused"])
+            self.assertEqual(
+                second["currentSourceEvidenceRevision"]["blindVoteCount"], 1
+            )
+
     def test_consensus_taxonomy_corrections_are_report_only_features(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
