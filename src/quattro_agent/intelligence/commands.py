@@ -28,6 +28,8 @@ from .dataset import (
 )
 from .evaluation import benchmark_direct_delegate
 from .features import decision_profile
+from .maturity import data_maturity
+from .readiness import load_promotion_thresholds, promotion_gate_summary
 from .probes import import_controlled_probes
 from .review import (
     BLIND_REVIEW_KIND,
@@ -48,6 +50,7 @@ def _latest(directory: pathlib.Path, pattern: str) -> pathlib.Path | None:
 
 
 def add_intelligence_parser(subparsers: argparse._SubParsersAction[Any]) -> None:
+    """Register the intelligence command and its supported arguments."""
     parser = subparsers.add_parser(
         "intelligence",
         help="collect, label, train, shadow, and benchmark routing intelligence",
@@ -57,6 +60,7 @@ def add_intelligence_parser(subparsers: argparse._SubParsersAction[Any]) -> None
         choices=(
             "status", "sync", "import-labels", "label", "dataset", "train",
             "predict", "eval", "benchmark", "report", "quality",
+            "readiness",
             "review-queue", "review-batch", "review-import", "review-audit",
             "blind-review-queue", "blind-review-batch", "blind-review-import",
             "blind-review-audit", "blind-review-correct",
@@ -90,6 +94,10 @@ def add_intelligence_parser(subparsers: argparse._SubParsersAction[Any]) -> None
     parser.add_argument("--reason-category", choices=REASON_CATEGORIES)
     parser.add_argument("--correction-reason")
     parser.add_argument("--pretty", action="store_true")
+    parser.add_argument(
+        "--thresholds",
+        help="private JSON policy for offline data/promotion thresholds",
+    )
 
 
 def _print(payload: Mapping[str, Any], pretty: bool) -> None:
@@ -145,9 +153,76 @@ def _source_revision() -> str:
     return value if result.returncode == 0 and len(value) == 40 else "unknown"
 
 
+def _thresholds(args: argparse.Namespace):
+    """Load the promotion policy selected by the command arguments."""
+    return load_promotion_thresholds(getattr(args, "thresholds", None))
+
+
+def _live_maturity(
+    rows: list[dict[str, Any]],
+    quality: Mapping[str, Any],
+    policy: Any,
+) -> dict[str, Any]:
+    """Add live freshness to the immutable dataset-quality gate contract."""
+    report = data_maturity(
+        rows,
+        thresholds=policy,
+        duplicate_stats=quality.get("dataMaturity", {}).get("duplicates", {}),
+    )
+    report["candidateGates"] = dict(report.get("candidateGates") or {}) | dict(
+        quality.get("candidateGates") or {}
+    )
+    return report
+
+
 def _phase_19_markdown(payload: Mapping[str, Any]) -> str:
+    """Render the Phase 1.9 readiness report as Markdown."""
     quality = payload.get("dataset", {}).get("quality", {})
     chronology = quality.get("chronologicalCoverage", {})
+    maturity = payload.get("dataMaturity", {})
+    promotion = payload.get("promotionGates", {})
+    evaluation = payload.get("installedShadowEvaluation", {})
+    def compact_metrics(report: Mapping[str, Any]) -> dict[str, Any]:
+        """Select the headline metrics used in the Markdown report."""
+        metrics = report.get("metrics", report)
+        if not isinstance(metrics, Mapping):
+            return {}
+        return {
+            key: metrics.get(key)
+            for key in (
+                "sampleCount", "accuracy", "balancedAccuracy", "f1",
+                "delegateFalseNegativeRate", "precision", "recall",
+            )
+            if key in metrics
+        }
+    category_summary = {
+        str(name): {
+            "sampleCount": report.get("sampleCount"),
+            "baselineMetrics": compact_metrics(report.get("baselineMetrics", {})),
+            "modelMetrics": compact_metrics(report.get("modelMetrics", {})),
+            "disagreementRate": report.get("disagreementRate"),
+        }
+        for name, report in (evaluation.get("performanceByTaskCategory", {}) or {}).items()
+        if isinstance(report, Mapping)
+    }
+    disagreement = evaluation.get("disagreementTelemetry", {})
+    disagreement_summary = {
+        key: disagreement.get(key)
+        for key in (
+            "count", "eligibleForEvaluation", "knownOutcomeCount",
+            "byTaskCategory", "byComplexity", "counterfactualStatus",
+        )
+        if key in disagreement
+    }
+    observed = evaluation.get("observedOutcomeEvidence", {})
+    outcome_summary = {
+        key: observed.get(key)
+        for key in (
+            "observedOutcomeCount", "unknownOutcomeCount", "byDeterministicRoute",
+            "disagreementObservedOutcome", "counterfactualStatus",
+        )
+        if key in observed
+    }
     lines = [
         "# Quattro Intelligence Phase 1.9",
         "",
@@ -161,6 +236,27 @@ def _phase_19_markdown(payload: Mapping[str, Any]) -> str:
         f"- Duplicate rows collapsed for modeling: {quality.get('duplicateRowsCollapsedForModeling', 0)}",
         f"- Chronology credible: {chronology.get('credibleHumanGoldChronology', False)}",
         f"- Active shadow unchanged: `{payload.get('activeShadowModelAfter')}`",
+        f"- Eligible examples/groups: {maturity.get('eligibleExamples', 0)} / {maturity.get('eligibleIndependentGroups', 0)}",
+        f"- Label completeness: {maturity.get('labelCompleteness', {}).get('rate')}",
+        f"- Deterministic route balance: `{json.dumps(maturity.get('deterministicRouteBalance', {}), sort_keys=True)}`",
+        f"- Outcome evidence: `{json.dumps(maturity.get('outcomes', {}).get('counterfactualComparison', {}), sort_keys=True)}`",
+        "",
+        "## Promotion Gates",
+        f"- Overall: **{promotion.get('status', 'BLOCKED BY DATA')}**",
+        f"- Passed: `{json.dumps(promotion.get('gatesPassed', []), sort_keys=True)}`",
+        f"- Failed: `{json.dumps(promotion.get('gatesFailed', []), sort_keys=True)}`",
+        f"- Blocked: `{json.dumps(promotion.get('gatesBlocked', []), sort_keys=True)}`",
+        "",
+        "## Shadow Evaluation",
+        f"- Status: **{evaluation.get('status', 'not evaluated')}**",
+        f"- Deterministic metrics: `{json.dumps(evaluation.get('baseline', {}).get('metrics', {}), sort_keys=True)}`",
+        f"- Shadow metrics: `{json.dumps(evaluation.get('model', {}).get('metrics', {}), sort_keys=True)}`",
+        f"- Disagreement rate: {evaluation.get('disagreementRate')}",
+        f"- Disagreement telemetry: `{json.dumps(disagreement_summary, sort_keys=True)}`",
+        f"- Observed outcomes: `{json.dumps(outcome_summary, sort_keys=True)}`",
+        f"- Delegate-probability calibration: `{json.dumps(evaluation.get('delegateProbabilityCalibration', evaluation.get('confidenceCalibration', {})), sort_keys=True)}`",
+        f"- Class-confidence calibration: `{json.dumps(evaluation.get('classConfidenceCalibration', {}), sort_keys=True)}`",
+        f"- Category metrics: `{json.dumps(category_summary, sort_keys=True)}`",
         "",
         "## Remaining Deficits",
     ]
@@ -359,6 +455,26 @@ def _validate_registered_dataset(
         raise ValueError("dataset does not match its immutable registered manifest")
 
 
+def _installed_training_evidence(
+    root: pathlib.Path,
+    store: IntelligenceStore,
+    model: DirectDelegateModel,
+) -> list[dict[str, Any]]:
+    """Load verified provenance; absence must block installed-model scoring."""
+    try:
+        version = model.payload["dataset_version"]
+        if not isinstance(version, str) or pathlib.Path(version).name != version:
+            return []
+        path = root / "datasets" / f"{version}.jsonl"
+        rows = load_dataset(path)
+        if validate_dataset_identity(path, rows) != version:
+            return []
+        _validate_registered_dataset(store, version, rows)
+        return rows
+    except (AttributeError, OSError, KeyError, TypeError, ValueError):
+        return []
+
+
 def _read_review_file(path: pathlib.Path) -> dict[str, Any]:
     if path.is_symlink() or not path.is_file():
         raise ValueError("review input must be a regular file")
@@ -528,10 +644,12 @@ def intelligence_command(
     state_root: pathlib.Path,
     task_store_path: pathlib.Path,
 ) -> int:
+    """Execute an intelligence CLI action against the private state store."""
     root = state_root / "private" / "intelligence"
     store = IntelligenceStore(root / "intelligence.sqlite3")
     builder = DatasetBuilder(store)
     pretty = bool(args.pretty)
+    policy = _thresholds(args)
     if args.action == "status":
         _print({"schemaVersion": 1, **store.status()}, pretty)
         return 0
@@ -835,7 +953,7 @@ def intelligence_command(
         rows = load_dataset(dataset_path)
         dataset_version = validate_dataset_identity(dataset_path, rows)
         _validate_registered_dataset(store, dataset_version, rows)
-        quality = dataset_quality(rows)
+        quality = dataset_quality(rows, thresholds=policy)
         review_contract = blind_review_payload([])
         validate_blind_review_payload(review_contract)
         blind_audit = store.blind_review_audit()
@@ -889,7 +1007,12 @@ def intelligence_command(
             if installed_dataset.is_file():
                 installed_training_rows = load_dataset(installed_dataset)
         installed_evaluation = (
-            benchmark_direct_delegate(installed_model, rows, include_ablation=False)
+            benchmark_direct_delegate(
+                installed_model,
+                rows,
+                include_ablation=False,
+                thresholds=policy,
+            )
             if installed_model else {
                 "status": "unavailable",
                 "reason": "no active shadow model is registered",
@@ -913,6 +1036,7 @@ def intelligence_command(
                 rows,
                 installed_model=installed_model,
                 installed_training_rows=installed_training_rows,
+                thresholds=policy,
             )
             store.register_model(
                 model_version=model_version,
@@ -1023,7 +1147,8 @@ def intelligence_command(
         rows = load_dataset(dataset_path)
         dataset_version = validate_dataset_identity(dataset_path, rows)
         _validate_registered_dataset(store, dataset_version, rows)
-        quality = dataset_quality(rows)
+        quality = dataset_quality(rows, thresholds=policy)
+        live_maturity = _live_maturity(rows, quality, policy)
         active = store.active_shadow_model()
         installed_model = None
         installed_training_rows: list[dict[str, Any]] = []
@@ -1031,16 +1156,14 @@ def intelligence_command(
             installed_model = DirectDelegateModel.load(
                 pathlib.Path(str(active["artifact_path"]))
             )
-            installed_dataset = root / "datasets" / (
-                f"{installed_model.payload['dataset_version']}.jsonl"
-            )
-            if installed_dataset.is_file():
-                installed_training_rows = load_dataset(installed_dataset)
+            installed_training_rows = _installed_training_evidence(root, store, installed_model)
         installed_evaluation = (
             benchmark_direct_delegate(
                 installed_model,
                 rows,
                 include_ablation=False,
+                model_training_rows=installed_training_rows,
+                thresholds=policy,
             )
             if installed_model else {
                 "status": "unavailable",
@@ -1065,6 +1188,7 @@ def intelligence_command(
                 rows,
                 installed_model=installed_model,
                 installed_training_rows=installed_training_rows,
+                thresholds=policy,
             )
             store.register_model(
                 model_version=model_version,
@@ -1077,6 +1201,16 @@ def intelligence_command(
         active_after = store.status()["activeShadowModel"]
         if active_after != active_before:
             raise RuntimeError("Phase 1.9 must not change the active shadow model")
+        promotion = promotion_gate_summary(
+            maturity=live_maturity,
+            evaluation=(
+                installed_evaluation
+                if isinstance(installed_evaluation, Mapping)
+                and installed_evaluation.get("status") == "evaluated"
+                else None
+            ),
+            thresholds=policy,
+        )
         phase_status = (
             "COMPLETE — DATA READY"
             if quality["status"] == "READY"
@@ -1095,7 +1229,10 @@ def intelligence_command(
             "quarantine": quarantine_adjudication(rows),
             "datasetVersion": dataset_version,
             "dataset": manifest,
+            "dataMaturity": live_maturity,
             "installedShadowEvaluation": installed_evaluation,
+            "promotionGates": promotion,
+            "promotionReady": bool(promotion.get("promotionReady")),
             "candidateModelVersion": (
                 candidate.payload["model_version"] if candidate else None
             ),
@@ -1133,7 +1270,7 @@ def intelligence_command(
         rows = load_dataset(dataset_path)
         dataset_version = validate_dataset_identity(dataset_path, rows)
         _validate_registered_dataset(store, dataset_version, rows)
-        quality = dataset_quality(rows)
+        quality = dataset_quality(rows, thresholds=policy)
         if quality["status"] != "READY":
             payload = {
                 "schemaVersion": 1,
@@ -1173,7 +1310,7 @@ def intelligence_command(
         model_version = str(model.payload["model_version"])
         artifact_path = root / "models" / f"{model_version}.json"
         model.save(artifact_path)
-        benchmark = benchmark_direct_delegate(model, rows)
+        benchmark = benchmark_direct_delegate(model, rows, thresholds=policy)
         store.register_model(
             model_version=model_version,
             algorithm=ALGORITHM,
@@ -1232,7 +1369,7 @@ def intelligence_command(
         rows = load_dataset(dataset_path)
         dataset_version = validate_dataset_identity(dataset_path, rows)
         _validate_registered_dataset(store, dataset_version, rows)
-        quality = dataset_quality(rows)
+        quality = dataset_quality(rows, thresholds=policy)
         if quality["status"] != "READY":
             _print({
                 "schemaVersion": 1,
@@ -1260,7 +1397,7 @@ def intelligence_command(
         model_version = str(model.payload["model_version"])
         artifact_path = root / "models" / f"{model_version}.json"
         model.save(artifact_path)
-        report = benchmark_direct_delegate(model, rows)
+        report = benchmark_direct_delegate(model, rows, thresholds=policy)
         store.register_model(
             model_version=model_version,
             algorithm=ALGORITHM,
@@ -1320,7 +1457,83 @@ def intelligence_command(
         _print({
             "schemaVersion": 1,
             "datasetVersion": version,
-            "quality": dataset_quality(rows),
+            "quality": dataset_quality(rows, thresholds=policy),
+        }, pretty)
+        return 0
+    if args.action == "readiness":
+        dataset_path = (
+            pathlib.Path(args.dataset).expanduser().resolve()
+            if args.dataset else _latest(root / "datasets", "dd-dataset-*.jsonl")
+        )
+        if dataset_path is None or not dataset_path.is_file():
+            raise ValueError("no extracted intelligence dataset is available")
+        rows = load_dataset(dataset_path)
+        version = validate_dataset_identity(dataset_path, rows)
+        _validate_registered_dataset(store, version, rows)
+        quality = dataset_quality(rows, thresholds=policy)
+        live_maturity = _live_maturity(rows, quality, policy)
+        active = store.active_shadow_model()
+        evaluation = None
+        if active:
+            try:
+                model = DirectDelegateModel.load(pathlib.Path(str(active["artifact_path"])))
+            except (AttributeError, OSError, KeyError, TypeError, ValueError):
+                evaluation = {
+                    "status": "unavailable",
+                    "reason": "active shadow model artifact could not be loaded",
+                }
+            else:
+                # Evaluate only on evidence disjoint from the installed artifact,
+                # not merely on rows held out by the newest dataset extraction.
+                evaluation = benchmark_direct_delegate(
+                    model,
+                    rows,
+                    include_ablation=False,
+                    model_training_rows=_installed_training_evidence(root, store, model),
+                    thresholds=policy,
+                )
+        gates = promotion_gate_summary(
+            maturity=live_maturity,
+            evaluation=evaluation,
+            thresholds=policy,
+        )
+        compact_evaluation = None
+        if evaluation is not None:
+            compact_evaluation = {
+                "status": evaluation.get("status"),
+                "reason": evaluation.get("reason"),
+                "holdoutEvidence": evaluation.get("holdoutEvidence"),
+                "modelVersion": evaluation.get("model", {}).get("version"),
+                "baseline": evaluation.get("baseline"),
+                "model": evaluation.get("model"),
+                "categoryMetrics": evaluation.get("performanceByTaskCategory", {}),
+                "disagreementRate": evaluation.get("disagreementRate"),
+                "disagreementTelemetry": evaluation.get("disagreementTelemetry"),
+                "delegateProbabilityCalibration": evaluation.get(
+                    "delegateProbabilityCalibration"
+                ),
+                "classConfidenceCalibration": evaluation.get(
+                    "classConfidenceCalibration"
+                ),
+                "observedOutcomeEvidence": evaluation.get("observedOutcomeEvidence"),
+            }
+        _print({
+            "schemaVersion": 1,
+            "status": gates["status"],
+            "productionStatus": "deterministic_authoritative_ml_shadow_only",
+            "currentShadowModel": active.get("model_version") if active else None,
+            "datasetVersion": version,
+            "datasetSize": {
+                "total": live_maturity.get("totalExamples", len(rows)),
+                "eligible": live_maturity.get("eligibleExamples", 0),
+                "eligibleIndependentGroups": live_maturity.get(
+                    "eligibleIndependentGroups", 0
+                ),
+            },
+            "dataMaturity": live_maturity,
+            "evaluation": compact_evaluation,
+            "promotionGates": gates,
+            "promotionReady": gates["promotionReady"],
         }, pretty)
         return 0
     if args.action in {"eval", "benchmark", "report"}:
@@ -1346,7 +1559,7 @@ def intelligence_command(
                 "evaluation dataset must match the model training dataset; "
                 "external-test evaluation requires a separate disjointness-verified workflow"
             )
-        report = benchmark_direct_delegate(model, rows)
+        report = benchmark_direct_delegate(model, rows, thresholds=policy)
         payload = {
             "schemaVersion": 1,
             "datasetVersion": evaluation_dataset_version,

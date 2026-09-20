@@ -44,6 +44,7 @@ quattro-agent intelligence review-audit --pretty
 quattro-agent intelligence quality --pretty
 quattro-agent intelligence phase-1-8 --output phase-1-8-report.json
 quattro-agent intelligence phase-1-9 --output phase-1-9-report.json
+quattro-agent intelligence readiness --pretty
 quattro-agent intelligence blind-review-queue --reviewer REVIEWER_ID --limit 50 --output blind-review.json
 quattro-agent intelligence blind-review-batch --input blind-review.json
 quattro-agent intelligence blind-review-import --input blind-review.json --reviewer REVIEWER_ID
@@ -73,6 +74,34 @@ report, audits quarantine dispositions, and evaluates the installed shadow
 artifact on independence-proven held-out evidence. Candidate training is
 blocked unless every data-readiness gate passes. Any candidate remains offline;
 the command verifies that the active shadow model did not change.
+
+Phase 1.9 reports include a deterministic data-maturity snapshot and explicit
+promotion gates. `quattro-agent intelligence readiness` emits a compact
+machine-readable diagnostic with the current shadow artifact, total and
+eligible evidence, task-category/complexity/route coverage, label and outcome
+completeness, duplicate concentration, freshness, evaluation slices,
+calibration, disagreement telemetry, and every gate's `PASS`, `FAIL`, or
+`BLOCKED` status. Use `--thresholds PATH` with offline diagnostic/training
+commands to load a small private JSON policy; defaults are defined in
+`intelligence.readiness.PromotionThresholds` and are never consulted by
+request-time routing. Policies accept either a flat object with optional
+`schemaVersion: 1` or `{ "schemaVersion": 1, "thresholds": { ... } }`;
+unknown threshold names and invalid values are rejected.
+
+Installed-shadow promotion metrics exclude exact-request, connected-group,
+lexical, and semantic overlap with the artifact's verified original dataset.
+Both `phase-1-9` and `readiness` block scoring if that evidence cannot be loaded
+or no disjoint held-out examples remain. A missing/corrupt active artifact is
+reported as unavailable by `readiness`, with model gates blocked. Class-confidence
+reliability buckets cover the full 0–1 range; nullable raw tool requirements are
+reported separately from required-field coverage.
+
+Observed provider/model/cost/latency and execution outcomes are reported only
+as outcome evidence. A row where the deterministic route and shadow prediction
+disagree still describes the deterministic execution that actually happened;
+the report explicitly marks the shadow alternative as an unavailable
+counterfactual rather than inferring a win. A legacy full-profile artifact is
+kept readable for offline ablations but is rejected as a live shadow input.
 
 `phase-1-10` adds the versioned blind human-gold contract, append-only
 multi-reviewer votes and correction events, agreement metrics, stratified
@@ -189,6 +218,25 @@ this gate. The minimum decision-grade requirements are:
 These are minimums for deciding whether a classical selector merits a Phase 2
 experiment, not a claim of production safety. Smaller datasets remain useful
 for pipeline and error-analysis work but report `BLOCKED_BY_DATA`.
+
+### Data maturity and promotion policy
+
+The maturity evaluator measures raw examples separately from independent
+connected groups. It reports eligible examples, task categories, complexity,
+deterministic route, observed provider/model outcomes, successful/failed
+executions, complete-label coverage, leakage and invalid-field rejections,
+class balance, scalar decision-time feature coverage, exact/near-duplicate
+concentration, and timestamp freshness. Outcome evidence is never projected
+into model inputs and does not create a label or counterfactual result.
+
+Promotion gates are versioned and configurable. They cover evidence volume and
+balance, label/feature completeness, leakage and split integrity, reproducible
+holdout performance, calibration, paired disagreement evidence, deterministic
+baseline non-regression, and sufficiently represented task categories. A
+missing measurement is `BLOCKED`, a measured violation is `FAIL`, and only an
+all-`PASS` report can describe a future category-limited advisory candidate.
+This phase does not authorize learned production authority; deterministic
+routing remains authoritative even when offline gates pass.
 
 Passing the data gate is necessary but not sufficient. Phase 2 additionally
 requires at least 30 independent baseline/model disagreements, an exact paired

@@ -38,8 +38,11 @@ from quattro_agent.intelligence.dataset import (
 )
 from quattro_agent.intelligence.evaluation import (
     benchmark_direct_delegate,
+    calibration_metrics,
     chronological_evaluation,
     classification_metrics,
+    disagreement_telemetry,
+    observed_outcome_evidence,
 )
 from quattro_agent.intelligence.features import (
     extract_decision_features,
@@ -61,6 +64,8 @@ from quattro_agent.intelligence.review import (
 )
 from quattro_agent.intelligence.store import IntelligenceStore
 from quattro_agent.intelligence.telemetry import record_routing_telemetry, sanitize_request
+from quattro_agent.intelligence.maturity import data_maturity
+from quattro_agent.intelligence.readiness import PromotionThresholds, promotion_gate_summary
 from quattro_agent.policy import policy_profile
 from quattro_agent.store import TaskStore
 
@@ -84,6 +89,37 @@ class IntelligenceStoreTests(unittest.TestCase):
         self.assertNotIn("secret-value", safe)
         self.assertNotIn("alice:password", safe)
         self.assertNotIn(synthetic_key, safe)
+
+    def test_runtime_telemetry_lists_are_bounded_at_storage_boundary(self) -> None:
+        """Storage caps oversized runtime telemetry lists and values."""
+        with tempfile.TemporaryDirectory() as temporary:
+            database = pathlib.Path(temporary) / "intelligence.sqlite3"
+            record_id = record_routing_telemetry(
+                database,
+                request="Explain WAL mode",
+                production_decision="DIRECT",
+                routing_reason="test",
+                production_confidence=0.9,
+                selected_worker=None,
+                selected_model="model",
+                selected_provider="provider",
+                selected_account="account",
+                project=None,
+                repository_present=False,
+                run_shadow=False,
+                alternatives=["x" * 2_000 for _ in range(500)],
+            )
+            self.assertIsNotNone(record_id)
+            store = IntelligenceStore(database)
+            row = store.record(str(record_id))
+            self.assertLessEqual(len(row["alternatives"]), 100)
+            self.assertLessEqual(max(len(str(item)) for item in row["alternatives"]), 512)
+            store.update_execution(
+                str(record_id),
+                {"tools": ["tool" * 500 for _ in range(500)]},
+            )
+            updated = store.record(str(record_id))
+            self.assertLessEqual(len(updated["tools"]), 100)
 
     def test_label_is_verified_and_marks_router_correction(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -752,6 +788,7 @@ class ClassicalModelTests(unittest.TestCase):
         self.assertEqual(report["invalidTimestampCount"], 1)
 
     def test_cli_training_gate_blocks_small_dataset_and_shadow_activation(self) -> None:
+        """Training rejects immature data without activating a shadow model."""
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             state = root / "state"
@@ -805,6 +842,28 @@ class ClassicalModelTests(unittest.TestCase):
             quality_code, quality = run("quality", dataset=dataset["datasetPath"])
             self.assertEqual(quality_code, 0)
             self.assertEqual(quality["quality"]["status"], "BLOCKED_BY_DATA")
+            readiness_code, readiness = run(
+                "readiness",
+                dataset=dataset["datasetPath"],
+            )
+            self.assertEqual(readiness_code, 0)
+            self.assertEqual(readiness["status"], "BLOCKED BY DATA")
+            self.assertFalse(readiness["promotionReady"])
+            threshold_path = root / "thresholds.json"
+            threshold_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "thresholds": {
+                    "minimumIndependentUsableGroups": 1,
+                    "minimumIndependentUsableGroupsPerClass": 1,
+                },
+            }), encoding="utf-8")
+            thresholded_code, thresholded = run(
+                "readiness",
+                dataset=dataset["datasetPath"],
+                thresholds=str(threshold_path),
+            )
+            self.assertEqual(thresholded_code, 0)
+            self.assertIn("promotionGates", thresholded)
 
 
 class Phase18IntelligenceTests(unittest.TestCase):
@@ -1202,6 +1261,423 @@ class Phase19IntelligenceTests(unittest.TestCase):
         self.assertEqual(set(result["perClass"]), {"DIRECT", "DELEGATE"})
         self.assertEqual(result["perClass"]["DIRECT"]["falseNegativeRate"], 0.5)
         self.assertEqual(result["perClass"]["DELEGATE"]["falsePositiveRate"], 0.5)
+
+    def test_legacy_exposed_review_is_not_counted_as_independent_real_evidence(self) -> None:
+        """Legacy non-blind reviews remain ineligible as independent evidence."""
+        quality = dataset_quality([{
+            "record_id": "legacy-real",
+            "request_text": "Inspect the repository",
+            "label": "DELEGATE",
+            "label_source": "human_gold",
+            "label_independent": False,
+            "group_fingerprint": "legacy-group",
+            "request_fingerprint": "legacy-request",
+            "split": "test",
+            "category": "coding",
+            "task_category": "repository_inspection",
+            "complexity": "medium",
+            "created_at": "2026-09-01T00:00:00+00:00",
+        }])
+        self.assertEqual(quality["reviewedRealLabelCount"], 1)
+        self.assertEqual(quality["reviewedRealIndependentGroupCount"], 0)
+
+    def test_data_maturity_reports_coverage_routes_outcomes_duplicates_and_freshness(self) -> None:
+        """Maturity reports cover evidence, outcomes, duplicates, and recency."""
+        rows = [
+            {
+                "record_id": "maturity-direct",
+                "request_text": "Explain WAL mode without tools",
+                "label": "DIRECT",
+                "label_independent": True,
+                "group_fingerprint": "group-direct",
+                "production_decision": "DIRECT",
+                "task_category": "explanation",
+                "complexity": "low",
+                "category": "reasoning",
+                "created_at": "2026-09-01T00:00:00+00:00",
+                "outcome_success": True,
+                "selected_provider": "omniroute",
+                "selected_model": "model-a",
+            },
+            {
+                "record_id": "maturity-delegate",
+                "request_text": "Inspect the repository and run tests",
+                "label": "DELEGATE",
+                "label_independent": True,
+                "group_fingerprint": "group-delegate",
+                "production_decision": "DELEGATE",
+                "task_category": "repository_verification",
+                "complexity": "medium",
+                "category": "coding",
+                "created_at": "2026-09-02T00:00:00+00:00",
+                "outcome_success": False,
+                "selected_provider": "omniroute",
+                "selected_model": "model-b",
+            },
+            {
+                "record_id": "maturity-unlabeled",
+                "request_text": "Draft a short note",
+                "label": None,
+                "label_independent": False,
+                "group_fingerprint": "group-unlabeled",
+                "production_decision": "DIRECT",
+                "task_category": "drafting",
+                "complexity": "low",
+                "category": "general",
+                "created_at": "2026-09-03T00:00:00+00:00",
+                "outcome_success": None,
+            },
+        ]
+        report = data_maturity(
+            rows,
+            now=dt.datetime(2026, 9, 4, tzinfo=dt.timezone.utc),
+            duplicate_stats={"potentialNearDuplicatePairs": 1},
+        )
+        self.assertEqual(report["totalExamples"], 3)
+        self.assertEqual(report["eligibleExamples"], 2)
+        self.assertEqual(report["deterministicRouteBalance"], {"DELEGATE": 1, "DIRECT": 2})
+        self.assertEqual(report["outcomes"]["successes"], 1)
+        self.assertEqual(report["outcomes"]["failures"], 1)
+        self.assertIn("omniroute/model-a", report["outcomes"]["byCandidateProviderModel"])
+        self.assertEqual(report["freshness"]["asOf"], "2026-09-04T00:00:00+00:00")
+        self.assertEqual(report["duplicates"]["potentialNearDuplicatePairs"], 1)
+        self.assertEqual(report["status"], "insufficient_data")
+
+    def test_promotion_thresholds_are_configurable_and_qualifying_fixture_is_ready(self) -> None:
+        """Custom thresholds can admit a fixture that satisfies every gate."""
+        policy = PromotionThresholds.from_mapping({
+            "minimumIndependentUsableGroups": 2,
+            "minimumIndependentUsableGroupsPerClass": 1,
+            "minimumCategories": 1,
+            "minimumUsableLabelsPerCategory": 1,
+            "minimumDisagreements": 2,
+            "minimumCategoryEvaluationSamples": 2,
+            "minimumCategoryClassSamples": 1,
+        })
+        self.assertEqual(policy.minimum_categories, 1)
+        with self.assertRaisesRegex(ValueError, "unknown intelligence threshold"):
+            PromotionThresholds.from_mapping({"minimiumCategories": 1})
+        maturity = {
+            "candidateGates": {
+                name: True for name in (
+                    "independentUsableGroups", "directGroups", "delegateGroups",
+                    "validationPerClass", "testPerClass", "categoryCoverage",
+                    "blindHumanGoldBothClasses", "credibleChronology",
+                    "zeroDecisionOutcomeLeakage", "zeroCrossSplitContamination",
+                    "featureSchemaFrozen",
+                )
+            },
+            "labelCompleteness": {"rate": 1.0},
+            "classImbalance": {"ratio": 1.0},
+            "featureCoverage": {"missingRate": 0.0},
+            "rejections": {"leakage": 0},
+            "eligibleExamples": 2,
+        }
+        evaluation = {
+            "status": "evaluated",
+            "baseline": {"metrics": {
+                "balancedAccuracy": 0.70,
+                "f1": 0.70,
+                "delegateFalseNegativeRate": 0.10,
+            }},
+            "model": {"metrics": {
+                "balancedAccuracy": 0.80,
+                "f1": 0.75,
+                "delegateFalseNegativeRate": 0.05,
+            }},
+            "confidenceCalibration": {
+                "expectedCalibrationError": 0.02,
+                "brierScore": 0.04,
+            },
+            "performanceByTaskCategory": {
+                f"category-{index}": {
+                    "sampleCount": 2,
+                    "classBalance": {"DIRECT": 1, "DELEGATE": 1},
+                    "modelMetrics": {"balancedAccuracy": 0.80},
+                    "baselineMetrics": {"balancedAccuracy": 0.70},
+                }
+                for index in range(1)
+            },
+            "pairedComparison": {
+                "disagreements": 2,
+                "modelWins": 2,
+                "baselineWins": 0,
+                "exactMcNemarPValue": 0.01,
+            },
+            "benchmarkReproducibility": {"passed": True},
+        }
+        ready = promotion_gate_summary(
+            maturity=maturity,
+            evaluation=evaluation,
+            thresholds=policy,
+        )
+        self.assertTrue(ready["promotionReady"])
+        self.assertEqual(ready["status"], "READY")
+        self.assertEqual(ready["gatesFailed"], [])
+
+    def test_calibration_and_disagreement_reports_do_not_invent_counterfactuals(self) -> None:
+        """Evaluation distinguishes observed outcomes from counterfactuals."""
+        examples = [
+            {"delegateProbability": 0.9, "confidence": 0.9, "correct": True, "label": "DELEGATE"},
+            {"delegateProbability": 0.1, "confidence": 0.9, "correct": True, "label": "DIRECT"},
+        ]
+        calibration = calibration_metrics(examples)
+        self.assertEqual(calibration["delegateProbability"]["sampleCount"], 2)
+        self.assertEqual(calibration["confidence"]["sampleCount"], 2)
+        rows = [{
+            "record_id": "disagreement",
+            "production_decision": "DIRECT",
+            "ml_prediction": "DELEGATE",
+            "ml_confidence": 0.8,
+            "task_category": "repository_inspection",
+            "complexity": "medium",
+            "repository_required": True,
+            "retrieval_required": True,
+            "tool_required": True,
+            "outcome_success": True,
+            "label": "DELEGATE",
+            "label_independent": True,
+        }]
+        disagreements = disagreement_telemetry(rows)
+        outcomes = observed_outcome_evidence(rows)
+        self.assertEqual(disagreements["count"], 1)
+        self.assertEqual(disagreements["representative"][0]["counterfactual"], "unavailable")
+        self.assertEqual(outcomes["counterfactualStatus"], "unavailable")
+        self.assertEqual(outcomes["disagreementObservedOutcome"]["successes"], 1)
+
+
+class Phase19ReviewRegressionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.state = pathlib.Path(self.temporary.name)
+        self.root = self.state / "private" / "intelligence"
+        self.store, self.rows, self.manifest = ClassicalModelTests()._dataset(self.root)
+
+    def run_command(self, action: str, **overrides: typing.Any) -> dict:
+        args = {
+            "action": action, "dataset": self.manifest["datasetPath"],
+            "pretty": False, "thresholds": None, "output": None,
+            **overrides,
+        }
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code = intelligence_command(
+                argparse.Namespace(**args), state_root=self.state,
+                task_store_path=self.state / "missing-task-store.sqlite3",
+            )
+        self.assertEqual(code, 0)
+        return json.loads(stream.getvalue())
+
+    def install_model(self) -> DirectDelegateModel:
+        model = train_direct_delegate_model(
+            self.rows, dataset_version=self.manifest["datasetVersion"]
+        )
+        path = self.root / "model.json"
+        model.save(path)
+        self.store.register_model(
+            model_version=model.payload["model_version"],
+            algorithm=model.payload["algorithm"],
+            dataset_version=self.manifest["datasetVersion"],
+            artifact_path=path, metrics={},
+        )
+        self.store.activate_shadow_model(model.payload["model_version"])
+        return model
+
+    def test_readiness_artifact_load_errors_remain_blocked_and_explain_reason(self) -> None:
+        self.install_model()
+        for error in (AttributeError, OSError, KeyError, TypeError, ValueError):
+            with self.subTest(error=error.__name__), mock.patch(
+                "quattro_agent.intelligence.commands.DirectDelegateModel.load",
+                side_effect=error("untrusted artifact detail"),
+            ):
+                result = self.run_command("readiness")
+                self.assertFalse(result["promotionReady"])
+                self.assertEqual(result["evaluation"]["status"], "unavailable")
+                self.assertEqual(result["evaluation"]["reason"],
+                                 "active shadow model artifact could not be loaded")
+                self.assertNotIn("untrusted artifact detail", json.dumps(result))
+                self.assertIn("model.calibration", result["promotionGates"]["gatesBlocked"])
+        # Also exercise an actual missing artifact, not just mocked exceptions.
+        (self.root / "model.json").unlink()
+        self.assertEqual(self.run_command("readiness")["evaluation"]["status"], "unavailable")
+
+    def test_installed_training_evidence_is_wired_in_both_command_paths(self) -> None:
+        self.install_model()
+        from quattro_agent.intelligence import commands
+        original = commands.benchmark_direct_delegate
+        for action in ("readiness", "phase-1-9"):
+            with self.subTest(action=action), mock.patch.object(
+                commands, "benchmark_direct_delegate", wraps=original
+            ) as benchmark:
+                output = self.state / f"{action}.json"
+                result = self.run_command(action, output=str(output))
+                self.assertEqual(benchmark.call_args.kwargs["model_training_rows"], self.rows)
+                if action == "readiness":
+                    self.assertFalse(result["promotionReady"])
+                    self.assertEqual(result["evaluation"]["status"], "BLOCKED_BY_DATA")
+                    self.assertIn("no test rows are disjoint", result["evaluation"]["reason"])
+
+    def test_missing_or_invalid_installed_dataset_blocks_readiness(self) -> None:
+        model = self.install_model()
+        # A distinct current dataset exists, but it cannot substitute for training evidence.
+        import_controlled_probes(self.store)
+        current = DatasetBuilder(self.store).extract(self.root / "datasets")
+        path = pathlib.Path(self.manifest["datasetPath"])
+        for content in (None, "{}\n"):
+            with self.subTest(content=content):
+                if content is None:
+                    path.unlink()
+                else:
+                    path.write_text(content, encoding="utf-8")
+                result = self.run_command("readiness", dataset=current["datasetPath"])
+                self.assertEqual(result["currentShadowModel"], model.payload["model_version"])
+                self.assertFalse(result["promotionReady"])
+                self.assertEqual(result["evaluation"]["status"], "BLOCKED_BY_DATA")
+                self.assertIn("training evidence is unavailable", result["evaluation"]["reason"])
+
+    def test_holdout_guard_excludes_all_overlap_types_before_primary_metrics(self) -> None:
+        from quattro_agent.intelligence.evaluation import _installed_shadow_holdout
+        model = self.install_model()
+        training = [{
+            "record_id": "training", "request_fingerprint": "seen-request",
+            "group_fingerprint": "seen-group", "request_text": "fix this endpoint",
+            "label": "DELEGATE",
+        }]
+        cases = [
+            ("exact", "Discuss marine ecosystems", "seen-request", "other-group"),
+            ("connected", "Describe lunar craters", "other-request", "seen-group"),
+            ("lexical", "find readme path right now", "lexical", "lexical"),
+            ("semantic", "repair the API route", "semantic", "semantic"),
+        ]
+        for kind, request, fingerprint, group in cases:
+            with self.subTest(kind=kind):
+                evidence = [dict(training[0])]
+                if kind == "lexical":
+                    evidence[0]["request_text"] = "find readme path now"
+                row = {**training[0], "record_id": kind, "request_text": request,
+                       "request_fingerprint": fingerprint, "group_fingerprint": group,
+                       "split": "test", "label_independent": True}
+                disjoint, guard = _installed_shadow_holdout(model, [row], evidence)
+                self.assertEqual(disjoint, [])
+                self.assertEqual(guard["status"], "BLOCKED_BY_DATA")
+                with mock.patch.object(model, "predict", side_effect=AssertionError("must not score")):
+                    report = benchmark_direct_delegate(
+                        model, [row], model_training_rows=evidence, include_ablation=False
+                    )
+                self.assertEqual(report["status"], "BLOCKED_BY_DATA")
+                self.assertNotIn("model", report)
+                self.assertFalse(promotion_gate_summary(
+                    maturity={}, evaluation=report
+                )["promotionReady"])
+        clean = {**self.rows[0], "record_id": "new", "split": "test",
+                 "request_text": "Describe lunar craters", "request_fingerprint": "new",
+                 "group_fingerprint": "new", "outcome_success": True}
+        report = benchmark_direct_delegate(
+            model, [clean], model_training_rows=training, include_ablation=False
+        )
+        self.assertEqual(report["status"], "evaluated")
+        self.assertEqual(report["sampleCount"], 1)
+        self.assertEqual(report["observedOutcomeEvidence"]["observedOutcomeCount"], 1)
+        self.assertEqual(report["holdoutEvidence"]["disjointTestGroupCount"], 1)
+
+    def test_confidence_bins_cover_full_probability_range_without_double_counting(self) -> None:
+        examples = [
+            {"confidence": index / 10, "correct": False,
+             "delegateProbability": index / 10, "label": "DIRECT"}
+            for index in range(11)
+        ]
+        result = calibration_metrics(examples)["confidence"]
+        self.assertEqual(len(result["bins"]), 10)
+        self.assertEqual(sum(bucket["count"] for bucket in result["bins"]), 11)
+        self.assertEqual([bucket["count"] for bucket in result["bins"]], [1] * 9 + [2])
+        self.assertEqual([bucket["range"] for bucket in result["bins"]], [
+            f"{index / 10:.1f}-{(index + 1) / 10:.1f}" for index in range(10)
+        ])
+        self.assertEqual(result["expectedCalibrationError"], 0.5)
+        self.assertEqual(result["brierScore"], 0.35)
+
+    def test_class_balance_includes_absent_class_and_guards_empty_totals(self) -> None:
+        for label in ("DIRECT", "DELEGATE"):
+            rows = [{**self.rows[0], "label": label}]
+            report = data_maturity(rows)
+            self.assertEqual(report["classImbalance"]["counts"][label], 1)
+            self.assertEqual(sum(report["classImbalance"]["counts"].values()), 1)
+            self.assertEqual(len(report["classImbalance"]["counts"]), 2)
+            self.assertIsNone(report["classImbalance"]["ratio"])
+            self.assertEqual(report["classImbalance"]["minorityRate"], 0)
+            self.assertFalse(promotion_gate_summary(maturity=report, evaluation=None)["promotionReady"])
+        empty = data_maturity([])["classImbalance"]
+        self.assertEqual(empty["counts"], {"DIRECT": 0, "DELEGATE": 0})
+        self.assertIsNone(empty["ratio"])
+        self.assertIsNone(empty["minorityRate"])
+
+    def test_nullable_tool_requirement_does_not_reduce_required_feature_coverage(self) -> None:
+        from quattro_agent.intelligence.features import MODEL_INPUT_FIELDS, project_model_input
+        row = {**self.rows[0], **project_model_input(self.rows[0]), "tool_required": None}
+        report = data_maturity([row])
+        coverage = report["featureCoverage"]
+        self.assertEqual(coverage["missingRate"], 0)
+        self.assertEqual(coverage["missingValueCount"], 0)
+        self.assertEqual(coverage["requiredFieldCount"], len(MODEL_INPUT_FIELDS) - 1)
+        self.assertEqual(coverage["nullableCoveredValues"], {"tool_required": 0})
+        self.assertTrue(report["candidateGates"]["featureCoverage"])
+        row.pop("complexity")
+        coverage = data_maturity([row])["featureCoverage"]
+        self.assertEqual(coverage["missingValueCount"], 1)
+        self.assertEqual(coverage["missingRate"], round(1 / (len(MODEL_INPUT_FIELDS) - 1), 6))
+
+    def test_flat_versioned_thresholds_and_nested_validation(self) -> None:
+        from quattro_agent.intelligence.readiness import load_promotion_thresholds
+        path = self.state / "thresholds.json"
+        flat = {"schemaVersion": 1, "minimumCategories": 2}
+        nested = {"schemaVersion": 1, "thresholds": {"minimumCategories": 2}}
+        for payload in (flat, nested):
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertEqual(load_promotion_thresholds(path).minimum_categories, 2)
+            result = self.run_command("readiness", thresholds=str(path))
+            self.assertEqual(result["dataMaturity"]["thresholds"]["minimum_categories"], 2)
+        for payload in (
+            {"schemaVersion": 2}, {"schemaVersion": 1, "typo": 2},
+            {"schemaVersion": 1, "thresholds": []},
+            {"schemaVersion": 1, "thresholds": {"typo": 2}},
+        ):
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_promotion_thresholds(path)
+
+    def test_telemetry_iterables_are_consumed_lazily_and_bounded(self) -> None:
+        from collections.abc import Mapping
+        from quattro_agent.intelligence.store import _bounded_items, MAX_TELEMETRY_LIST_ITEMS
+
+        def oversized():
+            for index in range(MAX_TELEMETRY_LIST_ITEMS):
+                yield index
+            raise AssertionError("consumed beyond list limit")
+
+        class LazyMapping(Mapping):
+            def __iter__(self):
+                raise AssertionError("must iterate items directly")
+
+            def __len__(self):
+                raise AssertionError("must not materialize mapping")
+
+            def __getitem__(self, key):
+                raise AssertionError("must iterate items directly")
+
+            def items(self):
+                for index in range(32):
+                    yield str(index), "x" * 1000
+                raise AssertionError("consumed beyond mapping limit")
+
+        self.assertEqual(_bounded_items(oversized()), list(range(MAX_TELEMETRY_LIST_ITEMS)))
+        mapping = _bounded_items(LazyMapping())
+        self.assertEqual(len(mapping[0]), 32)
+        self.assertTrue(all(len(value) == 512 for value in mapping[0].values()))
+        self.assertEqual(_bounded_items(None), [])
+        for scalar in (True, 3, 0.5, "text", b"bytes"):
+            self.assertEqual(len(_bounded_items(scalar)), 1)
+        self.store.update_execution(self.rows[0]["record_id"], {"tools": oversized()})
 
 
 class Phase110IntelligenceTests(unittest.TestCase):

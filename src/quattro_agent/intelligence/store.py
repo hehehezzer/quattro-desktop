@@ -12,6 +12,7 @@ import sqlite3
 import uuid
 from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,9 @@ VERIFIED_LABEL_SOURCES = frozenset({
 HUMAN_LABEL_SOURCES = frozenset({"human_verified", "reviewed_outcome", "human_gold"})
 DECISIONS = frozenset({"DIRECT", "DELEGATE"})
 REVIEW_OUTCOMES = frozenset({"DIRECT", "DELEGATE", "EXCLUDE"})
+MAX_TELEMETRY_LIST_ITEMS = 100
+MAX_TELEMETRY_ITEM_CHARS = 512
+MAX_TELEMETRY_JSON_CHARS = 32_000
 
 
 def utc_now() -> str:
@@ -78,6 +82,39 @@ def _nonnegative_number(value: Any, field: str) -> float | None:
     if not math.isfinite(number) or number < 0.0:
         raise ValueError(f"{field} must be finite and nonnegative")
     return number
+
+
+def _bounded_text(value: Any, *, limit: int = MAX_TELEMETRY_ITEM_CHARS) -> str:
+    """Normalize text and cap its persisted length."""
+    return str(value)[:limit]
+
+
+def _bounded_items(value: Any) -> list[Any]:
+    """Bound list-shaped runtime evidence before it reaches SQLite."""
+    if value is None or isinstance(value, (str, bytes, Mapping)):
+        values = [] if value is None else [value]
+    else:
+        try:
+            values = iter(value)
+        except TypeError:
+            values = [value]
+    bounded: list[Any] = []
+    for item in islice(values, MAX_TELEMETRY_LIST_ITEMS):
+        if isinstance(item, Mapping):
+            bounded.append({
+                _bounded_text(key, limit=128): (
+                    _bounded_text(val) if not isinstance(val, (bool, int, float))
+                    else val
+                )
+                for key, val in islice(item.items(), 32)
+            })
+        elif isinstance(item, (bool, int, float)):
+            bounded.append(item)
+        else:
+            bounded.append(_bounded_text(item))
+    while bounded and len(_json(bounded)) > MAX_TELEMETRY_JSON_CHARS:
+        bounded.pop()
+    return bounded
 
 
 class IntelligenceStore:
@@ -496,6 +533,7 @@ class IntelligenceStore:
             )
 
     def record_routing(self, payload: Mapping[str, Any]) -> str:
+        """Persist a bounded routing decision and return its record ID."""
         source_task_id = payload.get("source_task_id")
         existing_id = None
         if source_task_id and not payload.get("record_id"):
@@ -549,15 +587,15 @@ class IntelligenceStore:
             "split_hint": payload.get("split_hint"),
             "context_tokens": max(0, int(payload.get("context_tokens", 0))),
             "production_decision": production,
-            "selected_worker": payload.get("selected_worker"),
-            "selected_model": payload.get("selected_model"),
-            "selected_provider": payload.get("selected_provider"),
-            "selected_account": payload.get("selected_account"),
-            "routing_reason": payload.get("routing_reason"),
+            "selected_worker": _bounded_text(payload.get("selected_worker") or "") or None,
+            "selected_model": _bounded_text(payload.get("selected_model") or "") or None,
+            "selected_provider": _bounded_text(payload.get("selected_provider") or "") or None,
+            "selected_account": _bounded_text(payload.get("selected_account") or "") or None,
+            "routing_reason": _bounded_text(payload.get("routing_reason") or "", limit=500),
             "production_confidence": _probability(
                 payload.get("production_confidence"), "production_confidence"
             ),
-            "alternatives_json": _json(list(payload.get("alternatives") or ())),
+            "alternatives_json": _json(_bounded_items(payload.get("alternatives"))),
             "ml_prediction": ml_prediction,
             "ml_confidence": _probability(payload.get("ml_confidence"), "ml_confidence"),
             "ml_model_version": payload.get("ml_model_version"),
@@ -568,7 +606,7 @@ class IntelligenceStore:
             "inference_latency_ms": _nonnegative_number(
                 payload.get("inference_latency_ms"), "inference_latency_ms"
             ),
-            "inference_error_code": payload.get("inference_error_code"),
+            "inference_error_code": _bounded_text(payload.get("inference_error_code") or "") or None,
             "created_at": str(payload.get("created_at") or now),
             "updated_at": now,
         }
@@ -587,6 +625,7 @@ class IntelligenceStore:
         return record_id
 
     def update_execution(self, record_id: str, payload: Mapping[str, Any]) -> None:
+        """Attach bounded execution telemetry to an existing routing record."""
         allowed = {
             "selected_worker", "selected_model", "selected_provider", "selected_account",
             "context_tokens", "inference_error_code", "execution_time_ms", "input_tokens",
@@ -609,13 +648,20 @@ class IntelligenceStore:
             if key in payload:
                 values[key] = None if payload[key] is None else int(bool(payload[key]))
         if "tools" in payload:
-            values["tools_json"] = _json(list(payload.get("tools") or ()))
+            values["tools_json"] = _json(_bounded_items(payload.get("tools")))
         if "alternatives" in payload:
-            values["alternatives_json"] = _json(list(payload.get("alternatives") or ()))
+            values["alternatives_json"] = _json(_bounded_items(payload.get("alternatives")))
         if "retrieved_chunk_ids" in payload:
             values["retrieved_chunk_ids_json"] = _json(
-                list(payload.get("retrieved_chunk_ids") or ())
+                _bounded_items(payload.get("retrieved_chunk_ids"))
             )
+        for key in (
+            "selected_worker", "selected_model", "selected_provider", "selected_account",
+            "failure_category", "validation_status", "test_status", "build_status",
+            "evaluator_result", "retry_outcome", "inference_error_code",
+        ):
+            if key in values and values[key] is not None:
+                values[key] = _bounded_text(values[key])
         if not values:
             return
         values["updated_at"] = utc_now()

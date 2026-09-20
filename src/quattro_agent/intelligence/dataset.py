@@ -21,6 +21,8 @@ from .features import (
     forbidden_payload_paths,
     project_model_input,
 )
+from .maturity import data_maturity
+from .readiness import DEFAULT_PROMOTION_THRESHOLDS, PromotionThresholds
 from .store import DATASET_SCHEMA_VERSION, FEATURE_SCHEMA_VERSION, IntelligenceStore
 from .telemetry import (
     record_routing_telemetry,
@@ -78,15 +80,10 @@ SUPPORTED_DATASET_SCHEMA_VERSIONS = frozenset({
     "direct-delegate-dataset-v9",
     DATASET_SCHEMA_VERSION,
 })
-READINESS_REQUIREMENTS = {
-    "minimumIndependentUsableGroups": 400,
-    "minimumIndependentUsableGroupsPerClass": 200,
-    "minimumValidationPerClass": 30,
-    "minimumTestPerClass": 30,
-    "minimumCategories": 4,
-    "minimumUsableLabelsPerCategory": 30,
-    "maximumDominantCategoryRate": 0.60,
-}
+# Kept as a public compatibility mapping for existing callers.  New code
+# should pass a PromotionThresholds instance to dataset_quality instead of
+# copying readiness constants into another module.
+READINESS_REQUIREMENTS = DEFAULT_PROMOTION_THRESHOLDS.dataset_requirements()
 
 _NEAR_DUPLICATE_TOKEN = re.compile(r"[a-z0-9_./-]+")
 NEAR_DUPLICATE_JACCARD_THRESHOLD = 0.80
@@ -375,7 +372,13 @@ def _chronological_blind_group_splits(
     }
 
 
-def dataset_quality(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def dataset_quality(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    thresholds: PromotionThresholds | None = None,
+) -> dict[str, Any]:
+    """Audit dataset eligibility, provenance, balance, and contamination."""
+    policy = thresholds or DEFAULT_PROMOTION_THRESHOLDS
     labeled = [row for row in rows if row.get("label") in {"DIRECT", "DELEGATE"}]
     real = [row for row in labeled if row.get("label_source") in REAL_LABEL_SOURCES]
     by_source: dict[str, list[Mapping[str, Any]]] = {
@@ -419,6 +422,8 @@ def dataset_quality(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     independent_real: list[Mapping[str, Any]] = []
     seen_groups: set[str] = set()
     for row in real:
+        if not bool(row.get("label_independent", False)):
+            continue
         group = str(row["group_fingerprint"])
         if group in seen_groups:
             continue
@@ -476,8 +481,35 @@ def dataset_quality(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         for left, right, _similarity in semantic_pairs
     )
     outcome_known = sum(row.get("outcome_success") is not None for row in independent_real)
-    reasons: list[str] = []
-    requirements = READINESS_REQUIREMENTS
+    duplicate_stats = {
+        "potentialNearDuplicatePairs": len(near_pairs),
+        "potentialNearDuplicateCrossSplitPairs": cross_split_near_pairs,
+        "semanticNearDuplicatePairs": len(semantic_pairs),
+        "semanticNearDuplicateCrossSplitPairs": cross_split_semantic_pairs,
+        "exactDuplicateCrossSplitFingerprints": cross_split_exact,
+    }
+    maturity_times = [
+        parsed for parsed in (
+            _parse_time(str(row.get("created_at") or "")) for row in rows
+        )
+        if parsed is not None
+    ]
+    # Dataset manifests are immutable.  Anchor the maturity snapshot to the
+    # newest observed record rather than wall-clock time so repeating an
+    # extraction produces byte-identical artifacts.  The standalone
+    # ``data_maturity`` API accepts an explicit current time for live freshness
+    # dashboards.
+    maturity_now = max(maturity_times) if maturity_times else dt.datetime(
+        1970, 1, 1, tzinfo=dt.timezone.utc
+    )
+    maturity = data_maturity(
+        rows,
+        thresholds=policy,
+        now=maturity_now,
+        duplicate_stats=duplicate_stats,
+    )
+    reasons: list[str] = list(maturity.get("blockingReasons") or ())
+    requirements = policy.dataset_requirements()
     if len(independent_usable) < requirements["minimumIndependentUsableGroups"]:
         reasons.append(
             f"need at least {requirements['minimumIndependentUsableGroups']} independent usable "
@@ -682,7 +714,23 @@ def dataset_quality(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             cross_split_exact or cross_split_near_pairs or cross_split_semantic_pairs
         ),
         "featureSchemaFrozen": True,
+        "labelCompleteness": bool(
+            maturity.get("candidateGates", {}).get("labelCompleteness")
+        ),
+        "classBalance": bool(maturity.get("candidateGates", {}).get("classBalance")),
+        "featureCoverage": bool(
+            maturity.get("candidateGates", {}).get("featureCoverage")
+        ),
+        "zeroLeakageRejections": bool(
+            maturity.get("candidateGates", {}).get("zeroLeakageRejections")
+        ),
     }
+    # Promotion reporting consumes the same historical gate names as the
+    # dataset-quality report.  Merge them into the maturity snapshot so the
+    # standalone readiness report does not mistake an omitted measurement for
+    # a hidden pass/fail state.
+    maturity["candidateGates"] = dict(maturity.get("candidateGates") or {}) | candidate_gates
+    reasons = list(dict.fromkeys(reasons))
     return {
         "status": "READY" if not reasons else "BLOCKED_BY_DATA",
         "requirements": dict(requirements),
@@ -806,6 +854,7 @@ def dataset_quality(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             "projectedInputFailures": model_input_failures[:20],
             "rawPostDecisionEvidenceExcludedBeforeModeling": True,
         },
+        "dataMaturity": maturity,
     }
 
 

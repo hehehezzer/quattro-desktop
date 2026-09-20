@@ -9,24 +9,29 @@ import random
 import hashlib
 import datetime as dt
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..delegation import classify_task_request
 from .classical import DirectDelegateModel, train_direct_delegate_model
-from .dataset import REAL_LABEL_SOURCES, dataset_quality
+from .dataset import (
+    REAL_LABEL_SOURCES,
+    _near_duplicate_pairs,
+    _semantic_duplicate_pairs,
+    dataset_quality,
+)
 from .features import decision_profile, feature_audit
+from .readiness import (
+    DEFAULT_PROMOTION_THRESHOLDS,
+    PromotionThresholds,
+    promotion_gate_summary,
+)
 
 
-PHASE2_MODEL_REQUIREMENTS = {
-    "minimumBalancedAccuracyImprovement": 0.03,
-    "minimumDisagreements": 30,
-    "maximumPairedPValue": 0.05,
-    "maximumDelegateFalseNegativeRate": 0.10,
-    "maximumExpectedCalibrationError": 0.10,
-    "maximumBrierScore": 0.20,
-}
+# Public compatibility mapping.  The validated policy object is the source of
+# truth for new evaluation code.
+PHASE2_MODEL_REQUIREMENTS = DEFAULT_PROMOTION_THRESHOLDS.evaluation_requirements()
 _DRIFT_TOKEN = re.compile(r"[a-z][a-z0-9_./-]{1,63}")
 _CALIBRATION_BOOTSTRAP_MAX_ITERATIONS = 200
 _CALIBRATION_BOOTSTRAP_MAX_DRAWS = 50_000
@@ -231,6 +236,63 @@ def _calibration(examples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _confidence_calibration(examples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Measure whether reported class confidence tracks correctness.
+
+    ``_calibration`` evaluates the DELEGATE probability, which is the proper
+    Brier target for the binary classifier.  This second view evaluates the
+    user-facing confidence value against the prediction's correctness.  The
+    two views are intentionally kept separate: a well-calibrated probability
+    can still be paired with a misleading confidence transform.
+    """
+    if not examples:
+        return {
+            "sampleCount": 0,
+            "brierScore": None,
+            "expectedCalibrationError": None,
+            "bins": [],
+        }
+    bins: list[dict[str, Any]] = []
+    weighted_gap = 0.0
+    for index in range(10):
+        lower = index / 10
+        upper = (index + 1) / 10
+        members = [
+            row for row in examples
+            if lower <= float(row["confidence"]) < upper
+            or (index == 9 and float(row["confidence"]) == 1.0)
+        ]
+        if not members:
+            continue
+        mean_confidence = statistics.fmean(float(row["confidence"]) for row in members)
+        accuracy = sum(bool(row.get("correct")) for row in members) / len(members)
+        weighted_gap += abs(mean_confidence - accuracy) * len(members)
+        bins.append({
+            "range": f"{lower:.1f}-{min(upper, 1.0):.1f}",
+            "count": len(members),
+            "meanConfidence": round(mean_confidence, 6),
+            "observedAccuracy": round(accuracy, 6),
+        })
+    brier = statistics.fmean(
+        (float(row["confidence"]) - (1.0 if row.get("correct") else 0.0)) ** 2
+        for row in examples
+    )
+    return {
+        "sampleCount": len(examples),
+        "brierScore": round(brier, 6),
+        "expectedCalibrationError": round(weighted_gap / len(examples), 6),
+        "bins": bins,
+    }
+
+
+def calibration_metrics(examples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Public deterministic calibration report for offline callers/tests."""
+    return {
+        "delegateProbability": _calibration(examples),
+        "confidence": _confidence_calibration(examples),
+    }
+
+
 def _confidence_distribution(
     examples: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -300,6 +362,137 @@ def _disagreement_review(examples: Sequence[Mapping[str, Any]]) -> dict[str, Any
     }
 
 
+def _observed_success(row: Mapping[str, Any]) -> bool | None:
+    """Read the runtime-store or extracted-dataset outcome field safely."""
+    value = row.get("outcome_success")
+    if not isinstance(value, bool):
+        value = row.get("success")
+    return value if isinstance(value, bool) else None
+
+
+def disagreement_telemetry(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Aggregate persisted shadow/router disagreements without raw prompts."""
+    disagreements = [
+        row for row in rows
+        if row.get("production_decision") in {"DIRECT", "DELEGATE"}
+        and row.get("ml_prediction") in {"DIRECT", "DELEGATE"}
+        and row.get("production_decision") != row.get("ml_prediction")
+    ]
+    by_category: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"count": 0, "knownOutcome": 0, "successes": 0, "failures": 0, "eligible": 0}
+    )
+    by_complexity: dict[str, int] = Counter()
+    representative: list[dict[str, Any]] = []
+    for row in disagreements:
+        category = str(row.get("task_category") or row.get("category") or "unknown")
+        bucket = by_category[category]
+        bucket["count"] += 1
+        outcome = _observed_success(row)
+        if outcome is not None:
+            bucket["knownOutcome"] += 1
+            bucket["successes"] += outcome
+            bucket["failures"] += not outcome
+        by_complexity[str(row.get("complexity") or "unknown")] += 1
+        eligible = bool(
+            row.get("label") in {"DIRECT", "DELEGATE"}
+            and row.get("label_independent", True)
+        )
+        bucket["eligible"] += eligible
+        if len(representative) < 50:
+            representative.append({
+                "recordId": str(row.get("record_id") or "unknown"),
+                "taskCategory": category,
+                "complexity": str(row.get("complexity") or "unknown"),
+                "productionDecision": row.get("production_decision"),
+                "shadowDecision": row.get("ml_prediction"),
+                "shadowConfidence": row.get("ml_confidence"),
+                "outcome": (
+                    "success" if outcome is True
+                    else "failure" if outcome is False
+                    else "unknown"
+                ),
+                "eligibleForEvaluation": eligible,
+                "counterfactual": "unavailable",
+                "featureSummary": {
+                    "repositoryRequired": bool(row.get("repository_required")),
+                    "retrievalRequired": bool(row.get("retrieval_required")),
+                    "toolRequired": (
+                        None if row.get("tool_required") is None
+                        else bool(row.get("tool_required"))
+                    ),
+                    "currentInformationRequired": bool(
+                        row.get("current_information_required")
+                    ),
+                    "executionRequired": bool(row.get("execution_required")),
+                    "modificationRequired": bool(row.get("modification_required")),
+                    "verificationRequired": bool(row.get("verification_required")),
+                    "multiStepRequired": bool(row.get("multi_step_required")),
+                },
+            })
+    return {
+        "count": len(disagreements),
+        "eligibleForEvaluation": sum(
+            bool(row.get("label") in {"DIRECT", "DELEGATE"} and row.get("label_independent", True))
+            for row in disagreements
+        ),
+        "knownOutcomeCount": sum(_observed_success(row) is not None for row in disagreements),
+        "byTaskCategory": dict(sorted(by_category.items())),
+        "byComplexity": dict(sorted(by_complexity.items())),
+        "representative": representative,
+        "counterfactualStatus": "unavailable",
+    }
+
+
+def observed_outcome_evidence(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Summarize outcomes under the route that actually executed.
+
+    A row where the shadow disagreed is still an outcome of the deterministic
+    route.  It is not evidence that the shadow's alternative would have
+    succeeded; that comparison remains explicitly unavailable.
+    """
+    known = [row for row in rows if _observed_success(row) is not None]
+
+    def by(field: str) -> dict[str, dict[str, Any]]:
+        """Group known outcomes by one recorded execution field."""
+        groups: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+        for row in known:
+            value = str(row.get(field) or "unknown")
+            groups[value].append(row)
+        return {
+            key: {
+                "count": len(values),
+                "successes": sum(_observed_success(row) is True for row in values),
+                "failures": sum(_observed_success(row) is False for row in values),
+                "successRate": round(
+                    sum(_observed_success(row) is True for row in values) / len(values), 6
+                ) if values else None,
+            }
+            for key, values in sorted(groups.items())
+        }
+
+    disagreements = [
+        row for row in known
+        if row.get("production_decision") in {"DIRECT", "DELEGATE"}
+        and row.get("ml_prediction") in {"DIRECT", "DELEGATE"}
+        and row.get("production_decision") != row.get("ml_prediction")
+    ]
+    return {
+        "observedOutcomeCount": len(known),
+        "unknownOutcomeCount": len(rows) - len(known),
+        "byDeterministicRoute": by("production_decision"),
+        "byShadowPrediction": by("ml_prediction"),
+        "byProvider": by("selected_provider"),
+        "byModel": by("selected_model"),
+        "disagreementObservedOutcome": {
+            "count": len(disagreements),
+            "successes": sum(_observed_success(row) is True for row in disagreements),
+            "failures": sum(_observed_success(row) is False for row in disagreements),
+            "counterfactual": "unavailable",
+        },
+        "counterfactualStatus": "unavailable",
+    }
+
+
 def _performance_over_time(
     examples: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -349,6 +542,7 @@ def _error_examples(examples: Sequence[Mapping[str, Any]], kind: str) -> list[di
 
 
 def _subset_report(examples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Build comparative metrics for one evaluation subset."""
     labels = [str(row["label"]) for row in examples]
     baseline = [str(row["baseline"]) for row in examples]
     model = [str(row["prediction"]) for row in examples]
@@ -362,6 +556,7 @@ def _subset_report(examples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "disagreementRate": round(disagreements / len(examples), 6) if examples else 0.0,
         "disagreementRateInterval95": _wilson_interval(disagreements, len(examples)),
         "calibration": _calibration(examples),
+        "confidenceCalibration": _confidence_calibration(examples),
         "confidenceDistribution": _confidence_distribution(examples),
         "abstention": _abstention_report(examples),
         "pairedComparison": _paired_comparison(examples),
@@ -431,9 +626,12 @@ def _phase2_assessment(
     paired: Mapping[str, Any],
     *,
     benchmark_reproducible: bool,
+    thresholds: PromotionThresholds | None = None,
 ) -> dict[str, Any]:
+    """Assess whether independent evaluation evidence meets Phase 2 gates."""
+    policy = thresholds or DEFAULT_PROMOTION_THRESHOLDS
     reasons = list(quality.get("reasons") or ())
-    requirements = PHASE2_MODEL_REQUIREMENTS
+    requirements = policy.evaluation_requirements()
     if not benchmark_reproducible:
         reasons.append("fixed benchmark predictions and metrics are not reproducible")
     baseline = real_report["baselineMetrics"]
@@ -854,6 +1052,66 @@ def _source_report(
     }
 
 
+def _installed_shadow_holdout(
+    installed: DirectDelegateModel,
+    test_rows: Sequence[Mapping[str, Any]],
+    installed_training_rows: Sequence[Mapping[str, Any]],
+) -> tuple[list[Mapping[str, Any]], dict[str, Any]]:
+    """Exclude all evidence seen by an installed artifact before scoring it."""
+    installed_labeled = [
+        row for row in installed_training_rows
+        if row.get("label") in {"DIRECT", "DELEGATE"}
+    ]
+    if not installed_labeled:
+        return [], {
+            "status": "BLOCKED_BY_DATA",
+            "reason": "installed shadow training evidence is unavailable or unverified",
+            "installedModelVersion": installed.payload.get("model_version"),
+        }
+    seen_requests = {
+        str(row.get("request_fingerprint") or "")
+        for row in installed_labeled
+    }
+    seen_groups = {
+        str(row.get("group_fingerprint") or "") for row in installed_labeled
+    }
+    combined = [*installed_labeled, *test_rows]
+    lexical_pairs = _near_duplicate_pairs(combined)
+    semantic_pairs = _semantic_duplicate_pairs(combined, lexical_pairs=lexical_pairs)
+    training_indexes = set(range(len(installed_labeled)))
+    contaminated_test_indexes: set[int] = set()
+    for left, right, _score in (*lexical_pairs, *semantic_pairs):
+        if left in training_indexes and right >= len(installed_labeled):
+            contaminated_test_indexes.add(right - len(installed_labeled))
+        elif right in training_indexes and left >= len(installed_labeled):
+            contaminated_test_indexes.add(left - len(installed_labeled))
+    disjoint = [
+        row for index, row in enumerate(test_rows)
+        if str(row.get("request_fingerprint") or "") not in seen_requests
+        and str(row.get("group_fingerprint") or "") not in seen_groups
+        and index not in contaminated_test_indexes
+    ]
+    if not disjoint:
+        return [], {
+            "status": "BLOCKED_BY_DATA",
+            "reason": "no test rows are disjoint from installed-model evidence",
+            "installedModelVersion": installed.payload.get("model_version"),
+        }
+    return disjoint, {
+        "status": "evaluated",
+        "excludedContaminatedTestCount": len(test_rows) - len(disjoint),
+        "contaminationGuard": {
+            "exactRequest": True,
+            "connectedGroup": True,
+            "lexicalNearDuplicate": True,
+            "semanticNearDuplicate": True,
+        },
+        "disjointTestGroupCount": len({
+            str(row.get("group_fingerprint") or row.get("record_id")) for row in disjoint
+        }),
+    }
+
+
 def _installed_shadow_comparison(
     candidate: DirectDelegateModel,
     installed: DirectDelegateModel | None,
@@ -862,21 +1120,11 @@ def _installed_shadow_comparison(
 ) -> dict[str, Any]:
     if installed is None:
         return {"status": "unavailable"}
-    seen_requests = {
-        str(row.get("request_fingerprint") or "")
-        for row in installed_training_rows
-        if row.get("label") in {"DIRECT", "DELEGATE"}
-    }
-    disjoint = [
-        row for row in test_rows
-        if str(row.get("request_fingerprint") or "") not in seen_requests
-    ]
-    if not disjoint:
-        return {
-            "status": "BLOCKED_BY_DATA",
-            "reason": "no test rows are disjoint from installed-model evidence",
-            "installedModelVersion": installed.payload.get("model_version"),
-        }
+    disjoint, guard = _installed_shadow_holdout(
+        installed, test_rows, installed_training_rows
+    )
+    if guard["status"] != "evaluated":
+        return guard
     candidate_examples, _candidate_latencies = _evaluate_rows(candidate, disjoint)
     installed_examples, _installed_latencies = _evaluate_rows(installed, disjoint)
     candidate_report = _subset_report(candidate_examples)
@@ -885,9 +1133,7 @@ def _installed_shadow_comparison(
         "status": "evaluated",
         "installedModelVersion": installed.payload.get("model_version"),
         "candidateModelVersion": candidate.payload.get("model_version"),
-        "disjointTestGroupCount": len({
-            str(row.get("group_fingerprint") or row.get("record_id")) for row in disjoint
-        }),
+        **guard,
         "candidate": candidate_report,
         "installed": installed_report,
     }
@@ -981,7 +1227,11 @@ def benchmark_direct_delegate(
     installed_model: DirectDelegateModel | None = None,
     installed_training_rows: Sequence[Mapping[str, Any]] = (),
     include_ablation: bool = True,
+    model_training_rows: Sequence[Mapping[str, Any]] | None = None,
+    thresholds: PromotionThresholds | None = None,
 ) -> dict[str, Any]:
+    """Benchmark deterministic and learned routing on eligible evidence."""
+    policy = thresholds or DEFAULT_PROMOTION_THRESHOLDS
     validation_rows = [
         row for row in rows
         if row.get("split") == "validation"
@@ -1012,7 +1262,7 @@ def benchmark_direct_delegate(
         and row.get("label")
         and bool(row.get("label_independent", True))
     ]
-    quality = dataset_quality(rows)
+    quality = dataset_quality(rows, thresholds=policy)
     if not test_rows:
         return {
             "status": "BLOCKED_BY_DATA",
@@ -1021,6 +1271,21 @@ def benchmark_direct_delegate(
             "datasetQuality": quality,
             "productionConclusion": "BLOCKED_BY_DATA",
         }
+    holdout_guard: dict[str, Any] = {}
+    if model_training_rows is not None:
+        test_rows, holdout_guard = _installed_shadow_holdout(
+            model, test_rows, model_training_rows
+        )
+        if holdout_guard["status"] != "evaluated":
+            return {
+                **holdout_guard,
+                "sampleCount": 0,
+                "datasetQuality": quality,
+                "productionConclusion": "BLOCKED_BY_DATA",
+            }
+        validation_rows, _validation_guard = _installed_shadow_holdout(
+            model, validation_rows, model_training_rows
+        )
     examples, latencies = _evaluate_rows(model, test_rows)
     replay_examples, _replay_latencies = _evaluate_rows(model, test_rows)
     benchmark_reproducible = examples == replay_examples
@@ -1042,6 +1307,7 @@ def benchmark_direct_delegate(
         real_report,
         paired,
         benchmark_reproducible=benchmark_reproducible,
+        thresholds=policy,
     )
     validation = None
     if validation_rows:
@@ -1055,6 +1321,22 @@ def benchmark_direct_delegate(
         (row for row in examples if not row["correct"]),
         key=lambda item: -float(item["confidence"]),
     )[:5]
+    category_report = _breakdown(examples, "taskCategory")
+    evaluation_snapshot = {
+        "status": "evaluated",
+        "baseline": {"metrics": summary["baselineMetrics"]},
+        "model": {"metrics": summary["modelMetrics"]},
+        "delegateProbabilityCalibration": summary["calibration"],
+        "classConfidenceCalibration": summary["confidenceCalibration"],
+        "performanceByTaskCategory": category_report,
+        "pairedComparison": paired,
+        "benchmarkReproducibility": {"passed": benchmark_reproducible},
+    }
+    promotion = promotion_gate_summary(
+        maturity=quality.get("dataMaturity", {}),
+        evaluation=evaluation_snapshot,
+        thresholds=policy,
+    )
     return {
         "status": "evaluated",
         "sampleCount": summary["sampleCount"],
@@ -1073,6 +1355,7 @@ def benchmark_direct_delegate(
             "version": model.payload["model_version"],
             "metrics": summary["modelMetrics"],
         },
+        "holdoutEvidence": holdout_guard,
         "installedShadowComparison": _installed_shadow_comparison(
             model,
             installed_model,
@@ -1090,10 +1373,16 @@ def benchmark_direct_delegate(
         },
         "disagreementRate": summary["disagreementRate"],
         "disagreementReview": _disagreement_review(examples),
+        "disagreementTelemetry": disagreement_telemetry(rows),
+        "observedOutcomeEvidence": observed_outcome_evidence(rows),
         "pairedBootstrapBalancedAccuracyDifference": _paired_bootstrap_difference(
             examples
         ),
+        # Keep the historical key as the probability-calibration view for
+        # compatibility; the class-confidence view is explicit below.
         "confidenceCalibration": summary["calibration"],
+        "delegateProbabilityCalibration": summary["calibration"],
+        "classConfidenceCalibration": summary["confidenceCalibration"],
         "confidenceDistribution": summary["confidenceDistribution"],
         "abstention": summary["abstention"],
         "falsePositiveExamples": summary["falsePositiveExamples"],
@@ -1101,6 +1390,7 @@ def benchmark_direct_delegate(
         "confidentCorrect": confident_correct,
         "confidentIncorrect": confident_incorrect,
         "performanceByCategory": _breakdown(examples, "category"),
+        "performanceByTaskCategory": category_report,
         "performanceByComplexity": _breakdown(examples, "complexity"),
         "performanceByClass": _breakdown(examples, "labelClass"),
         "performanceByEvidenceSource": _breakdown(examples, "labelSource"),
@@ -1168,6 +1458,7 @@ def benchmark_direct_delegate(
             }
         ),
         "phase2Assessment": phase2,
+        "promotionGates": promotion,
         "validation": validation,
         "datasetQuality": quality,
         "productionConclusion": phase2["status"],

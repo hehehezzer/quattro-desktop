@@ -94,6 +94,7 @@ def shadow_predict(
     profile: Mapping[str, Any] | None,
     repository_present: bool,
 ) -> dict[str, Any]:
+    """Run safe advisory inference with the active shadow model."""
     active = store.active_shadow_model()
     if not active:
         return {"error": "model_unavailable"}
@@ -101,6 +102,15 @@ def shadow_predict(
     started = time.perf_counter()
     try:
         model = DirectDelegateModel.load(artifact)
+        # Legacy artifacts remain readable for offline ablations, but they
+        # contain repository-presence/context fields that are not part of the
+        # request-time contract.  Never let one become a live shadow input.
+        if model.feature_set == "legacy_full":
+            return {
+                "model_version": str(active["model_version"]),
+                "latency_ms": round((time.perf_counter() - started) * 1_000, 3),
+                "error": "unsafe_model_features",
+            }
         prediction = model.predict(
             request,
             profile=profile or {},
