@@ -54,6 +54,7 @@ quattro-agent intelligence review --reviewer REVIEWER_ID --limit 20
 quattro-agent intelligence review-priorities --pretty
 quattro-agent intelligence review-adjudicate RECORD_ID --verdict REJECT --reviewer ADJUDICATOR_ID --notes "reason"
 quattro-agent intelligence seal-holdout --dataset DATASET.jsonl --limit 60
+quattro-agent intelligence phase-2-2 --pretty
 ```
 
 `sync` projects historical durable tasks into sanitized telemetry. It does not
@@ -95,6 +96,18 @@ commands to load a small private JSON policy; defaults are defined in
 request-time routing. Policies accept either a flat object with optional
 `schemaVersion: 1` or `{ "schemaVersion": 1, "thresholds": { ... } }`;
 unknown threshold names and invalid values are rejected.
+
+`phase-2-2` is the autonomous evidence loop. It syncs legitimate runtime/task
+history, rebuilds the protected v11 snapshot, projects one deterministic
+observation per connected group into a separate mode-0600 autonomous snapshot,
+and reports three independent readiness levels: experimental training,
+protected evaluation, and production promotion. Deterministic decisions are
+explicitly weak experimental targets only; outcomes, provider/model telemetry,
+and shadow disagreements remain observations and never become human-gold or
+counterfactual labels. When training readiness passes, the command trains and
+registers an offline experimental candidate without activating it or changing
+production routing. Autonomous-path failures are reported and fail open to
+normal execution.
 
 Installed-shadow promotion metrics exclude exact-request, connected-group,
 lexical, and semantic overlap with the artifact's verified original dataset.

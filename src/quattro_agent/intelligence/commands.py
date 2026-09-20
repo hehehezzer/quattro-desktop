@@ -19,6 +19,12 @@ from .adjudication import (
     auto_adjudicate_unlabeled,
     quarantine_adjudication,
 )
+from .autonomous import (
+    autonomous_agreement,
+    autonomous_dataset_identity,
+    autonomous_evidence_report,
+    write_autonomous_snapshot,
+)
 from .classical import ALGORITHM, DirectDelegateModel, train_direct_delegate_model
 from .dataset import (
     DatasetBuilder,
@@ -70,7 +76,7 @@ def add_intelligence_parser(subparsers: argparse._SubParsersAction[Any]) -> None
             "blind-review-queue", "blind-review-batch", "blind-review-import",
             "blind-review-audit", "blind-review-correct",
             "generate-probes", "auto-label", "phase-1-8", "phase-1-9",
-            "phase-1-10",
+            "phase-1-10", "phase-2-2",
         ),
         nargs="?",
         default="status",
@@ -1607,6 +1613,126 @@ def intelligence_command(
         )
         manifest = builder.extract(output)
         _print({"schemaVersion": 1, "status": "created", "sync": sync_result, **manifest}, pretty)
+        return 0
+    if args.action == "phase-2-2":
+        """Continuously ingest autonomous observations and train offline only."""
+        sync_result = {"scanned": 0, "created": 0, "updated": 0, "skipped": 0}
+        if not args.no_sync:
+            sync_result = builder.sync_task_history(task_store_path)
+        manifest = builder.extract(root / "datasets")
+        dataset_path = pathlib.Path(str(manifest["datasetPath"]))
+        rows = load_dataset(dataset_path)
+        dataset_version = validate_dataset_identity(dataset_path, rows)
+        _validate_registered_dataset(store, dataset_version, rows)
+        autonomous_rows, autonomous_report = autonomous_evidence_report(rows)
+        autonomous_version, _autonomous_digest = autonomous_dataset_identity(autonomous_rows)
+        snapshot_paths = write_autonomous_snapshot(
+            root / "autonomous", autonomous_version, autonomous_rows, autonomous_report
+        )
+        training_readiness = autonomous_report["trainingReadiness"]
+        candidate = None
+        candidate_report: dict[str, Any] = {
+            "status": "NOT_RUN",
+            "reason": "training-readiness gates are not satisfied",
+            "productionAuthority": "none",
+        }
+        if training_readiness["status"] == "READY":
+            try:
+                candidate = train_direct_delegate_model(
+                    autonomous_rows,
+                    dataset_version=autonomous_version,
+                    source_revision=_source_revision(),
+                    calibrate=False,
+                    allow_autonomous_sources=True,
+                )
+                artifact_path = root / "models" / f"{candidate.payload['model_version']}.json"
+                candidate.save(artifact_path)
+                agreement = autonomous_agreement(candidate, autonomous_rows)
+                candidate_report = {
+                    "status": "trained",
+                    "modelVersion": candidate.payload["model_version"],
+                    "artifactPath": str(artifact_path),
+                    "datasetVersion": autonomous_version,
+                    "evidenceMode": "autonomous_observation_experimental",
+                    "agreement": agreement,
+                    "productionAuthority": "none",
+                }
+                store.register_model(
+                    model_version=str(candidate.payload["model_version"]),
+                    algorithm=ALGORITHM,
+                    dataset_version=autonomous_version,
+                    artifact_path=artifact_path,
+                    metrics=candidate_report,
+                    status="offline",
+                )
+            except (OSError, TypeError, ValueError, KeyError, OverflowError) as error:
+                candidate_report = {
+                    "status": "failed_open",
+                    "reason": str(error),
+                    "productionAuthority": "none",
+                }
+        policy = _thresholds(args)
+        evaluation_progress = _evidence_progress(store, rows, policy)
+        quality = dataset_quality(rows, thresholds=policy)
+        promotion = promotion_gate_summary(
+            maturity=quality.get("dataMaturity", {}),
+            evaluation=None,
+            thresholds=policy,
+        )
+        evaluation_readiness = {
+            "status": "READY" if all((
+                evaluation_progress["humanGold"]["current"] >= policy.minimum_human_gold_groups,
+                evaluation_progress["chronology"]["usable"],
+                quality.get("candidateGates", {}).get("zeroCrossSplitContamination") is True,
+            )) else "BLOCKED_BY_DATA",
+            "gates": {
+                "protectedHumanGold": evaluation_progress["humanGold"]["current"] >= policy.minimum_human_gold_groups,
+                "credibleChronology": bool(evaluation_progress["chronology"]["usable"]),
+                "zeroCrossSplitContamination": quality.get("candidateGates", {}).get(
+                    "zeroCrossSplitContamination"
+                ),
+            },
+            "evidence": {
+                "acceptedHumanGold": evaluation_progress["humanGold"],
+                "chronology": evaluation_progress["chronology"],
+            },
+        }
+        phase_status = (
+            "PHASE 2.2 COMPLETE — AUTONOMOUS EVIDENCE ACTIVE — "
+            "EXPERIMENTAL TRAINING READY — PRODUCTION PROMOTION STILL BLOCKED"
+            if candidate_report["status"] == "trained"
+            else "PHASE 2.2 ACTIVE — AUTONOMOUS EVIDENCE INGESTED — TRAINING BLOCKED"
+        )
+        payload = {
+            "schemaVersion": 1,
+            "phase": "2.2",
+            "phaseStatus": phase_status,
+            "sync": sync_result,
+            "datasetVersion": dataset_version,
+            "datasetPath": str(dataset_path),
+            "autonomousEvidence": autonomous_report | snapshot_paths,
+            "trainingReadiness": training_readiness,
+            "experimentalCandidate": candidate_report,
+            "evaluationReadiness": evaluation_readiness,
+            "productionPromotionReadiness": promotion,
+            "productionStatus": "deterministic_authoritative_ml_shadow_only",
+        }
+        output = (
+            pathlib.Path(args.output).expanduser().resolve()
+            if args.output else root / "reports" / "phase-2-2-report.json"
+        )
+        _write_private_json(output, payload)
+        _print({
+            "schemaVersion": 1,
+            "phaseStatus": phase_status,
+            "output": str(output),
+            "datasetVersion": dataset_version,
+            "autonomousDatasetVersion": autonomous_version,
+            "trainingReadiness": training_readiness["status"],
+            "candidateStatus": candidate_report["status"],
+            "evaluationReadiness": evaluation_readiness["status"],
+            "productionPromotionReadiness": promotion["status"],
+        }, pretty)
         return 0
     if args.action == "train":
         dataset_path = (

@@ -36,7 +36,7 @@ CORE_DEPLOYMENT_MAPPINGS = {
             f".local/bin/quattro_agent/intelligence/{name}",
         )
         for name in (
-            "__init__.py", "adjudication.py", "classical.py", "commands.py",
+            "__init__.py", "adjudication.py", "autonomous.py", "classical.py", "commands.py",
             "dataset.py", "evaluation.py", "evidence.py", "features.py", "maturity.py", "probes.py",
             "readiness.py",
             "review.py", "store.py", "telemetry.py",
