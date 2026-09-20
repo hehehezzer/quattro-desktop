@@ -399,6 +399,23 @@ class BlindReviewContractTests(unittest.TestCase):
 
 
 class EvidenceStateTests(unittest.TestCase):
+    def test_adjudication_queue_contains_only_disputed_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = IntelligenceStore(pathlib.Path(temporary) / "intelligence.sqlite3")
+            _record(store, "disputed-record", "Explain a queue")
+            _vote(store, reviewer="reviewer-a", verdict="DIRECT")
+            _vote(store, reviewer="reviewer-b", verdict="DELEGATE")
+            _record(store, "fresh-record", "Explain a semaphore")
+
+            selected = store.create_blind_review_batch(
+                reviewer="reviewer-c",
+                limit=20,
+                adjudication_only=True,
+            )
+
+            self.assertEqual(len(selected), 1)
+            self.assertEqual(selected[0]["request_text"], "Explain a queue")
+
     def test_single_blind_vote_reuses_unchanged_immutable_dataset_snapshot(self) -> None:
         """Report-only single votes must not make extraction fail closed."""
         with tempfile.TemporaryDirectory() as temporary:

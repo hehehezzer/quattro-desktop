@@ -1426,8 +1426,14 @@ class IntelligenceStore:
         reviewer: str,
         limit: int = 50,
         acquisition_targets: Mapping[str, Any] | None = None,
+        adjudication_only: bool = False,
     ) -> list[dict[str, Any]]:
-        """Create hidden item mappings and return only reviewer-safe fields."""
+        """Create hidden item mappings and return only reviewer-safe fields.
+
+        When ``adjudication_only`` is true, only currently disputed records are
+        eligible.  This keeps a third review blind while preventing unrelated
+        fresh or already-consensus records from entering an adjudication queue.
+        """
         safe_reviewer, _redacted = redact_secret_text(str(reviewer).strip())
         if not safe_reviewer or len(safe_reviewer) > 200:
             raise ValueError("blind review queue requires valid reviewer provenance")
@@ -1496,6 +1502,25 @@ class IntelligenceStore:
                 for record_id in pending_record_ids if record_id in components
             }
             accepted = set(self.blind_human_resolutions())
+            adjudicated = {
+                str(row["record_id"])
+                for row in connection.execute(
+                    "SELECT record_id FROM blind_review_adjudications"
+                ).fetchall()
+            }
+            votes_by_record: dict[str, set[str]] = {}
+            for vote in active:
+                votes_by_record.setdefault(str(vote["record_id"]), set()).add(
+                    str(vote["verdict"])
+                )
+            disputed_records = {
+                record_id
+                for record_id, verdicts in votes_by_record.items()
+                if (
+                    len(verdicts & DECISIONS) > 1
+                    or (verdicts & DECISIONS and "UNCERTAIN" in verdicts)
+                )
+            } - accepted - adjudicated
             accepted_components = {
                 components[record_id]
                 for record_id in accepted if record_id in components
@@ -1526,49 +1551,65 @@ class IntelligenceStore:
                 if str(row["record_id"]) not in reviewed_by_others
             ]
             remaining_limit = bounded_limit - len(pending_result)
+            if adjudication_only:
+                adjudication_candidates = [
+                    row for row in repeated_candidates
+                    if str(row["record_id"]) in disputed_records
+                ]
+                selected = deterministic_sample_order(
+                    adjudication_candidates,
+                    seed=f"{RUBRIC_VERSION}:adjudication",
+                    category_counts=category_counts,
+                    bucket_counts=bucket_counts,
+                    acquisition_targets=None,
+                    limit=remaining_limit,
+                )
+            else:
+                selected = []
             repeated_target = min(len(repeated_candidates), max(1, remaining_limit // 2))
-            repeated_selected = deterministic_sample_order(
-                repeated_candidates,
-                seed=f"{RUBRIC_VERSION}:repeat",
-                category_counts=category_counts,
-                bucket_counts=bucket_counts,
-                acquisition_targets=acquisition_targets,
-                limit=repeated_target,
-            )
-            repeated_ids = {str(row["record_id"]) for row in repeated_selected}
-            disagreement_candidates = [
-                row for row in fresh_candidates
-                if row["production_decision"] in DECISIONS
-                and row["ml_prediction"] in DECISIONS
-                and row["production_decision"] != row["ml_prediction"]
-            ]
-            disagreement_target = min(
-                len(disagreement_candidates),
-                max(0, remaining_limit // 4),
-            )
-            disagreement_selected = deterministic_sample_order(
-                disagreement_candidates,
-                seed=f"{RUBRIC_VERSION}:disagreement",
-                category_counts=category_counts,
-                bucket_counts=bucket_counts,
-                acquisition_targets=acquisition_targets,
-                limit=disagreement_target,
-            )
-            selected_ids = repeated_ids | {
-                str(row["record_id"]) for row in disagreement_selected
-            }
-            selected = repeated_selected + disagreement_selected
-            selected += deterministic_sample_order(
-                [
+            if not adjudication_only:
+                repeated_selected = deterministic_sample_order(
+                    repeated_candidates,
+                    seed=f"{RUBRIC_VERSION}:repeat",
+                    category_counts=category_counts,
+                    bucket_counts=bucket_counts,
+                    acquisition_targets=acquisition_targets,
+                    limit=repeated_target,
+                )
+                repeated_ids = {str(row["record_id"]) for row in repeated_selected}
+                disagreement_candidates = [
                     row for row in fresh_candidates
-                    if str(row["record_id"]) not in selected_ids
-                ],
-                seed=f"{RUBRIC_VERSION}:fresh",
-                category_counts=category_counts,
-                bucket_counts=bucket_counts,
-                acquisition_targets=acquisition_targets,
-                limit=remaining_limit - len(selected),
-            )
+                    if row["production_decision"] in DECISIONS
+                    and row["ml_prediction"] in DECISIONS
+                    and row["production_decision"] != row["ml_prediction"]
+                ]
+                disagreement_target = min(
+                    len(disagreement_candidates),
+                    max(0, remaining_limit // 4),
+                )
+                disagreement_selected = deterministic_sample_order(
+                    disagreement_candidates,
+                    seed=f"{RUBRIC_VERSION}:disagreement",
+                    category_counts=category_counts,
+                    bucket_counts=bucket_counts,
+                    acquisition_targets=acquisition_targets,
+                    limit=disagreement_target,
+                )
+                selected_ids = repeated_ids | {
+                    str(row["record_id"]) for row in disagreement_selected
+                }
+                selected = repeated_selected + disagreement_selected
+                selected += deterministic_sample_order(
+                    [
+                        row for row in fresh_candidates
+                        if str(row["record_id"]) not in selected_ids
+                    ],
+                    seed=f"{RUBRIC_VERSION}:fresh",
+                    category_counts=category_counts,
+                    bucket_counts=bucket_counts,
+                    acquisition_targets=acquisition_targets,
+                    limit=remaining_limit - len(selected),
+                )
             selected.sort(key=lambda row: hashlib.sha256(
                 f"{batch_id}:display:{row['record_id']}".encode("utf-8")
             ).hexdigest())
@@ -1579,6 +1620,9 @@ class IntelligenceStore:
                 category = sampling_category(str(row["request_text"]))
                 bucket = sampling_bucket(str(row["request_text"]))
                 selection_reason = (
+                    "blind_adjudication"
+                    if adjudication_only
+                    else
                     "independent_second_review"
                     if str(row["record_id"]) in reviewed_by_others
                     else

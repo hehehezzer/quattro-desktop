@@ -151,6 +151,11 @@ deficits, low-confidence cases, deterministic/shadow disagreements, and fresh
 records can affect queue priority, but none is shown to the reviewer and none
 determines the gold label.
 
+When two independent blind votes conflict, use
+`blind-review-queue --adjudication-only` for a third reviewer. That queue
+contains only currently disputed records; it never mixes fresh acquisition or
+already-resolved consensus records into the adjudication task.
+
 Two matching independent blind votes create `consensus_human_blind` evidence.
 Conflicts remain `disputed` until a different third reviewer completes the same
 blind workflow; a unique 2–1 majority creates `adjudicated_human` evidence.

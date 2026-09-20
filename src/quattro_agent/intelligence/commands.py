@@ -94,6 +94,11 @@ def add_intelligence_parser(subparsers: argparse._SubParsersAction[Any]) -> None
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--production-decision", choices=("DIRECT", "DELEGATE"))
     parser.add_argument("--reviewer")
+    parser.add_argument(
+        "--adjudication-only",
+        action="store_true",
+        help="create a blind queue containing only disputed records for Reviewer C",
+    )
     parser.add_argument("--vote-id")
     parser.add_argument(
         "--verdict", choices=("DIRECT", "DELEGATE", "UNCERTAIN", "REJECT")
@@ -795,6 +800,7 @@ def intelligence_command(
             reviewer=reviewer,
             limit=args.limit,
             acquisition_targets=progress["nextCollectionTargets"],
+            adjudication_only=bool(getattr(args, "adjudication_only", False)),
         )
         payload = blind_review_payload([
             public_review_item(row["item_id"], row["request_text"])
@@ -895,6 +901,7 @@ def intelligence_command(
                 reviewer=reviewer,
                 limit=args.limit,
                 acquisition_targets=progress["nextCollectionTargets"],
+                adjudication_only=bool(getattr(args, "adjudication_only", False)),
             )
             payload = blind_review_payload([
                 public_review_item(row["item_id"], row["request_text"])
