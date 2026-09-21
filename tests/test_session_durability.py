@@ -33,11 +33,18 @@ def config_value() -> dict:
         "defaultPolicyProfile": "workspace-write",
         "fullAccessRequiresConfirmation": True,
         "deprecated": {"legacyCodexFullAccess": {"removed": True, "previouslyEnabled": False}},
-        "accounts": [{
-            "id": "account-1", "alias": "Account 1",
-            "codexHome": "~/.local/share/quattro-ai/codex/accounts/account-1",
-            "enabled": True,
-        }],
+        "accounts": [
+            {
+                "id": "account-1", "alias": "Account 1",
+                "codexHome": "~/.local/share/quattro-ai/codex/accounts/account-1",
+                "enabled": True,
+            },
+            {
+                "id": "account-2", "alias": "Account 2",
+                "codexHome": "~/.local/share/quattro-ai/codex/accounts/account-2",
+                "enabled": True,
+            },
+        ],
         "usageRefresh": {"enabled": False, "intervalMinutes": 15},
         "crossDeviceSync": {"enabled": False, "directory": None},
         "crashCapture": {"enabled": False, "automaticDiagnosis": False},

@@ -73,6 +73,20 @@ class ModelRegistryTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_model_registry(policy, CATALOG)
 
+    def test_registry_rejects_identity_or_capability_claims_not_in_catalog(self) -> None:
+        payload = json.loads(default_policy_path().read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            policy = Path(directory) / "models.json"
+            payload["targets"][0]["provider"] = "invented-provider"
+            policy.write_text(json.dumps(payload))
+            with self.assertRaisesRegex(ConfigError, "identity does not match"):
+                load_model_registry(policy, CATALOG)
+            payload = json.loads(default_policy_path().read_text())
+            payload["targets"][0]["capabilities"].append("vision")
+            policy.write_text(json.dumps(payload))
+            with self.assertRaisesRegex(ConfigError, "absent from trusted catalog"):
+                load_model_registry(policy, CATALOG)
+
     def test_unavailable_account_is_removed_before_selection(self) -> None:
         profile = profile_task(
             "hello", agent="codex", workflow="direct-response", policy_name="audit-read-only",

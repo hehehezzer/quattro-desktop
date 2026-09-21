@@ -916,7 +916,12 @@ class HarnessRuntime:
             update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
                 "alternatives": list(adaptive.preferred_candidates),
             })
-        if execution_target is not None and configured_catalog is not None:
+        if (
+            execution_target is not None
+            and execution_target.mode == "EXPLICIT"
+            and configured_model == "auto"
+            and configured_catalog is not None
+        ):
             registry = load_model_registry(default_policy_path(), configured_catalog)
             execution_target = select_execution_target(
                 profile_snapshot, registry,
@@ -2499,7 +2504,7 @@ class HarnessRuntime:
             started_monotonic = time.monotonic()
             target_payload = task["private_payload"].get("executionTarget")
             attempt_routes = [None]
-            if isinstance(target_payload, Mapping) and not interactive:
+            if isinstance(target_payload, Mapping) and not interactive and not profile.writable_roots:
                 attempt_routes = [str(target_payload.get("route"))]
                 attempt_routes.extend(str(route) for route in target_payload.get("fallbacks", [])[:2])
             result = None

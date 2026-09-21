@@ -351,7 +351,11 @@ the cheapest eligible exact target in its validated registry:
 The account-qualified route is passed with Codex's standard `-m` argument or
 the Responses `model` field. OmniRoute may reject the route for health, quota,
 or protocol reasons, but may not substitute a different model. Quattro records
-the failure and advances only through its own bounded fallback chain.
+the failure and advances only through its own bounded fallback chain. DIRECT
+requests use structured HTTP failure status. Delegated task replay is permitted
+only for read-only policies; writable tasks fail closed because free-form agent
+output is not a trusted transport-failure signal and replay could duplicate
+non-idempotent edits or commands.
 
 ## Manual `/model` behavior and precedence
 

@@ -109,6 +109,9 @@ def load_model_registry(policy_path: Path, catalog_path: Path) -> tuple[ModelTar
             raise ConfigError(f"{where} route is duplicate or absent from the approved catalog")
         if not route.startswith(account + "/"):
             raise ConfigError(f"{where} route is not pinned to its account alias")
+        expected_model = route.split("/", 1)[1]
+        if provider != "codex" or model != expected_model:
+            raise ConfigError(f"{where} provider/model identity does not match its catalog route")
         seen.add(route)
         capabilities = raw.get("capabilities")
         tiers = raw.get("tiers")
@@ -121,6 +124,26 @@ def load_model_registry(policy_path: Path, catalog_path: Path) -> tuple[ModelTar
         limits = [v for v in limits if isinstance(v, int) and not isinstance(v, bool) and v > 0]
         if not limits:
             raise ConfigError(f"{where} has no verified context limit")
+        verified_capabilities = {"conversation"}
+        if row.get("shell_type") == "shell_command" and row.get("tool_mode") == "code_mode_only":
+            verified_capabilities.update({
+                "coding", "repository_read", "repository_write", "shell", "git",
+                "tool_calling",
+            })
+        reasoning_levels = row.get("supported_reasoning_levels")
+        if isinstance(reasoning_levels, list) and reasoning_levels:
+            verified_capabilities.add("reasoning")
+        if min(limits) >= 32_000:
+            verified_capabilities.add("long_context")
+        modalities = row.get("input_modalities")
+        if isinstance(modalities, list) and "image" in modalities:
+            verified_capabilities.add("vision")
+        unsupported = sorted(set(capabilities) - verified_capabilities)
+        if unsupported:
+            raise ConfigError(
+                f"{where} claims capabilities absent from trusted catalog metadata: "
+                + ", ".join(unsupported)
+            )
         cost_rank = raw.get("costRank")
         priority = raw.get("priority")
         reliability = raw.get("reliability")
