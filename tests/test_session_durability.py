@@ -99,6 +99,15 @@ class SessionDurabilityTests(unittest.TestCase):
         self.runtime._configured_codex_catalog = (  # type: ignore[method-assign]
             lambda _home: SRC / "quattro/omniroute-model-catalog.json"
         )
+        configured_home = pathlib.Path(
+            os.path.expanduser(config_value()["accounts"][0]["codexHome"])
+        ).resolve()
+        self.runtime._configured_codex_model = (  # type: ignore[method-assign]
+            lambda home: (
+                "auto" if pathlib.Path(home).resolve() == configured_home
+                else HarnessRuntime._configured_codex_model(pathlib.Path(home))
+            )
+        )
 
     def tearDown(self):
         self.temp.cleanup()
@@ -333,6 +342,9 @@ class SessionDurabilityTests(unittest.TestCase):
         restarted._configured_codex_catalog = (  # type: ignore[method-assign]
             lambda _home: SRC / "quattro/omniroute-model-catalog.json"
         )
+        restarted._configured_codex_model = (  # type: ignore[method-assign]
+            self.runtime._configured_codex_model
+        )
         results = restarted.reconcile()
         self.assertTrue(any(item.get("quattro_session_id") == logical for item in results))
         session = restarted.store.get_logical_session(logical)
@@ -403,6 +415,9 @@ class SessionDurabilityTests(unittest.TestCase):
         )
         restarted._configured_codex_catalog = (  # type: ignore[method-assign]
             lambda _home: SRC / "quattro/omniroute-model-catalog.json"
+        )
+        restarted._configured_codex_model = (  # type: ignore[method-assign]
+            self.runtime._configured_codex_model
         )
         located = next(row for row in restarted.list_logical_sessions() if row["quattroSessionId"] == logical)
         self.assertEqual(located["recoveryState"], "recoverable")

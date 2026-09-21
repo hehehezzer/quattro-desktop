@@ -122,6 +122,15 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.runtime._configured_codex_catalog = (  # type: ignore[method-assign]
             lambda _home: SRC / "quattro/omniroute-model-catalog.json"
         )
+        configured_home = pathlib.Path(
+            os.path.expanduser(config["accounts"][0]["codexHome"])
+        ).resolve()
+        self.runtime._configured_codex_model = (  # type: ignore[method-assign]
+            lambda home: (
+                "auto" if pathlib.Path(home).resolve() == configured_home
+                else HarnessRuntime._configured_codex_model(pathlib.Path(home))
+            )
+        )
 
     def tearDown(self):
         self.temp.cleanup()
