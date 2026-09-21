@@ -156,7 +156,8 @@ class OmniRouteContractTests(unittest.TestCase):
         by_slug = {model["slug"]: model for model in models}
         for slug in EXPECTED_ACCOUNT_MODEL_ROUTES + EXPECTED_ANTIGRAVITY_TEXT_ROUTES:
             self.assertEqual(by_slug[slug]["visibility"], "list")
-            self.assertEqual(by_slug[slug]["input_modalities"], ["text"])
+        for slug in slugs:
+            self.assertEqual(by_slug[slug]["input_modalities"], ["text", "image"])
 
         for account in (1, 2):
             astra = by_slug[f"account-{account}/gpt-6-astra"]

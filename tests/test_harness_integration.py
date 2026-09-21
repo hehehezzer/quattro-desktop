@@ -119,6 +119,18 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             codex_preflight=lambda _home: None,
             adaptive_client_factory=StandardAdaptiveClient,
         )
+        self.runtime._configured_codex_catalog = (  # type: ignore[method-assign]
+            lambda _home: SRC / "quattro/omniroute-model-catalog.json"
+        )
+        configured_home = pathlib.Path(
+            os.path.expanduser(config["accounts"][0]["codexHome"])
+        ).resolve()
+        self.runtime._configured_codex_model = (  # type: ignore[method-assign]
+            lambda home: (
+                "auto" if pathlib.Path(home).resolve() == configured_home
+                else HarnessRuntime._configured_codex_model(pathlib.Path(home))
+            )
+        )
 
     def tearDown(self):
         self.temp.cleanup()
@@ -508,25 +520,30 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         task = self.runtime.store.get_task(task_id, include_private=True)
         run_id = self.runtime.store.create_run(task_id)
         argv, _stdin, _environment = self.runtime._agent_plan(task, run_id, PolicyProfile.from_dict(task["policy"]))
-        self.assertIn("auto/coding:cheap", argv)
+        self.assertIn("account-1/gpt-5.6-luna", argv)
         updated = self.runtime.store.display_task(task_id)
-        self.assertEqual(updated["metadata"]["modelSelection"], "automatic")
-        self.assertEqual(updated["metadata"]["modelRoute"], "auto/coding:cheap")
+        self.assertEqual(updated["metadata"]["modelSelection"], "quattro-explicit")
+        self.assertEqual(updated["metadata"]["modelRoute"], "account-1/gpt-5.6-luna")
         self.assertEqual(updated["metadata"]["selectedModel"], "auto")
-        self.assertEqual(updated["metadata"]["effectiveModelRoute"], "auto/coding:cheap")
+        self.assertEqual(updated["metadata"]["effectiveModelRoute"], "account-1/gpt-5.6-luna")
 
         for explicit_route in ("auto/coding:cheap", "auto/coding", "auto/reasoning"):
             with self.subTest(explicit_route=explicit_route):
                 (account_home / "config.toml").write_text(
                     f'model = "{explicit_route}"\n', encoding="utf-8"
                 )
-                explicit = self.runtime.store.get_task(task_id, include_private=True)
-                explicit_run = self.runtime.store.create_run(task_id)
+                explicit_id = self.runtime.create_task(
+                    agent="codex", project=self.project,
+                    prompt="Locate the configuration symbol", mode="prompt",
+                    parent_task_id=task_id,
+                )
+                explicit = self.runtime.store.get_task(explicit_id, include_private=True)
+                explicit_run = self.runtime.store.create_run(explicit_id)
                 explicit_argv, _stdin, _environment = self.runtime._agent_plan(
                     explicit, explicit_run, PolicyProfile.from_dict(explicit["policy"])
                 )
                 self.assertNotIn("-m", explicit_argv)
-                explicit_metadata = self.runtime.store.display_task(task_id)["metadata"]
+                explicit_metadata = self.runtime.store.display_task(explicit_id)["metadata"]
                 self.assertEqual(explicit_metadata["modelSelection"], "manual")
                 self.assertEqual(explicit_metadata["selectedModel"], explicit_route)
                 self.assertEqual(explicit_metadata["effectiveModelRoute"], explicit_route)
@@ -599,7 +616,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         )
         transported = json.loads(environment["QUATTRO_ROUTING_ENVELOPE"])
         self.assertEqual(transported["schema_version"], envelope["schema_version"])
-        self.assertEqual(transported["preferred_candidates"], envelope["preferred_candidates"])
+        self.assertEqual(transported["preferred_candidates"], ["codex/gpt-5.6-luna"])
         self.assertEqual(transported["task_profile_id"], task_id)
         self.assertGreater(transported["requirements"]["minimum_context"], 0)
         self.assertNotIn("Fix a typo", environment["QUATTRO_ROUTING_ENVELOPE"])

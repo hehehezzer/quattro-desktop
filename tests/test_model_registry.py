@@ -46,6 +46,17 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertEqual(profile.context_profile.value, "CHAT_MINIMAL")
         self.assertEqual(profile.required_capabilities, ("conversation",))
 
+    def test_image_request_selects_a_verified_vision_target(self) -> None:
+        profile = profile_task(
+            "Inspect this screenshot and describe the visual issue.", agent="codex",
+            workflow="direct-response", policy_name="audit-read-only",
+        )
+        self.assertIn("vision", profile.required_capabilities)
+        target = select_execution_target(
+            profile, self.targets, preferred_account="account-1",
+        )
+        self.assertEqual(target.route, "account-1/gpt-5.6-luna")
+
     def test_tiers_select_distinct_capability_policy(self) -> None:
         standard = profile_task(
             "Implement a bounded parser and add regression tests.", agent="codex",
@@ -82,7 +93,7 @@ class ModelRegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "identity does not match"):
                 load_model_registry(policy, CATALOG)
             payload = json.loads(default_policy_path().read_text())
-            payload["targets"][0]["capabilities"].append("vision")
+            payload["targets"][0]["capabilities"].append("audio_input")
             policy.write_text(json.dumps(payload))
             with self.assertRaisesRegex(ConfigError, "absent from trusted catalog"):
                 load_model_registry(policy, CATALOG)
