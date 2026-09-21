@@ -1506,13 +1506,18 @@ class Phase19ReviewRegressionTests(unittest.TestCase):
         self.install_model()
         from quattro_agent.intelligence import commands
         original = commands.benchmark_direct_delegate
-        for action in ("readiness", "phase-1-9"):
+        for action in ("readiness", "phase-1-9", "phase-1-10"):
             with self.subTest(action=action), mock.patch.object(
                 commands, "benchmark_direct_delegate", wraps=original
             ) as benchmark:
                 output = self.state / f"{action}.json"
                 result = self.run_command(action, output=str(output))
-                self.assertEqual(benchmark.call_args.kwargs["model_training_rows"], self.rows)
+                calls = [
+                    call for call in benchmark.call_args_list
+                    if call.kwargs.get("model_training_rows") is not None
+                ]
+                self.assertTrue(calls)
+                self.assertEqual(calls[0].kwargs["model_training_rows"], self.rows)
                 if action == "readiness":
                     self.assertFalse(result["promotionReady"])
                     self.assertEqual(result["evaluation"]["status"], "BLOCKED_BY_DATA")
@@ -1714,7 +1719,8 @@ class Phase110IntelligenceTests(unittest.TestCase):
             set(item),
             {
                 "itemId", "request", "requirements", "label", "reasonCategory",
-                "note", "reviewStatus",
+                "note", "reviewStatus", "taskCategoryCorrection",
+                "complexityCorrection",
             },
         )
         for forbidden in (
@@ -1955,7 +1961,7 @@ class Phase110IntelligenceTests(unittest.TestCase):
             with (
                 mock.patch("sys.stdin.isatty", return_value=True),
                 mock.patch("builtins.input", side_effect=[
-                    "d", "answerable_from_request_context", "clear request",
+                    "d", "answerable_from_request_context", "clear request", "", "",
                 ]),
                 contextlib.redirect_stdout(io.StringIO()),
             ):

@@ -51,6 +51,8 @@ Each reviewer vote is stored independently and append-only with reviewer,
 rubric version, reason category, note, and timestamp. Strict blind human-gold
 is accepted only when at least two active independent reviewers unanimously
 choose the same binary label and no active reviewer chose `UNCERTAIN`.
+When two binary reviewers disagree, a third independent blind vote resolves
+the record by a unique 2–1 majority and records `adjudicated_human` provenance.
 
 Legacy exposed reviews remain separate audit evidence. Blind relabeling creates
 new votes and a new resolution event; it never overwrites legacy provenance.
@@ -62,6 +64,36 @@ vote that references the original and records a correction reason. If active
 votes no longer provide reliable consensus, an append-only retraction event
 removes that resolution from future datasets without deleting history.
 
+## Evidence Schema and Quality
+
+Every judgment records an opaque item/record binding, reviewer ID, rubric
+version, verdict, reason category, bounded note, review timestamp, import
+timestamp, and the exact reviewer-visible request/requirements binding. A
+reviewer may optionally correct the request-derived task category or complexity
+band using the existing feature taxonomy. Two matching annotations are required;
+they are stored as evidence/reporting dimensions and never replace the
+text-recomputed model input. Those annotations are not copied from routing or
+execution telemetry.
+
+Gold provenance is explicit:
+
+- `human_blind` describes a single independent blind judgment, which is not yet
+  accepted training gold;
+- `consensus_human_blind` requires matching active votes from at least two
+  different reviewer IDs;
+- `adjudicated_human` requires a disputed pair plus a different third reviewer;
+- `curated_fixture` remains synthetic/probe evidence and cannot satisfy the
+  real-world human-gold gate.
+
+Current evidence quality is replayed from append-only votes, corrections,
+resolution events, and adjudications: `unlabeled`, `single_review`, `disputed`,
+`consensus`, `adjudicated`, `rejected`, or `contaminated`. Machine predictions,
+production decisions, successful outcomes, and automated Silver adjudication
+cannot create human-gold provenance.
+
+Non-human evidence remains explicit as `curated_fixture`, `machine_consensus`,
+or `legacy_exposed`; none of those states is accepted as blind human-gold.
+
 ## Sampling
 
 Sampling is stratified across conversational/trivial, factual/explanatory,
@@ -71,3 +103,18 @@ orchestration, multi-step implementation, and complex reasoning without
 execution. Selection may oversample hidden deterministic/shadow disagreements,
 but the reviewer is never told that a disagreement exists. Display ordering is
 opaque and route-oblivious.
+
+Phase 2 sampling also consumes live readiness deficits and the same exact,
+session, lexical, and deterministic-semantic connected components used by
+dataset extraction. A component already accepted as human gold is not offered
+as fresh independent evidence. Disagreement and confidence can prioritize what
+is reviewed, never what label is recorded.
+
+## Chronology and Sealed Holdouts
+
+Request `created_at` is the chronology source; outcome time is never used.
+Older unsealed evidence is training material, newer unsealed evidence is
+validation/future evidence, and explicitly sealed groups are immutable future
+holdout members. A seal records its dataset version, source groups, provenance
+summary, creation time, and integrity digest. Sealed groups cannot be moved
+into training, and the training API fails closed if a caller attempts it.

@@ -4,6 +4,15 @@ All notable Quattro orchestration changes are documented here.
 
 ## Unreleased
 
+- Add a blind, resumable Intelligence evidence-review workflow with
+  deficit-aware sampling, append-only consensus/adjudication, and explicit
+  provenance and quality states.
+- Add immutable chronological holdout sealing, opened-evidence tracking,
+  connected-family contamination protection, and reproducible v11 dataset
+  snapshot lineage.
+- Extend Intelligence readiness with actionable global, class, category,
+  complexity, human-gold, chronology, and sealed-holdout deficits while keeping
+  deterministic routing authoritative.
 - Add account-pinned GPT-6 Astra routes to the Codex picker with only low/high
   thinking choices, preserving either saved choice during managed dispatch.
 - Keep Astra request and displayed reasoning effort aligned, including direct

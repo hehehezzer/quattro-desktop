@@ -50,11 +50,20 @@ quattro-agent intelligence blind-review-batch --input blind-review.json
 quattro-agent intelligence blind-review-import --input blind-review.json --reviewer REVIEWER_ID
 quattro-agent intelligence blind-review-audit --pretty
 quattro-agent intelligence phase-1-10 --output phase-1-10-report.json
+quattro-agent intelligence review --reviewer REVIEWER_ID --limit 20
+quattro-agent intelligence review-priorities --pretty
+quattro-agent intelligence review-adjudicate RECORD_ID --verdict REJECT --reviewer ADJUDICATOR_ID --notes "reason"
+quattro-agent intelligence seal-holdout --dataset DATASET.jsonl --limit 60
+quattro-agent intelligence phase-2-2 --pretty
 ```
 
 `sync` projects historical durable tasks into sanitized telemetry. It does not
 create labels. `dataset` writes an immutable versioned JSONL dataset and a
-manifest. `train` uses only independence-proven labels and fails closed until
+manifest. Report-only single or disputed blind votes do not change model-facing
+dataset rows; repeating extraction reuses the existing immutable snapshot while
+retaining the current source revision in the command result. A newly accepted
+consensus or adjudication changes the materialized rows and creates a new
+snapshot. `train` uses only independence-proven labels and fails closed until
 all data-readiness gates pass. `--activate-shadow` makes the saved
 model available for advisory inference; its output never changes production
 routing. `benchmark` reports both the current deterministic router and the ML
@@ -87,6 +96,18 @@ commands to load a small private JSON policy; defaults are defined in
 request-time routing. Policies accept either a flat object with optional
 `schemaVersion: 1` or `{ "schemaVersion": 1, "thresholds": { ... } }`;
 unknown threshold names and invalid values are rejected.
+
+`phase-2-2` is the autonomous evidence loop. It syncs legitimate runtime/task
+history, rebuilds the protected v11 snapshot, projects one deterministic
+observation per connected group into a separate mode-0600 autonomous snapshot,
+and reports three independent readiness levels: experimental training,
+protected evaluation, and production promotion. Deterministic decisions are
+explicitly weak experimental targets only; outcomes, provider/model telemetry,
+and shadow disagreements remain observations and never become human-gold or
+counterfactual labels. When training readiness passes, the command trains and
+registers an offline experimental candidate without activating it or changing
+production routing. Autonomous-path failures are reported and fail open to
+normal execution.
 
 Installed-shadow promotion metrics exclude exact-request, connected-group,
 lexical, and semantic overlap with the artifact's verified original dataset.
@@ -125,6 +146,50 @@ in SQLite. `blind-review-batch` provides resumable `DIRECT`, `DELEGATE`,
 two unanimous binary reviewers are required for accepted human-gold.
 `blind-review-correct` appends a superseding vote and may append a resolution
 retraction. It never edits or deletes the original vote.
+
+Phase 2 evidence acquisition uses `intelligence review` as the integrated,
+resumable path. It creates a mode-0600 private session artifact, presents only
+the blind payload, atomically imports completed votes on pause or completion,
+and resumes pending items after interruption. Optional task-category and
+complexity corrections are review annotations; they do not reveal or copy the
+router's classification. Stable reviewer IDs are local provenance identifiers;
+operators remain responsible for assigning different IDs to genuinely
+independent people.
+
+`review-priorities` reports structured current/required/deficit values for
+independent groups, both classes, category and complexity coverage, human-gold,
+chronology, quality states, and sealed holdouts. Those hidden deficits guide
+sampling. Second reviews, underrepresented categories/complexities, class
+deficits, low-confidence cases, deterministic/shadow disagreements, and fresh
+records can affect queue priority, but none is shown to the reviewer and none
+determines the gold label.
+
+When two independent blind votes conflict, use
+`blind-review-queue --adjudication-only` for a third reviewer. That queue
+contains only currently disputed records; it never mixes fresh acquisition or
+already-resolved consensus records into the adjudication task.
+
+Two matching independent blind votes create `consensus_human_blind` evidence.
+Conflicts remain `disputed` until a different third reviewer completes the same
+blind workflow; a unique 2–1 majority creates `adjudicated_human` evidence.
+Manual adjudication can only reject a disputed item and can never create gold;
+prior votes and resolution events are immutable. Current
+quality states are `unlabeled`, `single_review`, `disputed`, `consensus`,
+`adjudicated`, `rejected`, and `contaminated`.
+
+`seal-holdout` can seal a balanced cohort of the newest untouched consensus or
+adjudicated human-gold groups already assigned to the test split. Membership,
+source group IDs, creation time, dataset version, provenance summary, and a
+SHA-256 integrity digest are immutable in the private store. Extraction keeps
+sealed groups in test, and explicit training rejects any sealed group that
+appears in a training split. Sealed cohorts are not automatically evaluated or
+retrained; opening a final holdout remains a deliberate operation.
+Create the dataset and seal the cohort before running readiness, benchmark,
+evaluation, or phase reports. Those commands durably mark their unsealed test
+records as opened, and an opened record can no longer be sealed as final
+holdout evidence. Ordinary reports exclude already sealed families.
+Pre-v11 datasets are ineligible for sealing because earlier evaluation exposure
+cannot be reconstructed reliably.
 
 The older `review-*` commands remain only for historical audit compatibility.
 Their imports are always `legacy_exposed_review`, do not satisfy the independent
@@ -177,18 +242,22 @@ reported separately. Probe and silver counts never satisfy the documented
 human-reviewed-real Phase 2 gate.
 
 Dataset manifests record the dataset schema, feature schema, content hash,
+creation cutoff, source evidence and independent-group counts,
 class balance, label sources, split/class counts, category and complexity
 coverage, coding/non-coding balance, retrieval and tool requirements,
 provider/model provenance, duplicate patterns, conflicting labels, and
-real-outcome coverage. Explicit ambiguous/excluded reviews remain report-only.
+real-outcome coverage. They also record evidence-quality and gold-provenance
+distributions, excluded reasons, chronology boundary, review rubric, duplicate
+component algorithm, readiness policy, and sealed-holdout summary. Explicit
+ambiguous/excluded reviews remain report-only.
 Components containing conflicting verified labels are quarantined from model
 training and evaluation while remaining visible in the quality audit.
 Connected components link exact requests, token-Jaccard near duplicates at the
 documented `0.80` threshold, deterministic concept-normalized semantic
 near-duplicates at the documented `0.75` threshold, and logical-session groups before deterministic
 group-stratified 70/15/15 assignment. A component is never divided across
-train, validation, and test. Each v10 dataset has a separate immutable split
-manifest and fingerprint; existing v10 assignments are reused and conflicting
+train, validation, and test. Each v11 dataset has a separate immutable split
+manifest and fingerprint; existing v11 assignments are reused and conflicting
 new contamination fails closed. Controlled probe contracts use fixed split hints;
 conflicting hints fail closed, and Silver components are train-only. Model features are explicitly limited to
 decision-time request/profile fields; outcomes, selected provider/model,
@@ -197,7 +266,7 @@ execution tools, and timestamps remain report-only evidence.
 Model-facing input is a scalar allowlist projection. Dataset rows may retain
 post-decision fields for diagnostics, but those fields and their camelCase,
 nested, and serialized aliases cannot enter vectorization. Text-recomputed
-features are checked against a fresh reconstruction when v10 datasets load;
+features are checked against a fresh reconstruction when v11 datasets load;
 probe overrides require an independent non-production contract record.
 
 ### Decision-Grade Evidence Gate
@@ -351,9 +420,9 @@ sanitized request. Existing execution outcomes are never used for that backfill.
 
 ## Versioning
 
-- Intelligence database schema: `3` (blind items, votes, and resolution events are additive)
-- Human review schema: `1`
-- Dataset schema: `direct-delegate-dataset-v10` (v2 through v9 remain readable)
+- Intelligence database schema: `4` (blind adjudication and sealed holdouts are additive)
+- Human review schema: `2`
+- Dataset schema: `direct-delegate-dataset-v11` (v2 through v10 remain readable)
 - Feature schema: `direct-delegate-features-v2` (v1 model artifacts remain readable)
 - Model algorithm: `tfidf-logistic-regression-stdlib-v1`
 

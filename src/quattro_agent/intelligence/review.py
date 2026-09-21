@@ -9,11 +9,15 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .features import decision_profile, forbidden_payload_paths
+from .features import (
+    REVIEW_TASK_CATEGORIES,
+    decision_profile,
+    forbidden_payload_paths,
+)
 
 
 RUBRIC_VERSION = "direct-delegate-human-rubric-v1"
-BLIND_REVIEW_SCHEMA_VERSION = 1
+BLIND_REVIEW_SCHEMA_VERSION = 2
 BLIND_REVIEW_KIND = "quattro-intelligence-blind-review"
 REVIEW_CHOICES = ("DIRECT", "DELEGATE", "UNCERTAIN", "SKIP")
 REASON_CATEGORIES = (
@@ -26,6 +30,7 @@ REASON_CATEGORIES = (
     "multi_step_orchestration_required",
     "boundary_or_insufficient_context",
 )
+COMPLEXITY_CORRECTIONS = ("low", "medium", "high")
 TARGET_CATEGORIES = (
     "conversational_trivial",
     "factual_explanatory",
@@ -125,6 +130,8 @@ def public_review_item(item_id: str, request: str) -> dict[str, Any]:
         },
         "label": None,
         "reasonCategory": None,
+        "taskCategoryCorrection": None,
+        "complexityCorrection": None,
         "note": "",
         "reviewStatus": "pending",
     }
@@ -180,6 +187,48 @@ def review_progress(payload: Mapping[str, Any]) -> dict[str, int]:
     return result
 
 
+def upgrade_blind_review_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Migrate the bounded v1 reviewer artifact to the nullable v2 contract."""
+    if payload.get("schemaVersion") == BLIND_REVIEW_SCHEMA_VERSION:
+        upgraded = {
+            key: ([dict(item) for item in value] if key == "items" else value)
+            for key, value in payload.items()
+        }
+        validate_blind_review_payload(upgraded)
+        return upgraded
+    if payload.get("schemaVersion") != 1:
+        raise ValueError("blind review payload has an incompatible schema")
+    allowed_top = {
+        "schemaVersion", "kind", "rubricVersion", "instructions",
+        "reviewChoices", "reasonCategories", "reviewCount", "items", "progress",
+    }
+    if set(payload) != allowed_top:
+        raise ValueError("blind review payload contains non-contract top-level fields")
+    items = payload.get("items")
+    old_fields = {
+        "itemId", "request", "requirements", "label", "reasonCategory", "note",
+        "reviewStatus",
+    }
+    if not isinstance(items, list) or any(
+        not isinstance(item, Mapping) or set(item) != old_fields for item in items
+    ):
+        raise ValueError("blind review v1 payload contains non-contract item fields")
+    findings = forbidden_payload_paths(payload)
+    if findings:
+        raise ValueError(f"blind review payload leaks hidden evidence: {findings}")
+    upgraded = dict(payload)
+    upgraded["schemaVersion"] = BLIND_REVIEW_SCHEMA_VERSION
+    upgraded["items"] = [
+        dict(item) | {
+            "taskCategoryCorrection": None,
+            "complexityCorrection": None,
+        }
+        for item in items
+    ]
+    validate_blind_review_payload(upgraded)
+    return upgraded
+
+
 def validate_blind_review_payload(payload: Mapping[str, Any]) -> None:
     """Reject review artifacts that could reveal hidden routing evidence."""
     allowed_top = {
@@ -206,7 +255,7 @@ def validate_blind_review_payload(payload: Mapping[str, Any]) -> None:
         raise ValueError("blind review payload has an invalid item list")
     allowed_item = {
         "itemId", "request", "requirements", "label", "reasonCategory", "note",
-        "reviewStatus",
+        "reviewStatus", "taskCategoryCorrection", "complexityCorrection",
     }
     allowed_requirements = {
         "repository", "retrieval", "currentInformation", "modification",
@@ -240,6 +289,16 @@ def validate_blind_review_payload(payload: Mapping[str, Any]) -> None:
         reason = item.get("reasonCategory")
         if reason is not None and reason not in REASON_CATEGORIES:
             raise ValueError(f"blind review item {index} has an invalid reason category")
+        task_category = item.get("taskCategoryCorrection")
+        if task_category is not None and (
+            task_category not in REVIEW_TASK_CATEGORIES or label is None
+        ):
+            raise ValueError(f"blind review item {index} has an invalid task category correction")
+        complexity = item.get("complexityCorrection")
+        if complexity is not None and (
+            complexity not in COMPLEXITY_CORRECTIONS or label is None
+        ):
+            raise ValueError(f"blind review item {index} has an invalid complexity correction")
         if not isinstance(item.get("note"), str) or len(str(item.get("note"))) > 2_000:
             raise ValueError(f"blind review item {index} has an invalid note")
     findings = forbidden_payload_paths(payload)
@@ -253,6 +312,7 @@ def deterministic_sample_order(
     seed: str,
     category_counts: Mapping[str, int],
     bucket_counts: Mapping[str, int] | None = None,
+    acquisition_targets: Mapping[str, Any] | None = None,
     limit: int,
 ) -> list[Mapping[str, Any]]:
     """Stratify acquisition while returning a route-evidence-oblivious order."""
@@ -262,19 +322,50 @@ def deterministic_sample_order(
         bucket = sampling_bucket(str(row.get("request_text") or ""))
         buckets.setdefault((category, bucket), []).append(row)
     for (category, bucket), members in buckets.items():
-        members.sort(key=lambda row: hashlib.sha256(
-            f"{seed}:{category}:{bucket}:{row.get('record_id')}".encode("utf-8")
-        ).hexdigest())
+        members.sort(key=lambda row: (
+            0 if (
+                row.get("production_decision") in {"DIRECT", "DELEGATE"}
+                and row.get("ml_prediction") in {"DIRECT", "DELEGATE"}
+                and row.get("production_decision") != row.get("ml_prediction")
+            ) else 1,
+            abs(float(row.get("ml_confidence") or 0.5) - 0.5),
+            tuple(-ord(character) for character in str(row.get("created_at") or "")),
+            hashlib.sha256(
+                f"{seed}:{category}:{bucket}:{row.get('record_id')}".encode("utf-8")
+            ).hexdigest(),
+        ))
     selected: list[Mapping[str, Any]] = []
     mutable_counts = Counter({str(key): int(value) for key, value in category_counts.items()})
     mutable_bucket_counts = Counter({
         str(key): int(value) for key, value in (bucket_counts or {}).items()
     })
+    targets = acquisition_targets or {}
+    class_deficits = targets.get("classDeficits", {})
+    human_gold_deficits = targets.get("humanGoldClassDeficits", {})
+    category_deficits = targets.get("categoryDeficits", {})
+    complexity_deficits = targets.get("complexityDeficits", {})
     while len(selected) < limit:
         available = [key for key, members in buckets.items() if members]
         if not available:
             break
         category, bucket = min(available, key=lambda value: (
+            -int(category_deficits.get(value[0], 0)),
+            -(
+                max(
+                    int(class_deficits.get("DIRECT", 0)),
+                    int(human_gold_deficits.get("DIRECT", 0)),
+                ) if value[1] == "easy_direct" else
+                max(
+                    int(class_deficits.get("DELEGATE", 0)),
+                    int(human_gold_deficits.get("DELEGATE", 0)),
+                ) if value[1] == "easy_delegate" else 0
+            ),
+            -max(
+                int(complexity_deficits.get(
+                    str(buckets[value][0].get("complexity") or "unknown"), 0
+                )),
+                0,
+            ),
             mutable_counts[value[0]],
             mutable_bucket_counts[value[1]],
             TARGET_CATEGORIES.index(value[0])

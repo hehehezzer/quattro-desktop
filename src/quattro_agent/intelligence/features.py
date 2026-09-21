@@ -157,6 +157,10 @@ _ALLOWED_TASK_CATEGORIES = frozenset({
     "multi_source_verification", "multi_step_execution", "system_investigation",
     "noncoding_execution", "security_review", "ambiguous",
 })
+TASK_CATEGORIES = tuple(sorted(_ALLOWED_TASK_CATEGORIES))
+REVIEW_TASK_CATEGORIES = tuple(
+    value for value in TASK_CATEGORIES if value != "ambiguous"
+)
 
 
 def _normalized_key(value: Any) -> str:

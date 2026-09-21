@@ -360,8 +360,15 @@ def train_direct_delegate_model(
     feature_set: str = "safe_metadata",
     calibrate: bool = True,
     source_revision: str = "unknown",
+    sealed_group_fingerprints: frozenset[str] | set[str] = frozenset(),
+    allow_autonomous_sources: bool = False,
 ) -> DirectDelegateModel:
-    """Fit deterministic batch-gradient logistic regression on the train split."""
+    """Fit logistic regression on the train split.
+
+    Autonomous observation targets are accepted only when the explicit
+    experimental flag is set.  They never become human-gold or authorize
+    production routing.
+    """
     if not 1 <= max_features <= 100_000:
         raise ValueError("max_features must be between 1 and 100000")
     if not 1 <= epochs <= 10_000:
@@ -378,19 +385,45 @@ def train_direct_delegate_model(
         and row.get("label") in {"DIRECT", "DELEGATE"}
         and bool(row.get("label_independent", True))
     ]
+    fitted_rows = [
+        row for row in rows
+        if row.get("split") in {"train", "validation"}
+        and row.get("label") in {"DIRECT", "DELEGATE"}
+        and bool(row.get("label_independent", True))
+    ]
+    sealed_training = sorted({
+        str(row.get("group_fingerprint") or row.get("record_id"))
+        for row in fitted_rows
+        if bool(row.get("holdout_sealed"))
+        or str(row.get("group_fingerprint") or row.get("record_id"))
+        in sealed_group_fingerprints
+    })
+    if sealed_training:
+        raise ValueError(
+            "BLOCKED_BY_DATA: sealed holdout groups cannot enter training or calibration: "
+            f"{sealed_training[:5]}"
+        )
+    allowed_sources = {
+        "human_gold", "human_verified", "reviewed_outcome",
+        "probe_gold", "silver", "curated_benchmark",
+    }
+    if allow_autonomous_sources:
+        allowed_sources.add("autonomous_deterministic")
     invalid_sources = sorted({
         str(row.get("label_source") or "")
         for row in raw_train_rows
-        if row.get("label_source") not in {
-            "human_gold", "human_verified", "reviewed_outcome",
-            "probe_gold", "silver", "curated_benchmark",
-        }
+        if row.get("label_source") not in allowed_sources
     })
     if invalid_sources:
         raise ValueError(
             f"training labels are not independently sourced: {invalid_sources}"
         )
-    source_priority = {"human_gold": 0, "probe_gold": 1, "silver": 2}
+    source_priority = {
+        "human_gold": 0,
+        "probe_gold": 1,
+        "silver": 2,
+        "autonomous_deterministic": 3,
+    }
     grouped_train: dict[str, list[Mapping[str, Any]]] = {}
     for row in raw_train_rows:
         grouped_train.setdefault(
@@ -466,6 +499,10 @@ def train_direct_delegate_model(
             "l2": l2,
             "train_rows": len(train_rows),
             "class_balance": {"DIRECT": negatives, "DELEGATE": positives},
+            "evidence_mode": (
+                "autonomous_observation_experimental"
+                if allow_autonomous_sources else "verified_label_training"
+            ),
             "label_sources": dict(sorted(Counter(
                 str(row.get("label_source") or "excluded") for row in train_rows
             ).items())),
@@ -484,9 +521,14 @@ def train_direct_delegate_model(
         if row.get("split") == "validation"
         and row.get("label") in {"DIRECT", "DELEGATE"}
         and bool(row.get("label_independent", True))
-        and row.get("label_source") in {
-            "human_gold", "human_verified", "reviewed_outcome", "probe_gold"
-        }
+        and row.get("label_source") in (
+            {
+                "human_gold", "human_verified", "reviewed_outcome", "probe_gold",
+                "autonomous_deterministic",
+            }
+            if allow_autonomous_sources else
+            {"human_gold", "human_verified", "reviewed_outcome", "probe_gold"}
+        )
     ]
     validation_by_group: dict[str, Mapping[str, Any]] = {}
     for row in validation_rows:
