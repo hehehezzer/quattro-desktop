@@ -6,14 +6,16 @@ Benchmark normalization: `benchmark-normalization-v1`
 
 Quattro keeps three distinct concepts separate:
 
-1. **Model / route** — the real OmniRoute model ID selected by Codex `/model`.
+1. **Execution target** — Quattro's provider/account/model route.
 2. **Routing tier** — Quattro's local `FAST`, `STANDARD`, or `REASONING` classification.
 3. **Reasoning effort** — the Quattro-selected effort sent with that request.
 
-Quattro classifies locally; it does not ask an LLM to choose a route and does
-not implement provider transport, connection/account fallback, quota reset, or
-billing algorithms. **OmniRoute owns final provider/model dispatch.** Quattro
-owns the task requirement and quality evidence supplied to that boundary.
+Quattro classifies and selects locally; it does not ask an LLM to choose a
+route. **Quattro owns provider, safe account alias, model, and fallback order.**
+OmniRoute owns transport, provider protocol adaptation, caching, token
+optimization, and runtime health signals. The default registry is
+`quattro_agent/data/model-policy.json`; `QUATTRO_MODEL_POLICY` may point to a
+validated private override. Neither file contains credentials.
 
 ## Live path and ownership
 
@@ -26,11 +28,11 @@ CLI run_prompt
   -> PreRoutingInput
   -> existing routing_intelligence.profile_task classifier
   -> FAST / STANDARD / REASONING + quality floor
-  -> adaptive candidate preference ordering (when enhanced metadata is available)
+  -> validated model registry + deterministic exact target/fallback ordering
   -> durable task/envelope persistence
   -> Codex execution preparation (bootstrap, tools, skills, permissions, AGENTS, history)
   -> final_request_tokens context-capacity eligibility only
-  -> OmniRoute hard capability/runtime revalidation and provider dispatch
+  -> OmniRoute exact-route transport and provider dispatch
 ```
 
 The request-boundary step is the single task-intelligence authority. It runs
@@ -44,13 +46,13 @@ The phase ownership is explicit:
 
 ```text
 PRE_ROUTING
-  user request -> TaskProfile -> tier/quality floor -> preferred candidates
+  user request -> TaskProfile -> tier/quality floor -> exact target + fallbacks
 EXECUTION_PREPARATION
   Quattro context gates -> Codex-owned bootstrap and final request assembly
 FINAL_ELIGIBILITY
   final request size -> context fit only; no tier/quality reclassification
 DISPATCH / VALIDATION
-  OmniRoute runtime truth -> provider -> Quattro outcome evidence
+  OmniRoute actual target/usage -> fidelity check -> Quattro outcome evidence
 ```
 
 For delegated Codex tasks Quattro controls the `-m` route requirement and
@@ -253,32 +255,25 @@ completion-cost proxies, and escalation need. It explicitly labels real
 provider cost, validated production success, provider concentration, and load
 latency as not measured rather than fabricating those values.
 
-## Standard and adaptive compatibility
+## Registry and runtime metadata compatibility
 
 Quattro negotiates `GET /api/v1/capabilities` with a five-minute cache. A
-standard upstream-compatible OmniRoute that lacks the enhanced endpoint stays
-healthy and uses the existing FAST/STANDARD/REASONING tier routes. A
-Quattro-compatible OmniRoute adds a five-second runtime candidate snapshot,
-hard capability/context requirements, ordered preferences, runtime fallback,
-and sanitized routing receipts. Candidate metadata failure records
-`adaptive_routing_unavailable` and falls back to standard tier routing.
+standard upstream-compatible OmniRoute can still transport a validated explicit
+catalog route. A Quattro-compatible OmniRoute additionally provides a five-second
+sanitized runtime candidate snapshot and routing receipts. These are health and
+evidence inputs; they are not model-selection authority.
 
 In adaptive mode Quattro reads only the public candidate API at PRE_ROUTING. It never reads
-provider configuration, accounts, or credentials. The routing envelope contains
-only schema version, hard capabilities, minimum context, ordered candidate IDs,
-balanced preference mode, TaskProfile ID, and policy version. OmniRoute expands
-automatic tier aliases to the full eligible auto inventory only for a validated
-enhanced envelope, revalidates all hard/runtime gates at dispatch, strips the
-extension before provider translation, and records a bounded metadata-only
-receipt for exact delegated-task correlation.
+provider configuration or credentials. The model policy contains only safe
+provider/account/model aliases and capability metadata. Every target is checked
+against the approved catalog. Account-qualified routes are single-target combos,
+so cache lookup, translation, and token optimization remain in OmniRoute without
+allowing it to widen the target set.
 
-The first envelope carries the task-context estimate and the precomputed
-candidate order. After Codex preparation Quattro updates only its
-`requirements.minimum_context` with the final request estimate; the candidate
-order and task quality requirement remain unchanged. OmniRoute may reject a
-preferred candidate for context, quota, health, or capability and then select
-the next eligible preferred candidate. This is runtime fallback, not a second
-semantic classifier.
+Quattro selects the lowest configured cost rank that satisfies capability,
+context, tier, and availability evidence, preferring the requested account only
+after cost. The remaining eligible targets form the bounded fallback chain.
+Unknown capability or context facts do not receive optimistic defaults.
 
 Except for the explicit Astra choices described below, Quattro owns effective
 reasoning effort for Quattro-managed execution. A parent Codex UI may display `auto medium`, or the
@@ -300,9 +295,10 @@ Codex/provider adapter boundary if reproduced. Current regression coverage
 asserts native defaults cannot override the Quattro tier and that context size
 cannot change the tier.
 
-For example, `auto medium` in the parent can execute a file lookup as
-`FAST / auto/coding:cheap / low`. Conversely, a native `low` default executes a
-race/deadlock investigation as `REASONING / auto/reasoning / high`.
+For example, `auto medium` in the parent can execute a greeting as
+`FAST / account-1 / gpt-5.6-luna / low`. Conversely, a native `low` default can
+execute a race/deadlock investigation as
+`REASONING / account-1 / gpt-5.6-sol / high`.
 
 ## Verified effort values
 
@@ -344,33 +340,22 @@ high after upgrading. Do not change native account authentication stores.
 ## Automatic `/model` behavior
 
 When the selected Codex model is exactly `auto`, Quattro maps the local tier to
-existing, live OmniRoute auto-combo routes:
+the cheapest eligible exact target in its validated registry:
 
-| Tier | Requested OmniRoute route | Requirement profile | Effort |
+| Tier | Default family | Requirement profile | Effort |
 | --- | --- | --- | --- |
-| `FAST` | `auto/coding:cheap` | low-cost coding capability with low-latency tie breaking | `low` |
-| `STANDARD` | `auto/coding` | normal coding capability | `medium` |
-| `REASONING` | `auto/reasoning` | verified reasoning capability | `high` |
+| `FAST` | `gpt-5.6-luna` | low-cost verified capability | `low` |
+| `STANDARD` | `gpt-5.6-terra` | balanced verified capability | `medium` |
+| `REASONING` | `gpt-5.6-sol` | strongest verified reasoning capability | `high` |
 
-Those routes are selected with Codex's standard `-m` model argument. They are
-requirements, not fixed-model aliases. OmniRoute first removes candidates that
-are circuit-open, rate-limited, unavailable, cooling down, quota-exhausted,
-session-unavailable, repeatedly failing, context-incompatible, or below the
-task capability floor. A half-open breaker candidate remains eligible only as
-an explicit health-system recovery probe.
-
-Among the surviving capable candidates, OmniRoute orders by incremental model
-cost first. Latency, observed reliability, and the existing multi-factor score
-break equal-cost ties; model size, account tier, `pro`, `xhigh`, `thinking`, and
-similar labels are not selection authority. Coding and reasoning pools use the
-existing capability/intelligence registry and observed task-fitness sources.
-A name-only wildcard boost cannot establish coding capability.
-
-Fallbacks remain inside the same eligible/capable pool. Equivalent targets that
-share a connection/provider failure domain are still suppressed by OmniRoute's
-existing exhausted-connection/provider tracking after a failure. When a
-cooldown expires and the health record clears, the cheaper candidate naturally
-becomes eligible again on the next dispatch.
+The account-qualified route is passed with Codex's standard `-m` argument or
+the Responses `model` field. OmniRoute may reject the route for health, quota,
+or protocol reasons, but may not substitute a different model. Quattro records
+the failure and advances only through its own bounded fallback chain. DIRECT
+requests use structured HTTP failure status. Delegated task replay is permitted
+only for read-only policies; writable tasks fail closed because free-form agent
+output is not a trusted transport-failure signal and replay could duplicate
+non-idempotent edits or commands.
 
 ## Manual `/model` behavior and precedence
 
@@ -410,8 +395,8 @@ Antigravity image-only route is intentionally not a Codex picker entry; image
 generation remains available through the credential-free local image MCP
 bridge.
 
-Selecting `auto` enables per-task adaptive routing. Selecting one of the three
-`auto/...` values pins that exact OmniRoute route for later managed requests.
+Selecting `auto` enables per-task Quattro target selection. Selecting one of the three
+`auto/...` values explicitly delegates model choice to the named OmniRoute route.
 Unknown values are rejected by Codex against the same catalog instead of being
 silently converted to `auto`. The catalog is deployed from
 `src/quattro/omniroute-model-catalog.json`; Quattro preflight fails closed if a
@@ -424,15 +409,17 @@ Explicit user model/route choice
         ↓
 Automatic FAST / STANDARD / REASONING classification
         ↓
+Quattro provider/account/model selection + bounded fallback chain
+        ↓
 Tier-selected reasoning effort
         ↓
-OmniRoute provider/account/quota/cost/fallback behavior for that route
+OmniRoute transport/caching/protocol adaptation for the exact route
 ```
 
 Resume preserves the native session's model; Quattro does not force a new
 model route on resume. Task metadata and `routing.dispatched` events expose
 `selectedModel`, `effectiveModelRoute`, the backward-compatible `modelRoute`,
-`modelSelection` (`automatic` or `manual`), routing tier, and effort without
+`modelSelection` (`quattro-explicit` or `manual`), routing tier, and effort without
 recording prompt content or credentials. Native Codex's compact status line
 continues to show the effective route, effective effort, and working directory.
 

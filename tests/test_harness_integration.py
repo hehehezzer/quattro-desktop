@@ -18,7 +18,7 @@ from unittest import mock
 SRC = pathlib.Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SRC))
 
-from quattro_harness import HarnessRuntime
+from quattro_harness import HarnessRuntime, OmniRouteAttemptError
 from quattro_agent.policy import PolicyProfile
 from quattro_agent.models import RunState, TaskState
 from quattro_agent.errors import ConfigError
@@ -55,12 +55,20 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             "defaultPolicyProfile": "workspace-write",
             "fullAccessRequiresConfirmation": True,
             "deprecated": {"legacyCodexFullAccess": {"removed": True, "previouslyEnabled": False}},
-            "accounts": [{
-                "id": "account-1",
-                "alias": "Account 1",
-                "codexHome": "~/.local/share/quattro-ai/codex/accounts/account-1",
-                "enabled": True,
-            }],
+            "accounts": [
+                {
+                    "id": "account-1",
+                    "alias": "Account 1",
+                    "codexHome": "~/.local/share/quattro-ai/codex/accounts/account-1",
+                    "enabled": True,
+                },
+                {
+                    "id": "account-2",
+                    "alias": "Account 2",
+                    "codexHome": "~/.local/share/quattro-ai/codex/accounts/account-2",
+                    "enabled": True,
+                },
+            ],
             "usageRefresh": {"enabled": False, "intervalMinutes": 15},
             "crossDeviceSync": {"enabled": False, "directory": None},
             "crashCapture": {"enabled": False, "automaticDiagnosis": False},
@@ -171,6 +179,11 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         before = self.runtime.store.list_display_tasks(limit=100)
 
         class Response:
+            headers = {
+                "X-OmniRoute-Provider": "cx",
+                "X-OmniRoute-Model": "gpt-5.6-luna",
+            }
+
             def read(self, _limit):
                 return b'{"output_text":"Docker volumes persist data."}'
 
@@ -180,7 +193,12 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             def __exit__(self, *_args):
                 return False
 
-        with mock.patch("quattro_harness.urllib.request.urlopen", return_value=Response()) as open_request:
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch("quattro_harness.urllib.request.urlopen", return_value=Response()) as open_request,
+        ):
             result = self.runtime.direct_response(
                 project=self.project, prompt="Explain Docker volumes",
             )
@@ -194,7 +212,10 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
 
     def test_direct_hello_skips_optional_retrieval_and_stays_fast(self):
         class Response:
-            headers = {}
+            headers = {
+                "X-OmniRoute-Provider": "cx",
+                "X-OmniRoute-Model": "gpt-5.6-luna",
+            }
 
             def read(self, _limit):
                 return b'{"output_text":"hello"}'
@@ -206,6 +227,11 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
                 return False
 
         with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(
+                self.runtime, "_configured_codex_catalog",
+                return_value=pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json",
+            ),
             mock.patch.object(self.runtime, "_retrieval_context", return_value="SHOULD_NOT_LOAD") as retrieval,
             mock.patch("quattro_harness.urllib.request.urlopen", return_value=Response()) as open_request,
         ):
@@ -217,6 +243,138 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(result["routing"]["tier"], "FAST")
         self.assertEqual(result["context"]["profile"], "CHAT_MINIMAL")
         self.assertEqual(result["retrieval"]["route"], "gated")
+
+    def test_direct_retryable_provider_failure_uses_quattro_fallback_order(self):
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        successful = (
+            {"output_text": "hello", "usage": {"input_tokens": 5, "output_tokens": 1}},
+            {"provider": "cx", "model": "gpt-5.6-luna", "cost": None},
+        )
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime, "_send_omniroute_response",
+                side_effect=[
+                    OmniRouteAttemptError("HTTP 503", retryable=True),
+                    successful,
+                ],
+            ) as send,
+        ):
+            result = self.runtime.direct_response(project=self.project, prompt="hello")
+        self.assertEqual(send.call_count, 2)
+        self.assertEqual(result["model"], "account-2/gpt-5.6-luna")
+        self.assertEqual(result["retry"], "fallback_succeeded")
+        self.assertTrue(result["routingSnapshot"]["fallback_used"])
+        self.assertEqual(
+            result["routingSnapshot"]["fallback_events"][0]["route"],
+            "account-1/gpt-5.6-luna",
+        )
+
+    def test_direct_nonretryable_failure_does_not_duplicate_request(self):
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime, "_send_omniroute_response",
+                side_effect=OmniRouteAttemptError("HTTP 400", retryable=False),
+            ) as send,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "HTTP 400"):
+                self.runtime.direct_response(project=self.project, prompt="hello")
+        self.assertEqual(send.call_count, 1)
+
+    def test_direct_manual_reasoning_route_is_not_replaced_for_fast_prompt(self):
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        successful = (
+            {"output_text": "hello", "usage": {"input_tokens": 5, "output_tokens": 1}},
+            {"provider": "cx", "model": "gpt-5.6-sol", "cost": None},
+        )
+        with (
+            mock.patch.object(
+                self.runtime, "_configured_codex_model",
+                return_value="account-1/gpt-5.6-sol",
+            ),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime, "_send_omniroute_response", return_value=successful,
+            ) as send,
+        ):
+            result = self.runtime.direct_response(project=self.project, prompt="hello")
+        request_body = send.call_args.args[0]
+        self.assertEqual(request_body["model"], "account-1/gpt-5.6-sol")
+        self.assertEqual(result["model"], "account-1/gpt-5.6-sol")
+        self.assertEqual(result["adaptiveRouting"]["executionTarget"]["mode"], "MANUAL")
+        self.assertEqual(result["adaptiveRouting"]["executionTarget"]["fallbacks"], [])
+
+    def test_delegated_retryable_provider_failure_relaunches_exact_fallback(self):
+        fallback_agent = self.root / "fallback-agent"
+        fallback_agent.write_text(
+            "#!/bin/sh\n"
+            "case \"$*\" in\n"
+            "  *account-1/gpt-5.6-luna*) echo 'HTTP 503 provider unavailable'; exit 1;;\n"
+            "  *account-2/gpt-5.6-luna*) echo 'FALLBACK_OK'; exit 0;;\n"
+            "  *) echo 'unexpected route' >&2; exit 2;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        fallback_agent.chmod(0o755)
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        resolver = self.runtime.command_resolver
+        self.runtime.command_resolver = (
+            lambda name: str(fallback_agent) if name == "codex" else resolver(name)
+        )
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+        ):
+            task_id, code = self.runtime.submit(
+                agent="codex", project=self.project,
+                prompt="Inspect README.md and report its heading without modifying files.",
+                mode="prompt", profile_name="audit-read-only",
+            )
+        self.assertEqual(
+            code, 0,
+            json.dumps({
+                "task": self.runtime.show_task(task_id),
+                "events": self.runtime.store.display_events(task_id),
+            }, default=str),
+        )
+        events = self.runtime.store.display_events(task_id)
+        fallback = next(event for event in events if event["type"] == "routing.fallback")
+        self.assertEqual(fallback["payload"]["fromRoute"], "account-1/gpt-5.6-luna")
+        self.assertEqual(fallback["payload"]["toRoute"], "account-2/gpt-5.6-luna")
+        dispatched = [event for event in events if event["type"] == "routing.dispatched"]
+        self.assertEqual(dispatched[-1]["payload"]["effectiveModelRoute"], "account-2/gpt-5.6-luna")
+
+    def test_delegated_writable_failure_never_replays_from_output_text(self):
+        unsafe_agent = self.root / "unsafe-fallback-agent"
+        unsafe_agent.write_text(
+            "#!/bin/sh\n"
+            "echo 'HTTP 503 provider unavailable'\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        unsafe_agent.chmod(0o755)
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        resolver = self.runtime.command_resolver
+        self.runtime.command_resolver = (
+            lambda name: str(unsafe_agent) if name == "codex" else resolver(name)
+        )
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+        ):
+            task_id, code = self.runtime.submit(
+                agent="codex", project=self.project,
+                prompt="Implement a parser and add regression tests.",
+                mode="prompt", profile_name="workspace-write",
+            )
+        self.assertEqual(code, 1)
+        events = self.runtime.store.display_events(task_id)
+        self.assertFalse(any(event["type"] == "routing.fallback" for event in events))
+        self.assertEqual(len(self.runtime.store.runs_for_task(task_id)), 1)
 
     def test_simple_delegation_is_declined_without_worker(self):
         with mock.patch.object(self.runtime, "run_task") as run:

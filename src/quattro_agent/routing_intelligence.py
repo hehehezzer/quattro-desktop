@@ -368,12 +368,18 @@ _TRIVIAL_INTERNAL = re.compile(
     re.IGNORECASE,
 )
 _TRIVIAL_CONVERSATION = re.compile(
-    r"^\s*(?:reply|respond|answer|say)\s+(?:with\s+)?(?:just\s+)?(?:hello|hi|yes|no|thanks?|thank you|ok|okay)[.!?\s]*$",
+    r"^\s*(?:(?:reply|respond|answer|say)\s+(?:with\s+)?(?:just\s+)?)?"
+    r"(?:hello|hi|hey|yes|no|thanks?|thank you|ok|okay)[.!?\s]*$",
     re.IGNORECASE,
 )
 _CLONE_OPERATION = re.compile(r"\b(?:git\s+clone|clone)\b", re.IGNORECASE)
 _MECHANICAL_READ = re.compile(
     r"\b(?:find|search|locate|list|read|inspect|summari[sz]e|explain|grep)\b",
+    re.IGNORECASE,
+)
+_REPOSITORY_REFERENCE = re.compile(
+    r"(?:\b(?:repository|repo|codebase|project|workspace|file|directory|source|README)\b|"
+    r"(?:^|\s)[\w.-]+/(?:[\w./-]+))",
     re.IGNORECASE,
 )
 _MUTATION = re.compile(
@@ -390,7 +396,7 @@ _ARCHITECTURE = re.compile(
 )
 _SECURITY = re.compile(
     r"\b(?:authentication|authorization|security|vulnerability|bypass|privilege|tenant|"
-    r"injection|secret|credential|permission|access control|threat model)\b", re.IGNORECASE,
+    r"(?<!dependency )injection|secret|credential|permission|access control|threat model)\b", re.IGNORECASE,
 )
 _CONCURRENCY = re.compile(
     r"\b(?:concurren(?:cy|t)|race condition|deadlock|atomic(?:ity)?|lock contention|"
@@ -454,6 +460,12 @@ def _task_type(text: str, mutation: bool) -> str:
         return "repository_execution"
     if _TRIVIAL_OPERATION.search(text) and re.search(r"\b(?:docs?|documentation|readme)\b", text, re.I):
         return "documentation"
+    if (
+        not mutation
+        and re.search(r"\b(?:explain|summari[sz]e|describe)\b", text, re.IGNORECASE)
+        and not _REPOSITORY_REFERENCE.search(text)
+    ):
+        return "conversation"
     if not mutation and _MECHANICAL_READ.search(text):
         return "repository_read"
     if _SECURITY.search(text):

@@ -13,13 +13,13 @@ Quattro request boundary
   ▼
  PreRoutingInput → TaskProfile → FAST / STANDARD / REASONING
    │                         │
-   │                         └── bounded adaptive preference envelope
+   │                         └── validated execution-target registry
    ▼
  execution preparation (Codex-owned bootstrap may now expand)
    │
-   ├── DIRECT ───► final context-fit/runtime gates ─► OmniRoute Responses ─► final response
+   ├── DIRECT ───► exact provider/account/model route ─► OmniRoute transport ─► response
    │
-   └── DELEGATE ─► durable task ─► final context-fit/runtime gates ─► Codex/Pi ─► validation/result
+   └── DELEGATE ─► durable task ─► exact provider/account/model route ─► Codex/Pi ─► result
 ```
 
 ## Responsibilities
@@ -28,19 +28,19 @@ Quattro request boundary
 
 Quattro classifies requests, selects an execution agent deterministically,
 creates and supervises durable tasks, assembles bounded context, enforces task
-policy, and projects display-safe lifecycle state. It does not choose a
-provider or let a model create agents. Its request-boundary `TaskProfile` is the
+policy, selects a validated provider/account/model execution target and bounded
+fallback chain, and projects display-safe lifecycle state. Its request-boundary `TaskProfile` is the
 single authority for task intelligence; native bootstrap size is not a quality
 signal.
 
 ### OmniRoute
 
-OmniRoute remains the authority for provider/account/model selection, cost and
-quota behavior, health and context eligibility, cooldowns, and fallbacks.
-Quattro supplies precomputed request requirements and preferences through the
-FAST, STANDARD, and REASONING tiers. OmniRoute performs final hard eligibility
-and dispatch, not a second semantic quality classification. Explicit Codex
-`/model` selection remains user intent.
+OmniRoute remains the provider transport, protocol-adaptation, caching, token
+accounting, health-signal, and request-forwarding layer. Normal Quattro work
+uses an account-qualified single-target route; OmniRoute must execute it or
+return a failure. It does not widen an explicit route into its automatic pool.
+OmniRoute-managed automatic routing remains available only when explicitly
+requested. Explicit Codex `/model` selection remains user intent.
 
 ### Codex and Pi
 
@@ -52,8 +52,8 @@ owns routing, account selection, task orchestration, or durable state.
 
 `quattro-agent prompt` classifies a request before task creation. A DIRECT
 request uses `HarnessRuntime.direct_response`, which validates the approved
-OmniRoute contract, builds only bounded retrieval context, retains selected
-model and tier behavior, and sends one Responses request to the loopback
+OmniRoute contract and model registry, builds only bounded retrieval context,
+selects an exact account-qualified model route, and sends a Responses request to the loopback
 OmniRoute endpoint. It creates no durable execution task and launches no
 Codex/Pi child.
 

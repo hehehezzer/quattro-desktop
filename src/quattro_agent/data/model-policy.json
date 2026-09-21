@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "targets": [
+    {"route":"account-1/gpt-5.6-luna","provider":"codex","account":"account-1","model":"gpt-5.6-luna","capabilities":["conversation","coding","repository_read","repository_write","shell","git","reasoning","long_context","tool_calling"],"tiers":["FAST"],"costRank":1,"priority":1},
+    {"route":"account-2/gpt-5.6-luna","provider":"codex","account":"account-2","model":"gpt-5.6-luna","capabilities":["conversation","coding","repository_read","repository_write","shell","git","reasoning","long_context","tool_calling"],"tiers":["FAST"],"costRank":1,"priority":2},
+    {"route":"account-1/gpt-5.6-terra","provider":"codex","account":"account-1","model":"gpt-5.6-terra","capabilities":["conversation","coding","repository_read","repository_write","shell","git","reasoning","long_context","tool_calling"],"tiers":["STANDARD"],"costRank":2,"priority":1},
+    {"route":"account-2/gpt-5.6-terra","provider":"codex","account":"account-2","model":"gpt-5.6-terra","capabilities":["conversation","coding","repository_read","repository_write","shell","git","reasoning","long_context","tool_calling"],"tiers":["STANDARD"],"costRank":2,"priority":2},
+    {"route":"account-1/gpt-5.6-sol","provider":"codex","account":"account-1","model":"gpt-5.6-sol","capabilities":["conversation","coding","repository_read","repository_write","shell","git","reasoning","long_context","tool_calling"],"tiers":["REASONING"],"costRank":3,"priority":1},
+    {"route":"account-2/gpt-5.6-sol","provider":"codex","account":"account-2","model":"gpt-5.6-sol","capabilities":["conversation","coding","repository_read","repository_write","shell","git","reasoning","long_context","tool_calling"],"tiers":["REASONING"],"costRank":3,"priority":2}
+  ]
+}

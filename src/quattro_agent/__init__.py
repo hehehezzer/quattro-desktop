@@ -27,6 +27,10 @@ from .mandatory_context import (
     resolve_project_destination,
 )
 from .collaboration import ProjectIdentity, RepositoryCoordinator, canonical_project
+from .model_registry import (
+    ExecutionTarget, ModelTarget, default_policy_path, load_model_registry,
+    execution_target_for_route, select_execution_target, target_matches_actual,
+)
 
 __all__ = [
     "CURRENT_AI_CONFIG_VERSION",
@@ -61,6 +65,13 @@ __all__ = [
     "validate_omniroute_contract",
     "validate_catalog_parity",
     "validate_ai_config",
+    "ExecutionTarget",
+    "ModelTarget",
+    "default_policy_path",
+    "load_model_registry",
+    "execution_target_for_route",
+    "select_execution_target",
+    "target_matches_actual",
 ]
 
 from .routing import (
