@@ -622,8 +622,70 @@ class EvidenceSelectionTests(unittest.TestCase):
             )
             self.assertIn(requests[2], selected_requests)
 
+    def test_component_scan_does_not_hold_writer_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = IntelligenceStore(pathlib.Path(temporary) / "intelligence.sqlite3")
+            _record(store, "candidate", "Inspect the README")
+            from quattro_agent.intelligence.dataset import connected_component_fingerprints
+
+            def probe(rows):
+                connection = store._connect()
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.rollback()
+                finally:
+                    connection.close()
+                return connected_component_fingerprints(rows)
+
+            with mock.patch(
+                "quattro_agent.intelligence.dataset.connected_component_fingerprints",
+                side_effect=probe,
+            ):
+                selected = store.create_blind_review_batch(
+                    reviewer="reviewer-a", limit=1,
+                )
+            self.assertEqual(len(selected), 1)
+
 
 class SealedHoldoutTests(unittest.TestCase):
+    def test_holdout_component_scan_does_not_hold_writer_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = IntelligenceStore(pathlib.Path(temporary) / "intelligence.sqlite3")
+            _record(store, "sealed-record", "Inspect the README")
+            from quattro_agent.intelligence.dataset import connected_component_fingerprints
+            component = connected_component_fingerprints(store.list_records())["sealed-record"]
+            store.save_dataset_manifest("dd-dataset-test", {
+                "datasetVersion": "dd-dataset-test",
+                "datasetSchemaVersion": "direct-delegate-dataset-v11",
+            })
+            store.save_dataset_split_assignments(
+                "dd-dataset-test", {component: "test"}
+            )
+
+            def probe(rows):
+                connection = store._connect()
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.rollback()
+                finally:
+                    connection.close()
+                return connected_component_fingerprints(rows)
+
+            with mock.patch(
+                "quattro_agent.intelligence.dataset.connected_component_fingerprints",
+                side_effect=probe,
+            ):
+                sealed = store.seal_holdout(
+                    dataset_version="dd-dataset-test",
+                    members=[{
+                        "group_fingerprint": component,
+                        "record_id": "sealed-record",
+                        "label": "DELEGATE",
+                        "created_at": REVIEWED_AT,
+                    }],
+                )
+            self.assertEqual(sealed["member_count"], 1)
+
     def test_future_duplicate_inherits_sealed_component_protection(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -631,11 +693,25 @@ class SealedHoldoutTests(unittest.TestCase):
             _record(store, "sealed-source", "Fix this endpoint")
             for reviewer in ("reviewer-a", "reviewer-b"):
                 _vote(store, reviewer=reviewer, verdict="DELEGATE")
-            from quattro_agent.intelligence.dataset import DatasetBuilder, load_dataset
-            first = DatasetBuilder(store).extract(root / "datasets")
-            first_rows = load_dataset(pathlib.Path(first["datasetPath"]))
+            from quattro_agent.intelligence.dataset import (
+                DatasetBuilder, connected_component_fingerprints, load_dataset,
+            )
+            component = connected_component_fingerprints(store.list_records())["sealed-source"]
+            store.save_dataset_manifest("dd-dataset-seed", {
+                "datasetVersion": "dd-dataset-seed",
+                "datasetSchemaVersion": "direct-delegate-dataset-v11",
+            })
+            store.save_dataset_split_assignments(
+                "dd-dataset-seed", {component: "test"}
+            )
             store.seal_holdout(
-                dataset_version=first["datasetVersion"], members=[first_rows[0]]
+                dataset_version="dd-dataset-seed",
+                members=[{
+                    "group_fingerprint": component,
+                    "record_id": "sealed-source",
+                    "label": "DELEGATE",
+                    "created_at": REVIEWED_AT,
+                }],
             )
             _record(store, "later-duplicate", "Repair the API route")
             second = DatasetBuilder(store).extract(root / "datasets")
@@ -658,7 +734,11 @@ class SealedHoldoutTests(unittest.TestCase):
                     "datasetVersion": "dd-dataset-test",
                     "datasetSchemaVersion": "direct-delegate-dataset-v11",
                     "sourceEvidenceCount": 1,
+                    "splitAssignments": {"exposed-group": "test"},
                 },
+            )
+            store.save_dataset_split_assignments(
+                "dd-dataset-test", {"exposed-group": "test"}
             )
             member = {
                 "group_fingerprint": "exposed-group",
@@ -687,7 +767,11 @@ class SealedHoldoutTests(unittest.TestCase):
             store.save_dataset_manifest("dd-dataset-test", {
                 "datasetVersion": "dd-dataset-test",
                 "datasetSchemaVersion": "direct-delegate-dataset-v11",
+                "splitAssignments": {components["candidate-record"]: "test"},
             })
+            store.save_dataset_split_assignments(
+                "dd-dataset-test", {components["candidate-record"]: "test"}
+            )
             store.record_evaluation_exposure(
                 [{"record_id": "opened-record", "split": "test"}],
                 dataset_version="dd-dataset-test",
@@ -713,7 +797,11 @@ class SealedHoldoutTests(unittest.TestCase):
                     "datasetVersion": "dd-dataset-test",
                     "datasetSchemaVersion": "direct-delegate-dataset-v11",
                     "sourceEvidenceCount": 1,
+                    "splitAssignments": {"sealed-group": "test"},
                 },
+            )
+            store.save_dataset_split_assignments(
+                "dd-dataset-test", {"sealed-group": "test"}
             )
             member = {
                 "group_fingerprint": "sealed-group",
@@ -765,6 +853,31 @@ class SealedHoldoutTests(unittest.TestCase):
                 store.seal_holdout(
                     dataset_version="dd-dataset-test",
                     members=[member | {"label": "DELEGATE"}],
+                )
+
+    def test_store_rejects_non_test_member_before_sealing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = IntelligenceStore(pathlib.Path(temporary) / "intelligence.sqlite3")
+            store.save_dataset_manifest(
+                "dd-dataset-test",
+                {
+                    "datasetVersion": "dd-dataset-test",
+                    "datasetSchemaVersion": "direct-delegate-dataset-v11",
+                    "splitAssignments": {"train-group": "train"},
+                },
+            )
+            store.save_dataset_split_assignments(
+                "dd-dataset-test", {"train-group": "train"}
+            )
+            with self.assertRaisesRegex(ValueError, "registered test split"):
+                store.seal_holdout(
+                    dataset_version="dd-dataset-test",
+                    members=[{
+                        "group_fingerprint": "train-group",
+                        "record_id": "train-record",
+                        "label": "DIRECT",
+                        "created_at": "2026-09-20T00:00:00+00:00",
+                    }],
                 )
 
     def test_training_rejects_a_sealed_group_assigned_to_train(self) -> None:

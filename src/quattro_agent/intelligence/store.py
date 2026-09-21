@@ -418,6 +418,19 @@ class IntelligenceStore:
                     manifest_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS dataset_split_assignments (
+                    dataset_version TEXT NOT NULL,
+                    group_fingerprint TEXT NOT NULL,
+                    split TEXT NOT NULL CHECK(split IN ('train','validation','test')),
+                    PRIMARY KEY(dataset_version,group_fingerprint),
+                    FOREIGN KEY(dataset_version) REFERENCES dataset_versions(dataset_version)
+                );
+                CREATE TRIGGER IF NOT EXISTS immutable_dataset_split_update
+                    BEFORE UPDATE ON dataset_split_assignments BEGIN
+                    SELECT RAISE(ABORT,'dataset split assignments are immutable'); END;
+                CREATE TRIGGER IF NOT EXISTS immutable_dataset_split_delete
+                    BEFORE DELETE ON dataset_split_assignments BEGIN
+                    SELECT RAISE(ABORT,'dataset split assignments are immutable'); END;
 
                 CREATE TABLE IF NOT EXISTS model_versions (
                     model_version TEXT PRIMARY KEY,
@@ -1439,6 +1452,19 @@ class IntelligenceStore:
             raise ValueError("blind review queue requires valid reviewer provenance")
         bounded_limit = max(1, min(int(limit), 500))
         batch_id = f"brb_{uuid.uuid4().hex}"
+        with self._reader() as snapshot_connection:
+            snapshot_rows = snapshot_connection.execute(
+                """SELECT * FROM routing_records
+                   WHERE source_kind NOT IN ('curated_benchmark','probe_gold')
+                     AND entrypoint NOT IN ('interactive','resume')
+                     AND request_text <> ''
+                   ORDER BY created_at,record_id"""
+            ).fetchall()
+        normalized_rows = [dict(row) for row in snapshot_rows]
+        # Duplicate-family discovery is quadratic. Keep it outside the sole
+        # SQLite writer lock, then verify the snapshot before persisting.
+        from .dataset import connected_component_fingerprints
+        components = connected_component_fingerprints(normalized_rows)
         with self._transaction(immediate=True) as connection:
             active = self._active_blind_votes(connection)
             pending_items = connection.execute(
@@ -1482,17 +1508,17 @@ class IntelligenceStore:
                 if record is not None:
                     category_counts[sampling_category(str(record["request_text"]))] += 1
                     bucket_counts[sampling_bucket(str(record["request_text"]))] += 1
-            rows = connection.execute(
+            current_rows = connection.execute(
                 """SELECT * FROM routing_records
                    WHERE source_kind NOT IN ('curated_benchmark','probe_gold')
                      AND entrypoint NOT IN ('interactive','resume')
                      AND request_text <> ''
                    ORDER BY created_at,record_id"""
             ).fetchall()
-            normalized_rows = [dict(row) for row in rows]
-            # Import lazily to avoid the dataset/store module initialization cycle.
-            from .dataset import connected_component_fingerprints
-            components = connected_component_fingerprints(normalized_rows)
+            if [dict(row) for row in current_rows] != normalized_rows:
+                raise RuntimeError(
+                    "routing evidence changed while preparing the review batch; retry"
+                )
             reviewed_components = {
                 components[record_id]
                 for record_id in reviewed_by_reviewer if record_id in components
@@ -2500,6 +2526,51 @@ class IntelligenceStore:
             raise ValueError("stored dataset manifest is invalid")
         return value
 
+    def save_dataset_split_assignments(
+        self, dataset_version: str, assignments: Mapping[str, str],
+    ) -> None:
+        """Persist the exact immutable group split for a registered dataset."""
+        normalized = {
+            str(group): str(split) for group, split in assignments.items()
+            if str(group)
+        }
+        if not normalized or set(normalized.values()) - {"train", "validation", "test"}:
+            raise ValueError("dataset split assignments are invalid")
+        with self._transaction(immediate=True) as connection:
+            if connection.execute(
+                "SELECT 1 FROM dataset_versions WHERE dataset_version = ?",
+                (dataset_version,),
+            ).fetchone() is None:
+                raise KeyError(f"unknown dataset version: {dataset_version}")
+            existing = {
+                str(row[0]): str(row[1]) for row in connection.execute(
+                    "SELECT group_fingerprint,split FROM dataset_split_assignments "
+                    "WHERE dataset_version = ? ORDER BY group_fingerprint",
+                    (dataset_version,),
+                ).fetchall()
+            }
+            if existing:
+                if existing != normalized:
+                    raise ValueError(
+                        f"dataset split assignments are immutable: {dataset_version}"
+                    )
+                return
+            connection.executemany(
+                "INSERT INTO dataset_split_assignments(dataset_version,group_fingerprint,split) "
+                "VALUES(?,?,?)",
+                [(dataset_version, group, split) for group, split in sorted(normalized.items())],
+            )
+
+    def dataset_split_assignments(self, dataset_version: str) -> dict[str, str]:
+        with self._reader() as connection:
+            return {
+                str(row[0]): str(row[1]) for row in connection.execute(
+                    "SELECT group_fingerprint,split FROM dataset_split_assignments "
+                    "WHERE dataset_version = ? ORDER BY group_fingerprint",
+                    (dataset_version,),
+                ).fetchall()
+            }
+
     def seal_holdout(
         self,
         *,
@@ -2554,6 +2625,29 @@ class IntelligenceStore:
         })
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         holdout_id = f"dd-holdout-{digest[:16]}"
+        registered_manifest = self.dataset_manifest(dataset_version)
+        if registered_manifest.get("datasetSchemaVersion") != DATASET_SCHEMA_VERSION:
+            raise ValueError(
+                "final holdouts require a current unexposed dataset snapshot"
+            )
+        split_assignments = self.dataset_split_assignments(dataset_version)
+        if not split_assignments:
+            raise ValueError("registered dataset lacks verifiable split assignments")
+        for member in normalized:
+            if split_assignments.get(member["groupFingerprint"]) != "test":
+                raise ValueError(
+                    "sealed holdout members must belong to the registered test split"
+                )
+        with self._reader() as snapshot_connection:
+            snapshot_records = [
+                self._normalize_record(row) for row in snapshot_connection.execute(
+                    "SELECT * FROM routing_records ORDER BY created_at,record_id"
+                ).fetchall()
+            ]
+        snapshot_components: dict[str, str] = {}
+        if snapshot_records:
+            from .dataset import connected_component_fingerprints
+            snapshot_components = connected_component_fingerprints(snapshot_records)
         with self._transaction(immediate=True) as connection:
             dataset_row = connection.execute(
                 "SELECT manifest_json FROM dataset_versions WHERE dataset_version = ?",
@@ -2577,6 +2671,10 @@ class IntelligenceStore:
                     "SELECT * FROM routing_records ORDER BY created_at,record_id"
                 ).fetchall()
             ]
+            if current_records != snapshot_records:
+                raise RuntimeError(
+                    "routing evidence changed while preparing the sealed holdout; retry"
+                )
             current_record_ids = {
                 str(record["record_id"]) for record in current_records
             }
@@ -2592,8 +2690,7 @@ class IntelligenceStore:
             if current_records:
                 if not proposed_record_ids <= current_record_ids:
                     raise ValueError("sealed holdout source records are unavailable")
-                from .dataset import connected_component_fingerprints
-                current_components = connected_component_fingerprints(current_records)
+                current_components = snapshot_components
                 for member in normalized:
                     if current_components[member["recordId"]] != member["groupFingerprint"]:
                         raise ValueError(

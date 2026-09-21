@@ -1755,6 +1755,7 @@ class DatasetBuilder:
             ),
             "splitManifestFingerprint": split_manifest_digest,
             "splitManifestGroupCount": len(split_groups),
+            "splitAssignments": dict(sorted(split_groups.items())),
             "chronologicalBlindBoundaryApplied": bool(chronological_assignments),
             "sealedHoldout": evidence["holdout_summary"],
             "chronologicalBoundary": quality.get("chronologicalCoverage", {}).get(
@@ -1788,6 +1789,7 @@ class DatasetBuilder:
             manifest["splitManifestPath"] = str(split_manifest_path)
         _atomic_lines(manifest_path, [manifest])
         self.store.save_dataset_manifest(dataset_version, manifest)
+        self.store.save_dataset_split_assignments(dataset_version, split_groups)
         result = manifest | {
             "manifestPath": str(manifest_path),
             "snapshotReused": snapshot_reused,
