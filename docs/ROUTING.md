@@ -395,6 +395,14 @@ Antigravity image-only route is intentionally not a Codex picker entry; image
 generation remains available through the credential-free local image MCP
 bridge.
 
+All verified account-qualified GPT-6/GPT-5.6 routes, automatic routes, and
+vision-capable Antigravity text routes advertise both `text` and `image` input
+modalities. Codex requires this catalog capability before it will accept a
+clipboard or file image attachment. Native-vision routes receive attachments directly. Picker routes backed by
+text-only models accept the attachment through OmniRoute's configured bounded
+image-to-text modality bridge, so the catalog describes the effective end-to-end
+input contract rather than only the upstream model's native modality.
+
 Selecting `auto` enables per-task Quattro target selection. Selecting one of the three
 `auto/...` values explicitly delegates model choice to the named OmniRoute route.
 Unknown values are rejected by Codex against the same catalog instead of being

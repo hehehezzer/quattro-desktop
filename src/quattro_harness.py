@@ -1672,7 +1672,14 @@ class HarnessRuntime:
             )
         routing = private.get("routing") if isinstance(private.get("routing"), Mapping) else {}
         routing_tier = str(routing.get("tier", RoutingTier.STANDARD.value))
-        model_selection = "quattro-explicit" if execution_target else ("automatic" if model_override else "manual")
+        model_selection = (
+            "quattro-explicit"
+            if execution_target is not None and execution_target.mode == "EXPLICIT"
+            else "manual"
+            if execution_target is not None and execution_target.mode == "MANUAL"
+            else "automatic"
+            if model_override else "manual"
+        )
         model_route = model_override or configured_model or "configured default"
         # Tier effort remains authoritative except for explicit Astra routes,
         # whose supported low/high choice is preserved from native config.

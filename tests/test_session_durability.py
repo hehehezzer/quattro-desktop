@@ -96,6 +96,9 @@ class SessionDurabilityTests(unittest.TestCase):
             command_resolver=resolver,
             codex_preflight=lambda _home: None,
         )
+        self.runtime._configured_codex_catalog = (  # type: ignore[method-assign]
+            lambda _home: SRC / "quattro/omniroute-model-catalog.json"
+        )
 
     def tearDown(self):
         self.temp.cleanup()
@@ -327,6 +330,9 @@ class SessionDurabilityTests(unittest.TestCase):
             command_resolver=lambda name: str(self.agent) if name in {"codex", "pi"} else shutil.which(name),
             codex_preflight=lambda _home: None,
         )
+        restarted._configured_codex_catalog = (  # type: ignore[method-assign]
+            lambda _home: SRC / "quattro/omniroute-model-catalog.json"
+        )
         results = restarted.reconcile()
         self.assertTrue(any(item.get("quattro_session_id") == logical for item in results))
         session = restarted.store.get_logical_session(logical)
@@ -394,6 +400,9 @@ class SessionDurabilityTests(unittest.TestCase):
             script_path=self.agent, default_workspace=self.project,
             command_resolver=lambda name: str(self.agent) if name in {"codex", "pi"} else shutil.which(name),
             codex_preflight=lambda _home: None,
+        )
+        restarted._configured_codex_catalog = (  # type: ignore[method-assign]
+            lambda _home: SRC / "quattro/omniroute-model-catalog.json"
         )
         located = next(row for row in restarted.list_logical_sessions() if row["quattroSessionId"] == logical)
         self.assertEqual(located["recoveryState"], "recoverable")

@@ -56,7 +56,8 @@
       "effective_context_window_percent": 95,
       "experimental_supported_tools": [],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "supports_search_tool": false,
       "use_responses_lite": true,
@@ -67,7 +68,7 @@
     },
     {
       "slug": "auto/coding:cheap",
-      "display_name": "Pinned route · cheap coding",
+      "display_name": "Pinned route \u00b7 cheap coding",
       "description": "Low-cost coding capability with latency tie-breaking owned by OmniRoute.",
       "default_reasoning_level": "low",
       "supported_reasoning_levels": [
@@ -120,7 +121,8 @@
       "effective_context_window_percent": 95,
       "experimental_supported_tools": [],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "supports_search_tool": false,
       "use_responses_lite": true,
@@ -131,7 +133,7 @@
     },
     {
       "slug": "auto/coding",
-      "display_name": "Pinned route · coding",
+      "display_name": "Pinned route \u00b7 coding",
       "description": "Normal coding capability selected by OmniRoute.",
       "default_reasoning_level": "low",
       "supported_reasoning_levels": [
@@ -184,7 +186,8 @@
       "effective_context_window_percent": 95,
       "experimental_supported_tools": [],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "supports_search_tool": false,
       "use_responses_lite": true,
@@ -195,7 +198,7 @@
     },
     {
       "slug": "auto/reasoning",
-      "display_name": "Pinned route · reasoning",
+      "display_name": "Pinned route \u00b7 reasoning",
       "description": "Reasoning capability selected by OmniRoute.",
       "default_reasoning_level": "low",
       "supported_reasoning_levels": [
@@ -248,7 +251,8 @@
       "effective_context_window_percent": 95,
       "experimental_supported_tools": [],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "supports_search_tool": false,
       "use_responses_lite": true,
@@ -295,14 +299,15 @@
       "tool_mode": "code_mode_only",
       "base_instructions": "You are Codex, an expert coding agent. Follow developer and user instructions, use available tools carefully, and work until the task is complete.",
       "slug": "account-1/gpt-6-astra",
-      "display_name": "Account 1 · GPT-6 Astra",
+      "display_name": "Account 1 \u00b7 GPT-6 Astra",
       "description": "Account 1-pinned GPT-6 Astra through OmniRoute, with low or high thinking and no cross-account fallback.",
       "default_reasoning_level": "low",
       "priority": 2,
       "context_window": 1050000,
       "max_context_window": 1050000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -359,14 +364,15 @@
       "tool_mode": "code_mode_only",
       "base_instructions": "You are Codex, an expert coding agent. Follow developer and user instructions, use available tools carefully, and work until the task is complete.",
       "slug": "account-1/gpt-5.6-sol",
-      "display_name": "Account 1 · GPT-5.6 Sol",
+      "display_name": "Account 1 \u00b7 GPT-5.6 Sol",
       "description": "Account 1-pinned GPT-5.6 Sol route with no cross-account fallback.",
       "default_reasoning_level": "medium",
       "priority": 2,
       "context_window": 872000,
       "max_context_window": 872000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -423,14 +429,15 @@
       "tool_mode": "code_mode_only",
       "base_instructions": "You are Codex, an expert coding agent. Follow developer and user instructions, use available tools carefully, and work until the task is complete.",
       "slug": "account-1/gpt-5.6-terra",
-      "display_name": "Account 1 · GPT-5.6 Terra",
+      "display_name": "Account 1 \u00b7 GPT-5.6 Terra",
       "description": "Account 1-pinned GPT-5.6 Terra route with no cross-account fallback.",
       "default_reasoning_level": "medium",
       "priority": 2,
       "context_window": 872000,
       "max_context_window": 872000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -487,14 +494,15 @@
       "tool_mode": "code_mode_only",
       "base_instructions": "You are Codex, an expert coding agent. Follow developer and user instructions, use available tools carefully, and work until the task is complete.",
       "slug": "account-1/gpt-5.6-luna",
-      "display_name": "Account 1 · GPT-5.6 Luna",
+      "display_name": "Account 1 \u00b7 GPT-5.6 Luna",
       "description": "Account 1-pinned GPT-5.6 Luna route with no cross-account fallback.",
       "default_reasoning_level": "medium",
       "priority": 2,
       "context_window": 872000,
       "max_context_window": 872000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -535,14 +543,15 @@
       "tool_mode": "code_mode_only",
       "base_instructions": "You are Codex, an expert coding agent. Follow developer and user instructions, use available tools carefully, and work until the task is complete.",
       "slug": "account-2/gpt-6-astra",
-      "display_name": "Account 2 · GPT-6 Astra",
+      "display_name": "Account 2 \u00b7 GPT-6 Astra",
       "description": "Account 2-pinned GPT-6 Astra through OmniRoute, with low or high thinking and no cross-account fallback.",
       "default_reasoning_level": "low",
       "priority": 2,
       "context_window": 1050000,
       "max_context_window": 1050000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -599,14 +608,15 @@
       "tool_mode": "code_mode_only",
       "base_instructions": "You are Codex, an expert coding agent. Follow developer and user instructions, use available tools carefully, and work until the task is complete.",
       "slug": "account-2/gpt-5.6-sol",
-      "display_name": "Account 2 · GPT-5.6 Sol",
+      "display_name": "Account 2 \u00b7 GPT-5.6 Sol",
       "description": "Account 2-pinned GPT-5.6 Sol route with no cross-account fallback.",
       "default_reasoning_level": "medium",
       "priority": 2,
       "context_window": 872000,
       "max_context_window": 872000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -663,14 +673,15 @@
       "tool_mode": "code_mode_only",
       "base_instructions": "You are Codex, an expert coding agent. Follow developer and user instructions, use available tools carefully, and work until the task is complete.",
       "slug": "account-2/gpt-5.6-terra",
-      "display_name": "Account 2 · GPT-5.6 Terra",
+      "display_name": "Account 2 \u00b7 GPT-5.6 Terra",
       "description": "Account 2-pinned GPT-5.6 Terra route with no cross-account fallback.",
       "default_reasoning_level": "medium",
       "priority": 2,
       "context_window": 872000,
       "max_context_window": 872000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -727,14 +738,15 @@
       "tool_mode": "code_mode_only",
       "base_instructions": "You are Codex, an expert coding agent. Follow developer and user instructions, use available tools carefully, and work until the task is complete.",
       "slug": "account-2/gpt-5.6-luna",
-      "display_name": "Account 2 · GPT-5.6 Luna",
+      "display_name": "Account 2 \u00b7 GPT-5.6 Luna",
       "description": "Account 2-pinned GPT-5.6 Luna route with no cross-account fallback.",
       "default_reasoning_level": "medium",
       "priority": 2,
       "context_window": 872000,
       "max_context_window": 872000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -798,7 +810,8 @@
       "context_window": 1048576,
       "max_context_window": 1048576,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -862,7 +875,8 @@
       "context_window": 1048576,
       "max_context_window": 1048576,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -926,7 +940,8 @@
       "context_window": 1048576,
       "max_context_window": 1048576,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -990,7 +1005,8 @@
       "context_window": 1048576,
       "max_context_window": 1048576,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1054,7 +1070,8 @@
       "context_window": 1048576,
       "max_context_window": 1048576,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1118,7 +1135,8 @@
       "context_window": 1048576,
       "max_context_window": 1048576,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1182,7 +1200,8 @@
       "context_window": 1048576,
       "max_context_window": 1048576,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1246,7 +1265,8 @@
       "context_window": 1000000,
       "max_context_window": 1000000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1310,7 +1330,8 @@
       "context_window": 1000000,
       "max_context_window": 1000000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1374,7 +1395,8 @@
       "context_window": 131072,
       "max_context_window": 131072,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1438,7 +1460,8 @@
       "context_window": 1000000,
       "max_context_window": 1000000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1502,7 +1525,8 @@
       "context_window": 1000000,
       "max_context_window": 1000000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1566,7 +1590,8 @@
       "context_window": 1000000,
       "max_context_window": 1000000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1630,7 +1655,8 @@
       "context_window": 1000000,
       "max_context_window": 1000000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1694,7 +1720,8 @@
       "context_window": 1000000,
       "max_context_window": 1000000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1758,7 +1785,8 @@
       "context_window": 1000000,
       "max_context_window": 1000000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1822,7 +1850,8 @@
       "context_window": 200000,
       "max_context_window": 200000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -1886,7 +1915,8 @@
       "context_window": 200000,
       "max_context_window": 200000,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     }
   ]
