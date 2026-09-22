@@ -199,7 +199,7 @@ class PiAdapter(AgentAdapter):
         self.assert_policy_supported(spec)
         worker_args = (
             (
-                "--provider", "omniroute", "--model", "auto", "--mode", "json",
+                "--provider", "omniroute", "--model", spec.model_override or "auto", "--mode", "json",
                 "--no-session", "--no-context-files", "--no-skills",
                 "--no-prompt-templates",
             )

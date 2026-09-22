@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 from unittest import mock
 
 SRC = pathlib.Path(__file__).parents[1] / "src"
@@ -135,6 +136,29 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def _matching_locked_receipt(self, plan_id: str, **_kwargs):
+        target = None
+        for projected in self.runtime.store.list_display_tasks(limit=100):
+            private = self.runtime.store.get_task(
+                str(projected["taskId"]), include_private=True,
+            )["private_payload"]
+            plan = private.get("activeExecutionPlan", private.get("executionPlan"))
+            if isinstance(plan, dict) and plan.get("planId") == plan_id:
+                target = plan.get("target")
+                break
+        if not isinstance(target, dict):
+            return None
+        return {
+            "plan_id": plan_id,
+            "success": True,
+            "actual_provider": target.get("provider"),
+            "actual_account": target.get("account"),
+            "actual_model": target.get("model"),
+            "actual_route": target.get("route"),
+            "connection_id": f"connection-{target.get('account')}",
+            "failure": None,
+        }
+
     def test_prompt_task_retains_terminal_outcome_and_private_boundary(self):
         task_id, result = self.runtime.submit(
             agent="codex",
@@ -234,6 +258,57 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(result["tokenTelemetry"]["cacheHitRate"], 0.8)
         self.assertEqual(result["tokenTelemetry"]["cacheMetricSource"], "provider_reported")
 
+    def test_direct_response_rejects_invalid_provider_cache_counts(self):
+        class Response:
+            headers = {
+                "X-OmniRoute-Provider": "cx",
+                "X-OmniRoute-Model": "gpt-5.6-luna",
+                "X-OmniRoute-Account": "account-1",
+                "X-OmniRoute-Route": "account-1/gpt-5.6-luna",
+            }
+
+            def read(self, _limit):
+                return b'{"output_text":"ok","usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":180},"output_tokens":1}}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch("quattro_harness.urllib.request.urlopen", return_value=Response()),
+        ):
+            result = self.runtime.direct_response(project=self.project, prompt="hello")
+        self.assertIsNone(result["tokenTelemetry"]["cachedInputTokens"])
+        self.assertIsNone(result["tokenTelemetry"]["uncachedInputTokens"])
+        self.assertIsNone(result["tokenTelemetry"]["cacheHitRate"])
+        self.assertEqual(result["tokenTelemetry"]["cacheMetricSource"], "unavailable")
+
+    def test_locked_receipt_polling_accepts_delayed_exact_receipt(self):
+        class Response:
+            def read(self, _limit):
+                return b'{"plan_id":"plan-1","success":true}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        with mock.patch(
+            "quattro_harness.urllib.request.urlopen",
+            side_effect=[urllib.error.URLError("pending"), Response()],
+        ) as open_request:
+            receipt = self.runtime._locked_target_receipt(
+                "plan-1", attempts=3, delay_seconds=0,
+            )
+        self.assertEqual(receipt, {"plan_id": "plan-1", "success": True})
+        self.assertEqual(open_request.call_count, 2)
+
     def test_direct_hello_skips_optional_retrieval_and_stays_fast(self):
         class Response:
             headers = {
@@ -328,6 +403,45 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(result["model"], "account-1/gpt-5.6-luna")
         self.assertFalse(result["routingSnapshot"]["fallback_used"])
 
+    def test_direct_exhausted_transport_retry_never_advances_target(self):
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        failure = OmniRouteAttemptError(
+            "connection reset", retryable=True,
+            error_type="TRANSPORT_FAILURE", transport_retryable=True,
+        )
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime, "_send_omniroute_response", side_effect=[failure, failure],
+            ) as send,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "connection reset"):
+                self.runtime.direct_response(project=self.project, prompt="hello")
+        self.assertEqual(send.call_count, 2)
+        self.assertEqual(send.call_args_list[0].args[0], send.call_args_list[1].args[0])
+
+    def test_delegated_locked_success_without_receipt_fails_closed(self):
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        self.fake.write_text("#!/bin/sh\necho success\nexit 0\n", encoding="utf-8")
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(self.runtime, "_locked_target_receipt", return_value=None),
+        ):
+            task_id = self.runtime.create_task(
+                agent="codex", project=self.project, prompt="Inspect README.md",
+                mode="prompt", profile_name="audit-read-only",
+            )
+            task = self.runtime.store.get_task(task_id, include_private=True)
+            private = dict(task["private_payload"])
+            private["delegatedWorker"] = True
+            self.runtime.store.update_private_payload(task_id, private)
+            code = self.runtime.run_task(task_id)
+        self.assertEqual(code, 1)
+        task = self.runtime.store.display_task(task_id)
+        self.assertNotEqual(task["state"], "succeeded")
+
     def test_direct_nonretryable_failure_does_not_duplicate_request(self):
         catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
         with (
@@ -388,7 +502,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             mock.patch.object(
                 self.runtime,
                 "_locked_target_receipt",
-                side_effect=lambda plan_id: (
+                side_effect=lambda plan_id, **_kwargs: (
                     {
                         "plan_id": plan_id,
                         "success": True,
@@ -476,7 +590,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
                 parent_task_id=None,
             )
         self.assertIsNone(task_id)
-        self.assertEqual(exit_code, 0)
+        self.assertEqual(exit_code, 0, report)
         self.assertEqual(report["status"], "not_delegated")
         run.assert_not_called()
 
@@ -505,13 +619,21 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         parent = self.runtime.create_task(
             agent="codex", project=self.project, prompt="primary", mode="interactive"
         )
-        task_id, exit_code, report = self.runtime.delegate_to_pi(
-            project=self.project,
-            objective="Explore the repository and locate the recovery implementation",
-            kind="exploration",
-            parent_task_id=parent,
+        with mock.patch.object(
+            self.runtime, "_locked_target_receipt",
+            side_effect=self._matching_locked_receipt,
+        ):
+            task_id, exit_code, report = self.runtime.delegate_to_pi(
+                project=self.project,
+                objective="Explore the repository and locate the recovery implementation",
+                kind="exploration",
+                parent_task_id=parent,
+            )
+        self.assertEqual(
+            exit_code, 0,
+            json.dumps({"report": report, "task": self.runtime.show_task(str(task_id)),
+                        "events": self.runtime.store.display_events(str(task_id))}, default=str),
         )
-        self.assertEqual(exit_code, 0)
         self.assertIsNotNone(task_id)
         self.assertEqual(report["worker"], "pi")
         self.assertIn("Located recovery code", report["result"])
@@ -901,13 +1023,21 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         context = self.runtime.coordinator.context(first_coord["sessionId"])
         self.assertIn("appointment frontend", context)
         self.assertIn("Write ownership: src/auth", context)
-        child_id, child_exit, _report = self.runtime.delegate_to_pi(
-            project=self.project,
-            objective="Explore the repository collaboration boundary and report exact evidence",
-            kind="exploration",
-            parent_task_id=first,
+        with mock.patch.object(
+            self.runtime, "_locked_target_receipt",
+            side_effect=self._matching_locked_receipt,
+        ):
+            child_id, child_exit, _report = self.runtime.delegate_to_pi(
+                project=self.project,
+                objective="Explore the repository collaboration boundary and report exact evidence",
+                kind="exploration",
+                parent_task_id=first,
+            )
+        self.assertEqual(
+            child_exit, 0,
+            json.dumps({"report": _report, "task": self.runtime.show_task(str(child_id)),
+                        "events": self.runtime.store.display_events(str(child_id))}, default=str),
         )
-        self.assertEqual(child_exit, 0)
         child = self.runtime.store.get_task(str(child_id), include_private=True)
         self.assertEqual(pathlib.Path(child["project_path"]), self.project)
         self.assertEqual(child["private_payload"]["coordinationSessionId"], first_coord["sessionId"])

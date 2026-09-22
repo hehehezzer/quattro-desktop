@@ -169,8 +169,13 @@ Codex can provide materially better context. If the policy declines delegation, 
 """
 
 
-def ensure_pi_worker_home(path: Path) -> Path:
-    """Create a credential-free Pi runtime that routes only through local OmniRoute."""
+def ensure_pi_worker_home(path: Path, *, model: str = PI_WORKER_MODEL) -> Path:
+    """Create a credential-free Pi runtime pinned to one Quattro-selected route.
+
+    Delegated workers pass the locked routing envelope through a request header.
+    ``auto`` remains available only for legacy/direct Pi callers that do not
+    carry an ExecutionPlan; new delegated workers always provide an exact route.
+    """
     path = path.expanduser().resolve(strict=False)
     if path.exists() and path.is_symlink():
         raise OSError("Pi worker home must not be a symbolic link")
@@ -181,13 +186,14 @@ def ensure_pi_worker_home(path: Path) -> Path:
             PI_WORKER_PROVIDER: {
                 "baseUrl": PI_WORKER_BASE_URL,
                 "api": "openai-responses",
+                "headers": {"X-Quattro-Routing": "$QUATTRO_ROUTING_ENVELOPE"},
                 # Pi requires a non-empty value for keyless local providers. This
                 # sentinel is deliberately not a credential and must not be replaced
                 # with a real secret; the local gateway ignores it.
                 "apiKey": "quattro-local-only",
                 "models": [{
-                    "id": PI_WORKER_MODEL,
-                    "name": "OmniRoute Auto",
+                    "id": model,
+                    "name": "Quattro Locked Target" if model != PI_WORKER_MODEL else "OmniRoute Auto",
                     "reasoning": True,
                     "input": ["text"],
                     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
@@ -197,7 +203,7 @@ def ensure_pi_worker_home(path: Path) -> Path:
             }
         }
     }
-    settings = {"defaultProvider": PI_WORKER_PROVIDER, "defaultModel": PI_WORKER_MODEL}
+    settings = {"defaultProvider": PI_WORKER_PROVIDER, "defaultModel": model}
     for name, value in (("models.json", models), ("settings.json", settings)):
         target = path / name
         if target.exists() and target.is_symlink():

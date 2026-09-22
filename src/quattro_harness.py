@@ -94,6 +94,7 @@ from quattro_agent.routing_intelligence import (
     model_selection_from_dict,
     record_local_outcome,
     routing_snapshot,
+    profile_task,
     task_profile_from_dict,
     with_context_estimates,
 )
@@ -1160,12 +1161,21 @@ class HarnessRuntime:
                         "retryAfterMs": error.retry_after_ms,
                         "transportRetries": transport_attempt,
                     })
-                    if not error.retryable:
+                    if not (
+                        error.error_type in FALLBACK_ELIGIBLE_TARGET_FAILURES
+                        or (error.retryable and error.error_type == "GATEWAY_ERROR")
+                    ):
                         attempt_plans = []
                     break
             if body is not None:
                 break
-            if last_error is not None and not last_error.retryable:
+            if (
+                last_error is not None
+                and not (
+                    last_error.error_type in FALLBACK_ELIGIBLE_TARGET_FAILURES
+                    or (last_error.retryable and last_error.error_type == "GATEWAY_ERROR")
+                )
+            ):
                 break
         if body is None or response_metadata is None:
             update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
@@ -1191,6 +1201,12 @@ class HarnessRuntime:
         )
         input_tokens = usage.get("input_tokens") or usage.get("inputTokens")
         cached_input_tokens = input_details.get("cached_tokens")
+        if not (
+            isinstance(input_tokens, int) and not isinstance(input_tokens, bool)
+            and isinstance(cached_input_tokens, int) and not isinstance(cached_input_tokens, bool)
+            and 0 <= cached_input_tokens <= input_tokens
+        ):
+            cached_input_tokens = None
         uncached_input_tokens = (
             int(input_tokens) - int(cached_input_tokens)
             if isinstance(input_tokens, int) and not isinstance(input_tokens, bool)
@@ -1652,32 +1668,53 @@ class HarnessRuntime:
                 f"executed {provider}/{model}"
             )
 
-    def _locked_target_receipt(self, plan_id: str) -> Mapping[str, Any] | None:
+    def _locked_target_receipt(
+        self, plan_id: str, *, attempts: int = 1, delay_seconds: float = 0.05,
+    ) -> Mapping[str, Any] | None:
         """Read the gateway's sanitized receipt for one exact delegated attempt."""
         query = urllib.parse.urlencode({"plan_id": plan_id})
         request = urllib.request.Request(
             f"{self._omniroute_base_url()}/routing/locked-receipts?{query}",
             headers={"Accept": "application/json", "User-Agent": "Quattro-Routing/2"},
         )
-        try:
-            with urllib.request.urlopen(request, timeout=3) as response:
-                payload = json.loads(response.read(128_000).decode("utf-8"))
-        except (OSError, TimeoutError, urllib.error.URLError, ValueError, json.JSONDecodeError):
-            return None
-        return payload if isinstance(payload, Mapping) else None
+        for attempt in range(max(1, attempts)):
+            try:
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    payload = json.loads(response.read(128_000).decode("utf-8"))
+                if isinstance(payload, Mapping):
+                    return payload
+            except (OSError, TimeoutError, urllib.error.URLError, ValueError, json.JSONDecodeError):
+                pass
+            if attempt + 1 < max(1, attempts):
+                time.sleep(max(0.0, delay_seconds) * (attempt + 1))
+        return None
 
-    def _refresh_locked_receipt(self, task_id: str) -> None:
+    def _refresh_locked_receipt(self, task_id: str, *, required: bool = False) -> None:
         task = self.store.get_task(task_id, include_private=True)
         private = task.get("private_payload")
         if not isinstance(private, Mapping):
+            if required:
+                raise RuntimeError("locked execution plan is unavailable for receipt validation")
             return
         active = private.get("activeExecutionPlan", private.get("executionPlan"))
         if not isinstance(active, Mapping) or not isinstance(active.get("planId"), str):
+            if required:
+                raise RuntimeError("locked execution plan is malformed for receipt validation")
             return
-        receipt = self._locked_target_receipt(str(active["planId"]))
+        receipt = self._locked_target_receipt(str(active["planId"]), attempts=4)
         target = active.get("target")
         if not isinstance(receipt, Mapping) or not isinstance(target, Mapping):
+            if required:
+                self.store.append_event(
+                    task_id, "routing.locked_receipt_unavailable", run_id=None,
+                    display={"planId": active.get("planId"), "reason": "missing_or_malformed"},
+                )
+                raise RuntimeError("locked_receipt_unavailable: receipt is missing or malformed")
             return
+        if receipt.get("plan_id") != active["planId"]:
+            raise RuntimeError("locked target receipt does not match the active execution plan")
+        if receipt.get("success") is not True:
+            raise RuntimeError("locked target receipt does not prove successful execution")
         expected = _execution_target_from_dict(target)
         actual = {
             "provider": receipt.get("actual_provider"),
@@ -1695,6 +1732,8 @@ class HarnessRuntime:
             actual_model=actual.get("model"),
             actual_route=actual.get("route"),
         )
+        if not actual["target_honored"]:
+            raise RuntimeError("locked target receipt failed provider/account/model/route fidelity")
         refreshed = dict(private)
         snapshot = dict(refreshed.get("routingSnapshot", {}))
         snapshot["actual_selection"] = actual
@@ -1825,6 +1864,10 @@ class HarnessRuntime:
         )
         if persisted_plan is not None and not persisted_plan.routing_locked:
             raise ConfigError("persisted execution plan must be routing locked")
+        if task["agent"] == "pi" and persisted_plan is not None:
+            account_home = pathlib.Path(str(
+                self.account(config, persisted_plan.target.account)["codexHome"]
+            )).expanduser().resolve()
         persisted_target = (
             persisted_plan.target.to_dict()
             if persisted_plan is not None else private.get("executionTarget")
@@ -2238,7 +2281,10 @@ class HarnessRuntime:
         if dispatch_envelope is not None:
             overrides["QUATTRO_ROUTING_ENVELOPE"] = encode_routing_header(dispatch_envelope)
         if private.get("delegatedWorker") is True:
-            worker_home = ensure_pi_worker_home(self.private_root / "pi-worker")
+            worker_key = hashlib.sha256(str(task["task_id"]).encode("utf-8")).hexdigest()[:24]
+            worker_home = ensure_pi_worker_home(
+                self.private_root / "pi-worker" / worker_key, model=str(model_route)
+            )
             overrides["PI_CODING_AGENT_DIR"] = str(worker_home)
         logical_session_id = private.get("logicalSessionId")
         if logical_session_id:
@@ -2904,12 +2950,17 @@ class HarnessRuntime:
                 failure_type = None
                 failure_retry_after_ms = None
                 if attempt_plan is not None:
-                    receipt = self._locked_target_receipt(attempt_plan.plan_id)
+                    receipt = self._locked_target_receipt(attempt_plan.plan_id, attempts=4)
                     failure = receipt.get("failure") if isinstance(receipt, Mapping) else None
                     if isinstance(failure, Mapping):
                         failure_type = failure.get("type")
                         failure_retry_after_ms = failure.get("retry_after_ms")
                     # Locked attempts never fall back based on human-readable process output.
+                    if receipt is None:
+                        self.store.append_event(
+                            task_id, "routing.locked_receipt_unavailable", run_id=run_id,
+                            display={"planId": attempt_plan.plan_id, "reason": "failed_attempt"},
+                        )
                     if failure_type not in FALLBACK_ELIGIBLE_TARGET_FAILURES:
                         break
                 else:
@@ -2946,8 +2997,15 @@ class HarnessRuntime:
                 )
             assert result is not None
             duration_ms = max(0, int((time.monotonic() - started_monotonic) * 1_000))
+            active_plan = task["private_payload"].get("executionPlan")
+            if (
+                result.state is RunState.SUCCEEDED
+                and isinstance(active_plan, Mapping)
+                and task["private_payload"].get("delegatedWorker") is True
+                and not interactive
+            ):
+                self._refresh_locked_receipt(task_id, required=True)
             if task["agent"] == "codex":
-                self._refresh_locked_receipt(task_id)
                 self._refresh_adaptive_receipt(task_id)
             delegation_telemetry: dict[str, Any] | None = None
             if (
@@ -3572,6 +3630,33 @@ class HarnessRuntime:
         )
         if parent is not None:
             PolicyProfile.from_dict(parent["policy"]).assert_child(worker_policy)
+        pi_plan = None
+        child_profile = None
+        if parent is not None:
+            parent_plan = parent["private_payload"].get(
+                "activeExecutionPlan", parent["private_payload"].get("executionPlan")
+            )
+            if isinstance(parent_plan, Mapping):
+                inherited = _execution_plan_from_dict(parent_plan)
+                child_profile = profile_task(
+                    objective, agent="pi", workflow="codex-pi-delegation",
+                    policy_name="audit-read-only",
+                )
+                account_home = pathlib.Path(str(
+                    self.account(config, inherited.target.account)["codexHome"]
+                )).expanduser().resolve()
+                catalog = self._configured_codex_catalog(account_home)
+                registry = load_model_registry(default_policy_path(), catalog) if catalog else ()
+                if not any(item.route == inherited.target.route for item in registry):
+                    raise ConfigError("delegated execution target is no longer approved")
+                pi_plan = build_execution_plan(
+                    child_profile, inherited.target, registry,
+                    reasoning_effort=inherited.reasoning_effort,
+                    plan_id=f"task_{uuid.uuid4().hex}.plan-0",
+                )
+                pi_plan = dataclasses.replace(
+                    pi_plan, fallback_allowed=False, fallback_targets=(),
+                )
         task_id = self.store.create_task(
             parent_task_id=parent_task_id,
             workflow="codex-pi-delegation",
@@ -3586,9 +3671,15 @@ class HarnessRuntime:
             private_payload={
                 "prompt": worker_prompt(objective, kind),
                 "mode": "prompt",
-                "accountId": None,
                 "gitStatusBefore": self._git_status_snapshot(project),
                 "delegatedWorker": True,
+                "executionTarget": pi_plan.target.to_dict() if pi_plan else None,
+                "executionPlan": pi_plan.to_dict() if pi_plan else None,
+                "accountId": pi_plan.target.account if pi_plan else None,
+                "routing": (
+                    {"tier": child_profile.tier.value, "task_profile": child_profile.to_dict()}
+                    if child_profile is not None else {}
+                ),
                 "coordinationSessionId": coordination_id,
                 "repositoryId": parent["private_payload"].get("repositoryId") if parent else None,
                 "retryCount": 0,
