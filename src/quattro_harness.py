@@ -28,15 +28,19 @@ import threading
 import time
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from quattro_agent import (
-    RoutingDecision, RoutingTier, TaskState, TaskStore, adapter_for, automatic_model_override,
+    ContextDecision, ExecutionPlan, ExecutionTarget, RoutingDecision, RoutingTier, TaskState,
+    TaskStore, adapter_for, automatic_model_override,
     classify_pre_routing, classify_request, context_budget_tokens, effective_reasoning_effort, load_ai_config,
     next_exceptional_effort, next_tier, policy_profile, default_policy_path,
-    execution_target_for_route, load_model_registry, select_execution_target,
+    build_execution_plan, execution_target_for_route, fallback_execution_plan,
+    load_model_registry, select_execution_target,
     target_matches_actual,
 )
 from quattro_agent.adapters import AgentMode, RunSpec
@@ -90,6 +94,7 @@ from quattro_agent.routing_intelligence import (
     model_selection_from_dict,
     record_local_outcome,
     routing_snapshot,
+    profile_task,
     task_profile_from_dict,
     with_context_estimates,
 )
@@ -129,9 +134,90 @@ MAX_AGENT_OUTPUT_BYTES = 5_000_000
 class OmniRouteAttemptError(RuntimeError):
     """One exact-route transport failure with explicit retry safety."""
 
-    def __init__(self, message: str, *, retryable: bool) -> None:
+    def __init__(
+        self, message: str, *, retryable: bool, error_type: str = "GATEWAY_ERROR",
+        retry_after_ms: int | None = None, transport_retryable: bool = False,
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.error_type = error_type
+        self.retry_after_ms = retry_after_ms
+        self.transport_retryable = transport_retryable
+
+
+class LockedReceiptError(RuntimeError):
+    """A locked execution could not be proven from gateway receipt evidence."""
+
+    def __init__(self, message: str, *, terminal_code: str) -> None:
+        super().__init__(message)
+        self.terminal_code = terminal_code
+
+
+TARGET_FAILURE_TYPES = frozenset({
+    "RATE_LIMITED", "QUOTA_EXHAUSTED", "CREDITS_EXHAUSTED",
+    "MODEL_UNAVAILABLE", "ACCOUNT_UNAVAILABLE", "PROVIDER_UNAVAILABLE",
+    "AUTHENTICATION_FAILED", "CONTEXT_LIMIT", "CAPABILITY_UNSUPPORTED",
+    "TRANSPORT_FAILURE",
+})
+FALLBACK_ELIGIBLE_TARGET_FAILURES = TARGET_FAILURE_TYPES - frozenset({
+    "CONTEXT_LIMIT", "CAPABILITY_UNSUPPORTED", "TRANSPORT_FAILURE",
+})
+
+
+def _execution_target_from_dict(value: Mapping[str, Any]) -> ExecutionTarget:
+    return ExecutionTarget(
+        mode=str(value.get("mode", "EXPLICIT")),
+        provider=str(value.get("provider", "")),
+        account=str(value.get("account", "")),
+        model=str(value.get("model", "")),
+        route=str(value.get("route", "")),
+        tier=str(value.get("tier", "STANDARD")),
+        reason=str(value.get("reason", "")),
+        fallbacks=tuple(str(item) for item in value.get("fallbacks", [])),
+    )
+
+
+def _execution_plan_from_dict(value: Mapping[str, Any]) -> ExecutionPlan:
+    target = value.get("target")
+    task = value.get("task")
+    reasoning = value.get("reasoning")
+    context = value.get("context")
+    tools = value.get("tools")
+    fallback = value.get("fallback")
+    if not all(isinstance(item, Mapping) for item in (
+        target, task, reasoning, context, tools, fallback,
+    )):
+        raise ConfigError("persisted execution plan is malformed")
+    assert isinstance(target, Mapping)
+    assert isinstance(task, Mapping)
+    assert isinstance(reasoning, Mapping)
+    assert isinstance(context, Mapping)
+    assert isinstance(tools, Mapping)
+    assert isinstance(fallback, Mapping)
+    fallback_targets = fallback.get("targets", [])
+    if not isinstance(fallback_targets, list) or not all(
+        isinstance(item, Mapping) for item in fallback_targets
+    ):
+        raise ConfigError("persisted execution plan fallback targets are malformed")
+    return ExecutionPlan(
+        plan_id=str(value.get("planId", "")),
+        task_category=str(task.get("category", "")),
+        task_complexity=str(task.get("complexity", "")),
+        target=_execution_target_from_dict(target),
+        reasoning_effort=str(reasoning.get("effort", "")),
+        context=ContextDecision(
+            strategy=str(context.get("strategy", "")),
+            budget_tokens=int(context.get("budgetTokens", 0)),
+            conversation_budget_tokens=int(context.get("conversationBudgetTokens", 0)),
+            retrieval_budget_tokens=int(context.get("retrievalBudgetTokens", 0)),
+        ),
+        required_tools=tuple(str(item) for item in tools.get("required", [])),
+        fallback_allowed=bool(fallback.get("allowed", False)),
+        fallback_targets=tuple(
+            _execution_target_from_dict(item) for item in fallback_targets
+        ),
+        routing_locked=value.get("routingLocked") is True,
+    )
 SELECTABLE_POLICIES = {
     "audit-read-only", "review-untrusted", "workspace-write",
     "desktop-config-write", "publication-capable", "full-access-explicit",
@@ -619,6 +705,18 @@ class HarnessRuntime:
                 )
         pre_envelope = dict(adaptive.envelope) if adaptive and adaptive.envelope else None
         pre_selection = adaptive.selection.to_dict() if adaptive and adaptive.selection else None
+        # Allocate the durable task identity before materializing the plan so
+        # every execution, including two identical requests, has a unique
+        # auditable plan lineage.
+        task_id = f"task_{uuid.uuid4().hex}"
+        execution_plan = None
+        if execution_target is not None and configured_catalog is not None:
+            execution_plan = build_execution_plan(
+                pre_profile, execution_target,
+                load_model_registry(default_policy_path(), configured_catalog),
+                reasoning_effort=str(routing.reasoning_effort),
+                plan_id=f"{task_id}.plan-0",
+            )
         if pre_envelope is not None:
             # The task id is not known until persistence below.  It is bound to
             # the request-scoped envelope immediately after durable creation.
@@ -653,6 +751,7 @@ class HarnessRuntime:
                         "preferredCandidates": list(adaptive.preferred_candidates) if adaptive else [],
                         "adaptiveMode": adaptive.negotiation.compatibility if adaptive else "standard",
                         "executionTarget": execution_target.to_dict() if execution_target else None,
+                        "executionPlan": execution_plan.to_dict() if execution_plan else None,
                     },
                     "delegationDecision": delegation["decision"],
                     "delegationReason": delegation["reason"],
@@ -681,6 +780,7 @@ class HarnessRuntime:
                     "routingEnvelope": pre_envelope,
                     "routingSelection": pre_selection,
                     "executionTarget": execution_target.to_dict() if execution_target else None,
+                    "executionPlan": execution_plan.to_dict() if execution_plan else None,
                     "routingAdaptive": ({
                         "compatibility": adaptive.negotiation.compatibility,
                         "headerTransport": adaptive.negotiation.header_transport,
@@ -693,6 +793,7 @@ class HarnessRuntime:
                     "preRoutingProfileId": task_profile_identifier(pre_profile),
                 },
                 priority=priority,
+                task_id=task_id,
             )
             intelligence_record_id = record_routing_telemetry(
                 self.intelligence_database,
@@ -847,10 +948,14 @@ class HarnessRuntime:
         routing = classify_pre_routing(pre_routing_input=boundary, config=config)
         profile_snapshot = task_profile_from_dict(routing.task_profile)
         configured_catalog = self._configured_codex_catalog(account_home)
+        registry = (
+            load_model_registry(default_policy_path(), configured_catalog)
+            if configured_catalog is not None else ()
+        )
         if configured_model == "auto" and configured_catalog is not None:
             execution_target = select_execution_target(
                 profile_snapshot,
-                load_model_registry(default_policy_path(), configured_catalog),
+                registry,
                 preferred_account=str(account["id"]),
                 available_accounts=self._enabled_account_ids(config),
             )
@@ -922,7 +1027,6 @@ class HarnessRuntime:
             and configured_model == "auto"
             and configured_catalog is not None
         ):
-            registry = load_model_registry(default_policy_path(), configured_catalog)
             execution_target = select_execution_target(
                 profile_snapshot, registry,
                 preferred_account=str(account["id"]),
@@ -995,46 +1099,92 @@ class HarnessRuntime:
         routing_effort = self._dispatch_reasoning_effort(
             config, routing.display(), model, account_home,
         )
-        attempt_routes = [model]
-        if execution_target is not None:
-            attempt_routes.extend(execution_target.fallbacks[:2])
+        execution_plan = (
+            build_execution_plan(
+                profile_snapshot, execution_target, registry,
+                reasoning_effort=routing_effort,
+                plan_id=intelligence_record_id or task_profile_identifier(profile_snapshot),
+            )
+            if execution_target is not None else None
+        )
+        attempt_plans = [execution_plan] if execution_plan is not None else [None]
+        if execution_plan is not None:
+            attempt_plans.extend(
+                fallback_execution_plan(execution_plan, index, reason="gateway target failure")
+                for index in range(min(2, len(execution_plan.fallback_targets)))
+            )
         fallback_events: list[dict[str, Any]] = []
         last_error: RuntimeError | None = None
         body: Mapping[str, Any] | None = None
         response_metadata: dict[str, Any] | None = None
-        for attempt_index, attempt_route in enumerate(attempt_routes):
+        selected_plan = execution_plan
+        for attempt_index, attempt_plan in enumerate(attempt_plans):
+            attempt_route = attempt_plan.target.route if attempt_plan is not None else model
             request_body: dict[str, Any] = {
                 "model": attempt_route,
                 "input": input_text,
                 "reasoning": {"effort": routing_effort},
             }
+            if attempt_plan is not None:
+                request_body["routing"] = {
+                    "schema_version": 1,
+                    "requirements": {
+                        # Passthrough carries no gateway selection requirements;
+                        # Quattro already enforced its richer capability model.
+                        "capabilities": [],
+                        "minimum_context": profile_snapshot.final_request_tokens,
+                    },
+                    "preferred_candidates": [
+                        f"{attempt_plan.target.provider}/{attempt_plan.target.model}"
+                    ],
+                    "preference_mode": "passthrough",
+                    "task_profile_id": attempt_plan.plan_id,
+                    "plan_id": attempt_plan.plan_id,
+                    "routing_locked": True,
+                    "target": attempt_plan.target.to_dict(),
+                    "tier": profile_snapshot.tier.value,
+                    "routing_policy_version": "quattro-authoritative-v1",
+                }
             if adaptive and adaptive.envelope and execution_target is None:
                 request_body["routing"] = dict(adaptive.envelope)
-            try:
-                body, response_metadata = self._send_omniroute_response(
-                    request_body, timeout_seconds=timeout_seconds,
-                )
-                model = attempt_route
-                if execution_target is not None and attempt_route != execution_target.route:
-                    registry = load_model_registry(default_policy_path(), configured_catalog)
-                    fallback_target = next(item for item in registry if item.route == attempt_route)
-                    execution_target = dataclasses.replace(
-                        execution_target,
-                        provider=fallback_target.provider,
-                        account=fallback_target.account,
-                        model=fallback_target.model,
-                        route=fallback_target.route,
+            for transport_attempt in range(2):
+                try:
+                    body, response_metadata = self._send_omniroute_response(
+                        request_body, timeout_seconds=timeout_seconds,
                     )
-                break
-            except OmniRouteAttemptError as error:
-                last_error = error
-                fallback_events.append({
-                    "route": attempt_route, "attempt": attempt_index + 1,
-                    "error": _bounded(str(error), 500),
-                    "retryable": error.retryable,
-                })
-                if not error.retryable:
+                    model = attempt_route
+                    selected_plan = attempt_plan
+                    execution_target = attempt_plan.target if attempt_plan is not None else execution_target
                     break
+                except OmniRouteAttemptError as error:
+                    last_error = error
+                    if error.transport_retryable and transport_attempt == 0:
+                        continue
+                    fallback_events.append({
+                        "planId": attempt_plan.plan_id if attempt_plan is not None else None,
+                        "route": attempt_route, "attempt": attempt_index + 1,
+                        "error": _bounded(str(error), 500),
+                        "type": error.error_type,
+                        "retryable": error.retryable,
+                        "retryAfterMs": error.retry_after_ms,
+                        "transportRetries": transport_attempt,
+                    })
+                    if not (
+                        error.error_type in FALLBACK_ELIGIBLE_TARGET_FAILURES
+                        or (error.retryable and error.error_type == "GATEWAY_ERROR")
+                    ):
+                        attempt_plans = []
+                    break
+            if body is not None:
+                break
+            if (
+                last_error is not None
+                and not (
+                    last_error.error_type in FALLBACK_ELIGIBLE_TARGET_FAILURES
+                    or (last_error.retryable and last_error.error_type == "GATEWAY_ERROR")
+                )
+            ):
+                break
         if body is None or response_metadata is None:
             update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
                 "success": False,
@@ -1059,32 +1209,42 @@ class HarnessRuntime:
         )
         input_tokens = usage.get("input_tokens") or usage.get("inputTokens")
         cached_input_tokens = input_details.get("cached_tokens")
+        if not (
+            isinstance(input_tokens, int) and not isinstance(input_tokens, bool)
+            and isinstance(cached_input_tokens, int) and not isinstance(cached_input_tokens, bool)
+            and 0 <= cached_input_tokens <= input_tokens
+        ):
+            cached_input_tokens = None
         uncached_input_tokens = (
-            max(0, int(input_tokens) - int(cached_input_tokens or 0))
-            if isinstance(input_tokens, int) and not isinstance(input_tokens, bool) else None
+            int(input_tokens) - int(cached_input_tokens)
+            if isinstance(input_tokens, int) and not isinstance(input_tokens, bool)
+            and isinstance(cached_input_tokens, int) and not isinstance(cached_input_tokens, bool)
+            and 0 <= cached_input_tokens <= input_tokens else None
+        )
+        cache_hit_rate = (
+            cached_input_tokens / input_tokens
+            if isinstance(input_tokens, int) and input_tokens > 0
+            and isinstance(cached_input_tokens, int)
+            and 0 <= cached_input_tokens <= input_tokens else None
         )
         actual_model = str(response_metadata.get("model") or "")
         target_honored = execution_target is None or target_matches_actual(
             execution_target,
             actual_provider=response_metadata.get("provider"),
             actual_model=actual_model,
+            actual_account=response_metadata.get("account"),
+            actual_route=response_metadata.get("route"),
         )
         if execution_target is not None and not target_honored:
             update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
                 "success": False,
                 "failure_category": "execution_target_mismatch",
-                "selected_model": actual_model or None,
-                "selected_provider": response_metadata.get("provider"),
-                "selected_account": execution_target.account,
             })
             raise RuntimeError(
                 f"OmniRoute target mismatch: requested {execution_target.route}, "
                 f"executed {response_metadata.get('provider')}/{actual_model}"
             )
         update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
-            "selected_model": response_metadata.get("model") or model,
-            "selected_provider": response_metadata.get("provider") or "omniroute",
-            "selected_account": execution_target.account if execution_target else str(account["id"]),
             "context_tokens": profile_snapshot.final_request_tokens,
             "retrieval_used": int(diagnostics.get("selectedChunks", 0) or 0) > 0,
             "retrieved_chunk_ids": diagnostics.get("selectedChunkIds", []),
@@ -1138,6 +1298,7 @@ class HarnessRuntime:
         snapshot["execution_target"] = execution_target.to_dict() if execution_target else {
             "mode": "MANUAL", "route": model,
         }
+        snapshot["execution_plan"] = selected_plan.to_dict() if selected_plan else None
         snapshot["target_honored"] = target_honored
         snapshot["fallback_events"] = fallback_events
         snapshot["fallback_used"] = bool(fallback_events)
@@ -1165,6 +1326,10 @@ class HarnessRuntime:
                 "transmittedInputTokens": input_tokens,
                 "cachedInputTokens": cached_input_tokens,
                 "uncachedInputTokens": uncached_input_tokens,
+                "cacheHitRate": cache_hit_rate,
+                "cacheMetricSource": (
+                    "provider_reported" if cached_input_tokens is not None else "unavailable"
+                ),
                 "outputTokens": usage.get("output_tokens") or usage.get("outputTokens"),
             },
             "adaptiveRouting": {
@@ -1201,23 +1366,55 @@ class HarnessRuntime:
                 headers = getattr(response, "headers", {})
         except urllib.error.HTTPError as error:
             detail = error.read(8_192).decode("utf-8", errors="replace")
+            parsed: Mapping[str, Any] = {}
+            try:
+                candidate = json.loads(detail)
+                if isinstance(candidate, Mapping):
+                    parsed = candidate.get("error", candidate)
+                    if not isinstance(parsed, Mapping):
+                        parsed = {}
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            retry_after = error.headers.get("Retry-After") if error.headers else None
+            retry_after_ms = None
+            try:
+                retry_after_ms = int(float(retry_after) * 1_000) if retry_after else None
+            except (TypeError, ValueError):
+                pass
+            parsed_retry_after = parsed.get("retry_after_ms")
+            if isinstance(parsed_retry_after, (int, float)) and not isinstance(parsed_retry_after, bool):
+                retry_after_ms = max(0, int(parsed_retry_after))
+            error_type = str(parsed.get("type") or {
+                429: "RATE_LIMITED",
+                401: "AUTHENTICATION_FAILED",
+                403: "CREDITS_EXHAUSTED",
+                404: "MODEL_UNAVAILABLE",
+            }.get(error.code, "PROVIDER_UNAVAILABLE" if error.code >= 500 else "TRANSPORT_FAILURE"))
+            fallback_eligible = error_type in FALLBACK_ELIGIBLE_TARGET_FAILURES
             raise OmniRouteAttemptError(
                 f"OmniRoute provider failure: HTTP {error.code}: {detail}",
-                retryable=error.code == 429 or 500 <= error.code <= 599,
+                retryable=fallback_eligible,
+                error_type=error_type, retry_after_ms=retry_after_ms,
+                transport_retryable=(error_type == "TRANSPORT_FAILURE"),
             ) from error
         except urllib.error.URLError as error:
             raise OmniRouteAttemptError(
-                f"OmniRoute routing failure: {error.reason}", retryable=False,
+                f"OmniRoute transport failure: {error.reason}", retryable=True,
+                error_type="TRANSPORT_FAILURE", transport_retryable=True,
             ) from error
         except TimeoutError as error:
-            raise OmniRouteAttemptError("OmniRoute target timed out", retryable=False) from error
+            raise OmniRouteAttemptError(
+                "OmniRoute target timed out", retryable=True,
+                error_type="TRANSPORT_FAILURE", transport_retryable=True,
+            ) from error
         except (json.JSONDecodeError, UnicodeDecodeError, TypeError) as error:
             raise OmniRouteAttemptError(
                 "OmniRoute returned a malformed response", retryable=False,
             ) from error
         except OSError as error:
             raise OmniRouteAttemptError(
-                "OmniRoute response could not be read", retryable=False,
+                "OmniRoute response could not be read", retryable=True,
+                error_type="TRANSPORT_FAILURE", transport_retryable=True,
             ) from error
         if not isinstance(body, Mapping):
             raise OmniRouteAttemptError(
@@ -1230,7 +1427,10 @@ class HarnessRuntime:
             actual_cost = None
         return body, {
             "provider": headers.get("X-OmniRoute-Provider"),
+            "account": headers.get("X-OmniRoute-Account"),
             "model": headers.get("X-OmniRoute-Model"),
+            "route": headers.get("X-OmniRoute-Route"),
+            "connection_id": headers.get("X-OmniRoute-Selected-Connection-Id"),
             "cost": actual_cost,
             "cost_state": "actual" if actual_cost is not None else "unknown",
             "latencyMs": headers.get("X-OmniRoute-Latency-Ms"),
@@ -1398,7 +1598,19 @@ class HarnessRuntime:
             "fallback_used": any(row.get("decision") == "skipped_before_dispatch" for row in safe_decisions),
             "received_at": receipt.get("received_at"),
         }
-        target_payload = private.get("executionTarget") if isinstance(private, Mapping) else None
+        observed_account = receipt.get("actual_account") or receipt.get("account")
+        if isinstance(observed_account, str) and observed_account:
+            actual["account"] = observed_account
+        else:
+            actual["account"] = None
+        observed_route = receipt.get("actual_route") or receipt.get("route")
+        actual["route"] = observed_route if isinstance(observed_route, str) and observed_route else None
+        active_plan = private.get("activeExecutionPlan") if isinstance(private, Mapping) else None
+        target_payload = (
+            active_plan.get("target")
+            if isinstance(active_plan, Mapping) and isinstance(active_plan.get("target"), Mapping)
+            else private.get("executionTarget") if isinstance(private, Mapping) else None
+        )
         target_honored = None
         if isinstance(target_payload, Mapping):
             from quattro_agent.model_registry import ExecutionTarget
@@ -1415,8 +1627,9 @@ class HarnessRuntime:
             )
             target_honored = target_matches_actual(
                 expected, actual_provider=provider, actual_model=model,
+                actual_account=actual.get("account"),
+                actual_route=actual.get("route"),
             )
-            actual["account"] = expected.account if target_honored else None
             actual["target_honored"] = target_honored
         refreshed_snapshot = dict(snapshot)
         refreshed_snapshot["actual_selection"] = actual
@@ -1461,6 +1674,123 @@ class HarnessRuntime:
             raise RuntimeError(
                 f"OmniRoute target mismatch: requested {target_payload.get('route')}, "
                 f"executed {provider}/{model}"
+            )
+
+    def _locked_target_receipt(
+        self, plan_id: str, *, attempts: int = 1, delay_seconds: float = 0.05,
+    ) -> Mapping[str, Any] | None:
+        """Read the gateway's sanitized receipt for one exact delegated attempt."""
+        query = urllib.parse.urlencode({"plan_id": plan_id})
+        request = urllib.request.Request(
+            f"{self._omniroute_base_url()}/routing/locked-receipts?{query}",
+            headers={"Accept": "application/json", "User-Agent": "Quattro-Routing/2"},
+        )
+        for attempt in range(max(1, attempts)):
+            try:
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    payload = json.loads(response.read(128_000).decode("utf-8"))
+                if isinstance(payload, Mapping) and payload.get("plan_id") == plan_id:
+                    success = payload.get("success")
+                    if success is True and all(
+                        isinstance(payload.get(key), str) and bool(payload.get(key))
+                        for key in (
+                            "actual_provider", "actual_account", "actual_model", "actual_route",
+                        )
+                    ):
+                        return payload
+                    if success is False and isinstance(payload.get("failure"), Mapping):
+                        return payload
+            except (OSError, TimeoutError, urllib.error.URLError, ValueError, json.JSONDecodeError):
+                pass
+            if attempt + 1 < max(1, attempts):
+                time.sleep(max(0.0, delay_seconds) * (attempt + 1))
+        return None
+
+    def _refresh_locked_receipt(self, task_id: str, *, required: bool = False) -> None:
+        task = self.store.get_task(task_id, include_private=True)
+        private = task.get("private_payload")
+        if not isinstance(private, Mapping):
+            if required:
+                raise RuntimeError("locked execution plan is unavailable for receipt validation")
+            return
+        active = private.get("activeExecutionPlan", private.get("executionPlan"))
+        if not isinstance(active, Mapping) or not isinstance(active.get("planId"), str):
+            if required:
+                raise RuntimeError("locked execution plan is malformed for receipt validation")
+            return
+        receipt = self._locked_target_receipt(str(active["planId"]), attempts=4)
+        target = active.get("target")
+        if not isinstance(receipt, Mapping) or not isinstance(target, Mapping):
+            if required:
+                self.store.append_event(
+                    task_id, "routing.locked_receipt_unavailable", run_id=None,
+                    display={"planId": active.get("planId"), "reason": "missing_or_malformed"},
+                )
+                raise LockedReceiptError(
+                    "locked receipt is unavailable, pending, or incomplete",
+                    terminal_code="locked_receipt_unavailable",
+                )
+            return
+        if receipt.get("plan_id") != active["planId"]:
+            raise LockedReceiptError(
+                "locked target receipt does not match the active execution plan",
+                terminal_code="locked_receipt_mismatch",
+            )
+        if receipt.get("success") is not True:
+            raise LockedReceiptError(
+                "locked target receipt does not prove successful execution",
+                terminal_code="locked_receipt_failed",
+            )
+        expected = _execution_target_from_dict(target)
+        actual = {
+            "provider": receipt.get("actual_provider"),
+            "account": receipt.get("actual_account"),
+            "model": receipt.get("actual_model"),
+            "route": receipt.get("actual_route"),
+            "connectionId": receipt.get("connection_id"),
+            "failure": receipt.get("failure"),
+            "received_at": receipt.get("received_at"),
+        }
+        actual["target_honored"] = target_matches_actual(
+            expected,
+            actual_provider=actual.get("provider"),
+            actual_account=actual.get("account"),
+            actual_model=actual.get("model"),
+            actual_route=actual.get("route"),
+        )
+        if not actual["target_honored"]:
+            raise LockedReceiptError(
+                "locked target receipt failed provider/account/model/route fidelity",
+                terminal_code="locked_target_mismatch",
+            )
+        refreshed = dict(private)
+        snapshot = dict(refreshed.get("routingSnapshot", {}))
+        snapshot["actual_selection"] = actual
+        refreshed["routingSnapshot"] = snapshot
+        self.store.update_private_payload(task_id, refreshed)
+        metadata = dict(task.get("display_metadata", {}))
+        metadata.update({
+            "actualProvider": actual.get("provider"),
+            "actualAccount": actual.get("account"),
+            "actualModel": actual.get("model"),
+            "actualRoute": actual.get("route"),
+            "targetHonored": actual.get("target_honored"),
+        })
+        self.store.update_display_metadata(task_id, metadata)
+        if actual["target_honored"] is False:
+            self.store.append_event(
+                task_id, "routing.target_mismatch", run_id=None,
+                display={
+                    "requestedRoute": expected.route,
+                    "actualProvider": actual.get("provider"),
+                    "actualAccount": actual.get("account"),
+                    "actualModel": actual.get("model"),
+                    "actualRoute": actual.get("route"),
+                },
+            )
+            raise RuntimeError(
+                f"OmniRoute target mismatch: requested {expected.route}, "
+                f"executed {actual.get('route')}"
             )
 
     def _pre_route(
@@ -1556,7 +1886,21 @@ class HarnessRuntime:
         load_plan = context_load_plan(semantic_task_profile) if semantic_task_profile else None
         model_override = automatic_model_override(config, routing_tier, configured_model)
         execution_target = None
-        persisted_target = private.get("executionTarget")
+        persisted_plan_payload = private.get("activeExecutionPlan", private.get("executionPlan"))
+        persisted_plan = (
+            _execution_plan_from_dict(persisted_plan_payload)
+            if isinstance(persisted_plan_payload, Mapping) else None
+        )
+        if persisted_plan is not None and not persisted_plan.routing_locked:
+            raise ConfigError("persisted execution plan must be routing locked")
+        if task["agent"] == "pi" and persisted_plan is not None:
+            account_home = pathlib.Path(str(
+                self.account(config, persisted_plan.target.account)["codexHome"]
+            )).expanduser().resolve()
+        persisted_target = (
+            persisted_plan.target.to_dict()
+            if persisted_plan is not None else private.get("executionTarget")
+        )
         if isinstance(persisted_target, Mapping):
             configured_catalog = self._configured_codex_catalog(account_home)
             if configured_catalog is None:
@@ -1565,6 +1909,12 @@ class HarnessRuntime:
             matched = next((item for item in registry if item.route == persisted_target.get("route")), None)
             if matched is None:
                 raise ConfigError("persisted execution target is no longer approved")
+            if persisted_plan is not None and (
+                matched.provider != persisted_plan.target.provider
+                or matched.account != persisted_plan.target.account
+                or matched.model != persisted_plan.target.model
+            ):
+                raise ConfigError("persisted execution plan target no longer matches its route")
             execution_target = execution_target_for_route(
                 semantic_task_profile, [matched], matched.route,
                 available_accounts=self._enabled_account_ids(config),
@@ -1576,11 +1926,12 @@ class HarnessRuntime:
                     execution_target, mode="EXPLICIT",
                     reason=str(persisted_target.get("reason", execution_target.reason)),
                 )
-            # Preserve the originally persisted bounded fallback order for telemetry.
-            execution_target = dataclasses.replace(
-                execution_target,
-                fallbacks=tuple(str(item) for item in persisted_target.get("fallbacks", [])),
-            )
+            if persisted_plan is None:
+                # Legacy tasks retain their old target/fallback representation.
+                execution_target = dataclasses.replace(
+                    execution_target,
+                    fallbacks=tuple(str(item) for item in persisted_target.get("fallbacks", [])),
+                )
             model_override = execution_target.route
         elif configured_model == "auto" and semantic_task_profile is not None and account_home is not None:
             configured_catalog = self._configured_codex_catalog(account_home)
@@ -1739,8 +2090,9 @@ class HarnessRuntime:
                 adaptive,
                 envelope=update_envelope_context(adaptive.envelope, dispatch_task_profile),
             )
-        if execution_target is not None and adaptive is not None:
-            exact_envelope = dict(adaptive.envelope or {
+        dispatch_envelope = dict(adaptive.envelope) if adaptive and adaptive.envelope else None
+        if execution_target is not None:
+            exact_envelope = dict(dispatch_envelope or {
                 "schema_version": 1,
                 "tier": routing_tier,
                 "requirements": {"capabilities": [], "minimum_context": 1},
@@ -1751,7 +2103,15 @@ class HarnessRuntime:
                 f"{execution_target.provider}/{execution_target.model}"
             ]
             exact_envelope["task_profile_id"] = str(task["task_id"])
-            adaptive = dataclasses.replace(adaptive, envelope=exact_envelope)
+            active_plan_payload = private.get("activeExecutionPlan", private.get("executionPlan"))
+            if isinstance(active_plan_payload, Mapping):
+                exact_envelope["plan_id"] = active_plan_payload.get("planId")
+                exact_envelope["routing_locked"] = active_plan_payload.get("routingLocked") is True
+                exact_envelope["target"] = active_plan_payload.get("target")
+                exact_envelope["preference_mode"] = "passthrough"
+            dispatch_envelope = exact_envelope
+            if adaptive is not None:
+                adaptive = dataclasses.replace(adaptive, envelope=exact_envelope)
         if (
             task["agent"] == "codex"
             and account_home is not None
@@ -1870,11 +2230,7 @@ class HarnessRuntime:
                 memory_args.extend([
                     "-c", f"plan_mode_reasoning_effort={json.dumps(routing_effort)}",
                 ])
-            if (
-                adaptive
-                and adaptive.envelope
-                and adaptive.negotiation.header_transport
-            ):
+            if dispatch_envelope is not None:
                 memory_args.extend([
                     "-c",
                     'model_providers.omniroute.env_http_headers='
@@ -1951,14 +2307,13 @@ class HarnessRuntime:
         )
         overrides = dict(plan.environment_overrides)
         overrides["QUATTRO_ROUTING_TIER"] = routing_tier
-        if (
-            adaptive
-            and adaptive.envelope
-            and adaptive.negotiation.header_transport
-        ):
-            overrides["QUATTRO_ROUTING_ENVELOPE"] = encode_routing_header(adaptive.envelope)
+        if dispatch_envelope is not None:
+            overrides["QUATTRO_ROUTING_ENVELOPE"] = encode_routing_header(dispatch_envelope)
         if private.get("delegatedWorker") is True:
-            worker_home = ensure_pi_worker_home(self.private_root / "pi-worker")
+            worker_key = hashlib.sha256(str(task["task_id"]).encode("utf-8")).hexdigest()[:24]
+            worker_home = ensure_pi_worker_home(
+                self.private_root / "pi-worker" / worker_key, model=str(model_route)
+            )
             overrides["PI_CODING_AGENT_DIR"] = str(worker_home)
         logical_session_id = private.get("logicalSessionId")
         if logical_session_id:
@@ -2510,12 +2865,37 @@ class HarnessRuntime:
             interactive = user_owned_terminal
             started_monotonic = time.monotonic()
             target_payload = task["private_payload"].get("executionTarget")
-            attempt_routes = [None]
-            if isinstance(target_payload, Mapping) and not interactive and not profile.writable_roots:
-                attempt_routes = [str(target_payload.get("route"))]
-                attempt_routes.extend(str(route) for route in target_payload.get("fallbacks", [])[:2])
+            plan_payload = task["private_payload"].get("executionPlan")
+            root_plan = (
+                _execution_plan_from_dict(plan_payload)
+                if isinstance(plan_payload, Mapping) else None
+            )
+            attempt_plans: list[ExecutionPlan | None] = [None]
+            if root_plan is not None and not interactive and not profile.writable_roots:
+                if not root_plan.routing_locked:
+                    raise ConfigError("persisted execution plan must be routing locked")
+                attempt_plans = [root_plan]
+                attempt_plans.extend(
+                    fallback_execution_plan(root_plan, index, reason="delegated target failure")
+                    for index in range(min(2, len(root_plan.fallback_targets)))
+                )
+            elif isinstance(target_payload, Mapping) and not interactive and not profile.writable_roots:
+                # Compatibility for tasks persisted before ExecutionPlan existed.
+                attempt_plans = [None] * (
+                    1 + min(2, len(target_payload.get("fallbacks", [])))
+                )
+            legacy_routes = [None]
+            if root_plan is None and isinstance(target_payload, Mapping):
+                legacy_routes = [str(target_payload.get("route"))]
+                legacy_routes.extend(str(route) for route in target_payload.get("fallbacks", [])[:2])
             result = None
-            for target_index, attempt_route in enumerate(attempt_routes):
+            locked_receipt_unavailable = False
+            recorded_plan_attempts: list[dict[str, Any]] = []
+            for target_index, attempt_plan in enumerate(attempt_plans):
+                attempt_route = (
+                    attempt_plan.target.route
+                    if attempt_plan is not None else legacy_routes[target_index]
+                )
                 if target_index > 0:
                     run_id = self.store.create_run(
                         task_id,
@@ -2527,7 +2907,14 @@ class HarnessRuntime:
                         native_session_ref=task["private_payload"].get("nativeSessionRef"),
                     )
                 attempt_task = task
-                if attempt_route is not None and isinstance(target_payload, Mapping):
+                if attempt_plan is not None:
+                    attempt_private = dict(task["private_payload"])
+                    attempt_private["activeExecutionPlan"] = attempt_plan.to_dict()
+                    recorded_plan_attempts.append(attempt_plan.to_dict())
+                    attempt_private["executionPlanAttempts"] = list(recorded_plan_attempts)
+                    self.store.update_private_payload(task_id, attempt_private)
+                    attempt_task = dict(task) | {"private_payload": attempt_private}
+                elif attempt_route is not None and isinstance(target_payload, Mapping):
                     account_home = pathlib.Path(str(
                         self.account(self.config(), task["private_payload"].get("accountId"))["codexHome"]
                     )).expanduser().resolve()
@@ -2588,29 +2975,69 @@ class HarnessRuntime:
                     capture_thread.join(timeout=5)
                     if capture_thread.is_alive():
                         raise RuntimeError("agent output collector did not stop")
-                if result.state is RunState.SUCCEEDED or target_index + 1 >= len(attempt_routes):
+                if result.state is RunState.SUCCEEDED:
                     break
-                failure_text = (
-                    output_path.read_text(encoding="utf-8", errors="replace")
-                    if output_path.is_file() else ""
-                )
-                if not re.search(
-                    r"(?:HTTP\s*(?:429|5\d\d)|rate.?limit|quota.?exhaust|credits.?exhaust|"
-                    r"provider\s+(?:unavailable|failure)|service\s+unavailable)",
-                    failure_text[:100_000], re.IGNORECASE,
-                ):
+                failure_type = None
+                failure_retry_after_ms = None
+                if attempt_plan is not None:
+                    receipt = self._locked_target_receipt(attempt_plan.plan_id, attempts=4)
+                    failure = receipt.get("failure") if isinstance(receipt, Mapping) else None
+                    if isinstance(failure, Mapping):
+                        failure_type = failure.get("type")
+                        failure_retry_after_ms = failure.get("retry_after_ms")
+                    # Locked attempts never fall back based on human-readable process output.
+                    if receipt is None:
+                        locked_receipt_unavailable = True
+                        self.store.append_event(
+                            task_id, "routing.locked_receipt_unavailable", run_id=run_id,
+                            display={"planId": attempt_plan.plan_id, "reason": "failed_attempt"},
+                        )
+                    if failure_type not in FALLBACK_ELIGIBLE_TARGET_FAILURES:
+                        break
+                else:
+                    # Legacy pre-ExecutionPlan tasks retain their compatibility parser.
+                    failure_text = (
+                        output_path.read_text(encoding="utf-8", errors="replace")
+                        if output_path.is_file() else ""
+                    )
+                    if not re.search(
+                        r"(?:HTTP\s*(?:429|5\d\d)|rate.?limit|quota.?exhaust|credits.?exhaust|"
+                        r"provider\s+(?:unavailable|failure)|service\s+unavailable)",
+                        failure_text[:100_000], re.IGNORECASE,
+                    ):
+                        break
+                if target_index + 1 >= len(attempt_plans):
                     break
                 self.store.append_event(
                     task_id, "routing.fallback", run_id=run_id,
                     display={
                         "fromRoute": attempt_route,
-                        "toRoute": attempt_routes[target_index + 1],
+                        "fromPlanId": attempt_plan.plan_id if attempt_plan else None,
+                        "toRoute": (
+                            attempt_plans[target_index + 1].target.route
+                            if attempt_plans[target_index + 1] is not None
+                            else legacy_routes[target_index + 1]
+                        ),
+                        "toPlanId": (
+                            attempt_plans[target_index + 1].plan_id
+                            if attempt_plans[target_index + 1] is not None else None
+                        ),
                         "attempt": target_index + 2,
                         "reason": "retryable_provider_failure",
+                        "failureType": failure_type,
+                        "retryAfterMs": failure_retry_after_ms,
                     },
                 )
             assert result is not None
             duration_ms = max(0, int((time.monotonic() - started_monotonic) * 1_000))
+            active_plan = task["private_payload"].get("executionPlan")
+            if (
+                result.state is RunState.SUCCEEDED
+                and isinstance(active_plan, Mapping)
+                and task["private_payload"].get("delegatedWorker") is True
+                and not interactive
+            ):
+                self._refresh_locked_receipt(task_id, required=True)
             if task["agent"] == "codex":
                 self._refresh_adaptive_receipt(task_id)
             delegation_telemetry: dict[str, Any] | None = None
@@ -2716,8 +3143,15 @@ class HarnessRuntime:
                     return self.run_task(replacement_task)
                 self.store.transition_task(
                     task_id, TaskState.FAILED,
-                    terminal_code="agent_exit_nonzero",
-                    terminal_summary=f"{task['agent']} exited with code {result.exit_code}.",
+                    terminal_code=(
+                        "locked_receipt_unavailable"
+                        if locked_receipt_unavailable else "agent_exit_nonzero"
+                    ),
+                    terminal_summary=(
+                        "Locked execution failed without terminal gateway receipt evidence."
+                        if locked_receipt_unavailable
+                        else f"{task['agent']} exited with code {result.exit_code}."
+                    ),
                 )
                 return int(result.exit_code or 1)
 
@@ -2834,18 +3268,22 @@ class HarnessRuntime:
                     self.supervisor.cancel(managed)
                 except (OSError, RuntimeError, StateTransitionError):
                     pass
+            error_code = (
+                error.terminal_code
+                if isinstance(error, LockedReceiptError) else "harness_error"
+            )
             current = TaskState(self.store.get_task(task_id)["state"])
             if current not in TERMINAL_TASK_STATES and current not in {TaskState.BLOCKED, TaskState.FAILED}:
                 try:
                     self.store.transition_task(
                         task_id, TaskState.FAILED,
-                        terminal_code="harness_error", terminal_summary=_bounded(str(error)),
+                        terminal_code=error_code, terminal_summary=_bounded(str(error)),
                     )
                 except StateTransitionError:
                     pass
             self.store.append_event(
                 task_id, "task.error", run_id=run_id,
-                display={"code": "harness_error", "detail": _bounded(str(error))},
+                display={"code": error_code, "detail": _bounded(str(error))},
             )
             return 1
         finally:
@@ -3236,6 +3674,39 @@ class HarnessRuntime:
         )
         if parent is not None:
             PolicyProfile.from_dict(parent["policy"]).assert_child(worker_policy)
+        pi_plan = None
+        child_profile = None
+        if parent is not None:
+            parent_plan = parent["private_payload"].get(
+                "activeExecutionPlan", parent["private_payload"].get("executionPlan")
+            )
+            if isinstance(parent_plan, Mapping):
+                inherited = _execution_plan_from_dict(parent_plan)
+                child_profile = profile_task(
+                    objective, agent="pi", workflow="codex-pi-delegation",
+                    policy_name="audit-read-only",
+                )
+                account_home = pathlib.Path(str(
+                    self.account(config, inherited.target.account)["codexHome"]
+                )).expanduser().resolve()
+                catalog = self._configured_codex_catalog(account_home)
+                registry = load_model_registry(default_policy_path(), catalog) if catalog else ()
+                if not any(item.route == inherited.target.route for item in registry):
+                    raise ConfigError("delegated execution target is no longer approved")
+                pi_plan = build_execution_plan(
+                    child_profile, inherited.target, registry,
+                    reasoning_effort=inherited.reasoning_effort,
+                    plan_id=f"task_{uuid.uuid4().hex}.plan-0",
+                )
+                pi_plan = dataclasses.replace(
+                    pi_plan,
+                    required_tools=(
+                        ("repository_read",)
+                        if "repository_read" in pi_plan.required_tools else ()
+                    ),
+                    fallback_allowed=False,
+                    fallback_targets=(),
+                )
         task_id = self.store.create_task(
             parent_task_id=parent_task_id,
             workflow="codex-pi-delegation",
@@ -3250,9 +3721,15 @@ class HarnessRuntime:
             private_payload={
                 "prompt": worker_prompt(objective, kind),
                 "mode": "prompt",
-                "accountId": None,
                 "gitStatusBefore": self._git_status_snapshot(project),
                 "delegatedWorker": True,
+                "executionTarget": pi_plan.target.to_dict() if pi_plan else None,
+                "executionPlan": pi_plan.to_dict() if pi_plan else None,
+                "accountId": pi_plan.target.account if pi_plan else None,
+                "routing": (
+                    {"tier": child_profile.tier.value, "task_profile": child_profile.to_dict()}
+                    if child_profile is not None else {}
+                ),
                 "coordinationSessionId": coordination_id,
                 "repositoryId": parent["private_payload"].get("repositoryId") if parent else None,
                 "retryCount": 0,

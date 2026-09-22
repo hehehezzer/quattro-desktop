@@ -1,5 +1,35 @@
 # Quattro Evidence-Aware Request Routing
 
+## Execution-plan contract
+
+### Locked-receipt rollout order
+
+Mandatory receipt verification must be activated in dependency order. Deploy
+OmniRoute's passthrough envelope and `/routing/locked-receipts` support first,
+health-check a terminal receipt containing the exact plan ID plus provider,
+account, model, and route, and only then deploy Quattro's fail-closed delegated
+worker enforcement. After both sides are active, run a real delegated smoke and
+confirm that the persisted receipt matches the selected target. Reversing this
+order intentionally causes delegated workers to terminate with
+`locked_receipt_unavailable`; Quattro never falls back to parsing model output.
+
+This phase covers single-shot direct and delegated executions. Interactive and
+resumed multi-turn sessions are not yet gateway-lock complete: they require a
+per-request receipt identifier or a gateway aggregate proving request-count
+completeness before Quattro can claim that every turn honored one locked plan.
+
+Normal automatic execution produces a Quattro-owned `ExecutionPlan` with the
+classified task, exact provider/account/model target, reasoning effort, context
+strategy and budgets, required tool capabilities, bounded fallback targets,
+and `routingLocked=true`. Direct gateway calls carry the exact
+account-qualified route plus `preference_mode=passthrough`; OmniRoute strips
+that routing metadata before provider translation.
+
+Target failures return to Quattro. A fallback is a distinct plan with a new
+plan ID. Only transient transport failures may retry the same target. Legacy
+gateway routing remains available for explicit compatibility and comparison.
+See [TOKEN_OPTIMIZATION.md](TOKEN_OPTIMIZATION.md) for the ownership audit.
+
 Routing policy: `quattro-routing-v2`
 
 Benchmark normalization: `benchmark-normalization-v1`

@@ -935,12 +935,15 @@ class ValidatorAndAdapterTests(StoreTestCase):
         delegated = PiAdapter().build_launch("/usr/bin/pi", RunSpec(
             task_id="child", run_id="run-child", project_path=self.project,
             mode=AgentMode.PROMPT, policy=read_only, private_input="bounded",
-            delegated_worker=True,
+            delegated_worker=True, model_override="account-1/gpt-5.6-luna",
         ))
         self.assertNotIn("--provider", direct.argv)
         self.assertIn("--no-tools", direct.argv)
         self.assertEqual(delegated.argv[delegated.argv.index("--provider") + 1], "omniroute")
-        self.assertEqual(delegated.argv[delegated.argv.index("--model") + 1], "auto")
+        self.assertEqual(
+            delegated.argv[delegated.argv.index("--model") + 1],
+            "account-1/gpt-5.6-luna",
+        )
         self.assertIn("read,grep,find,ls", delegated.argv)
         self.assertNotIn("bash", delegated.argv)
 
