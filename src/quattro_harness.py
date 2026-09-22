@@ -28,12 +28,15 @@ import threading
 import time
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from quattro_agent import (
-    RoutingDecision, RoutingTier, TaskState, TaskStore, adapter_for, automatic_model_override,
+    ContextDecision, ExecutionPlan, ExecutionTarget, RoutingDecision, RoutingTier, TaskState,
+    TaskStore, adapter_for, automatic_model_override,
     classify_pre_routing, classify_request, context_budget_tokens, effective_reasoning_effort, load_ai_config,
     next_exceptional_effort, next_tier, policy_profile, default_policy_path,
     build_execution_plan, execution_target_for_route, fallback_execution_plan,
@@ -139,6 +142,73 @@ class OmniRouteAttemptError(RuntimeError):
         self.error_type = error_type
         self.retry_after_ms = retry_after_ms
         self.transport_retryable = transport_retryable
+
+
+TARGET_FAILURE_TYPES = frozenset({
+    "RATE_LIMITED", "QUOTA_EXHAUSTED", "CREDITS_EXHAUSTED",
+    "MODEL_UNAVAILABLE", "ACCOUNT_UNAVAILABLE", "PROVIDER_UNAVAILABLE",
+    "AUTHENTICATION_FAILED", "CONTEXT_LIMIT", "CAPABILITY_UNSUPPORTED",
+    "TRANSPORT_FAILURE",
+})
+FALLBACK_ELIGIBLE_TARGET_FAILURES = TARGET_FAILURE_TYPES - frozenset({
+    "CONTEXT_LIMIT", "CAPABILITY_UNSUPPORTED", "TRANSPORT_FAILURE",
+})
+
+
+def _execution_target_from_dict(value: Mapping[str, Any]) -> ExecutionTarget:
+    return ExecutionTarget(
+        mode=str(value.get("mode", "EXPLICIT")),
+        provider=str(value.get("provider", "")),
+        account=str(value.get("account", "")),
+        model=str(value.get("model", "")),
+        route=str(value.get("route", "")),
+        tier=str(value.get("tier", "STANDARD")),
+        reason=str(value.get("reason", "")),
+        fallbacks=tuple(str(item) for item in value.get("fallbacks", [])),
+    )
+
+
+def _execution_plan_from_dict(value: Mapping[str, Any]) -> ExecutionPlan:
+    target = value.get("target")
+    task = value.get("task")
+    reasoning = value.get("reasoning")
+    context = value.get("context")
+    tools = value.get("tools")
+    fallback = value.get("fallback")
+    if not all(isinstance(item, Mapping) for item in (
+        target, task, reasoning, context, tools, fallback,
+    )):
+        raise ConfigError("persisted execution plan is malformed")
+    assert isinstance(target, Mapping)
+    assert isinstance(task, Mapping)
+    assert isinstance(reasoning, Mapping)
+    assert isinstance(context, Mapping)
+    assert isinstance(tools, Mapping)
+    assert isinstance(fallback, Mapping)
+    fallback_targets = fallback.get("targets", [])
+    if not isinstance(fallback_targets, list) or not all(
+        isinstance(item, Mapping) for item in fallback_targets
+    ):
+        raise ConfigError("persisted execution plan fallback targets are malformed")
+    return ExecutionPlan(
+        plan_id=str(value.get("planId", "")),
+        task_category=str(task.get("category", "")),
+        task_complexity=str(task.get("complexity", "")),
+        target=_execution_target_from_dict(target),
+        reasoning_effort=str(reasoning.get("effort", "")),
+        context=ContextDecision(
+            strategy=str(context.get("strategy", "")),
+            budget_tokens=int(context.get("budgetTokens", 0)),
+            conversation_budget_tokens=int(context.get("conversationBudgetTokens", 0)),
+            retrieval_budget_tokens=int(context.get("retrievalBudgetTokens", 0)),
+        ),
+        required_tools=tuple(str(item) for item in tools.get("required", [])),
+        fallback_allowed=bool(fallback.get("allowed", False)),
+        fallback_targets=tuple(
+            _execution_target_from_dict(item) for item in fallback_targets
+        ),
+        routing_locked=value.get("routingLocked") is True,
+    )
 SELECTABLE_POLICIES = {
     "audit-read-only", "review-untrusted", "workspace-write",
     "desktop-config-write", "publication-capable", "full-access-explicit",
@@ -626,13 +696,17 @@ class HarnessRuntime:
                 )
         pre_envelope = dict(adaptive.envelope) if adaptive and adaptive.envelope else None
         pre_selection = adaptive.selection.to_dict() if adaptive and adaptive.selection else None
+        # Allocate the durable task identity before materializing the plan so
+        # every execution, including two identical requests, has a unique
+        # auditable plan lineage.
+        task_id = f"task_{uuid.uuid4().hex}"
         execution_plan = None
         if execution_target is not None and configured_catalog is not None:
             execution_plan = build_execution_plan(
                 pre_profile, execution_target,
                 load_model_registry(default_policy_path(), configured_catalog),
                 reasoning_effort=str(routing.reasoning_effort),
-                plan_id=task_profile_identifier(pre_profile),
+                plan_id=f"{task_id}.plan-0",
             )
         if pre_envelope is not None:
             # The task id is not known until persistence below.  It is bound to
@@ -710,6 +784,7 @@ class HarnessRuntime:
                     "preRoutingProfileId": task_profile_identifier(pre_profile),
                 },
                 priority=priority,
+                task_id=task_id,
             )
             intelligence_record_id = record_routing_telemetry(
                 self.intelligence_database,
@@ -1055,6 +1130,9 @@ class HarnessRuntime:
                     ],
                     "preference_mode": "passthrough",
                     "task_profile_id": attempt_plan.plan_id,
+                    "plan_id": attempt_plan.plan_id,
+                    "routing_locked": True,
+                    "target": attempt_plan.target.to_dict(),
                     "tier": profile_snapshot.tier.value,
                     "routing_policy_version": "quattro-authoritative-v1",
                 }
@@ -1131,6 +1209,7 @@ class HarnessRuntime:
             actual_provider=response_metadata.get("provider"),
             actual_model=actual_model,
             actual_account=response_metadata.get("account"),
+            actual_route=response_metadata.get("route"),
         )
         if execution_target is not None and not target_honored:
             update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
@@ -1278,16 +1357,21 @@ class HarnessRuntime:
                 retry_after_ms = int(float(retry_after) * 1_000) if retry_after else None
             except (TypeError, ValueError):
                 pass
+            parsed_retry_after = parsed.get("retry_after_ms")
+            if isinstance(parsed_retry_after, (int, float)) and not isinstance(parsed_retry_after, bool):
+                retry_after_ms = max(0, int(parsed_retry_after))
             error_type = str(parsed.get("type") or {
-                429: "PROVIDER_RATE_LIMITED",
+                429: "RATE_LIMITED",
                 401: "AUTHENTICATION_FAILED",
-                403: "CREDITS_OR_PERMISSION_EXHAUSTED",
+                403: "CREDITS_EXHAUSTED",
                 404: "MODEL_UNAVAILABLE",
-            }.get(error.code, "PROVIDER_UNAVAILABLE" if error.code >= 500 else "PROVIDER_ERROR"))
+            }.get(error.code, "PROVIDER_UNAVAILABLE" if error.code >= 500 else "TRANSPORT_FAILURE"))
+            fallback_eligible = error_type in FALLBACK_ELIGIBLE_TARGET_FAILURES
             raise OmniRouteAttemptError(
                 f"OmniRoute provider failure: HTTP {error.code}: {detail}",
-                retryable=error.code == 429 or 500 <= error.code <= 599,
+                retryable=fallback_eligible,
                 error_type=error_type, retry_after_ms=retry_after_ms,
+                transport_retryable=(error_type == "TRANSPORT_FAILURE"),
             ) from error
         except urllib.error.URLError as error:
             raise OmniRouteAttemptError(
@@ -1295,7 +1379,10 @@ class HarnessRuntime:
                 error_type="TRANSPORT_FAILURE", transport_retryable=True,
             ) from error
         except TimeoutError as error:
-            raise OmniRouteAttemptError("OmniRoute target timed out", retryable=False) from error
+            raise OmniRouteAttemptError(
+                "OmniRoute target timed out", retryable=True,
+                error_type="TRANSPORT_FAILURE", transport_retryable=True,
+            ) from error
         except (json.JSONDecodeError, UnicodeDecodeError, TypeError) as error:
             raise OmniRouteAttemptError(
                 "OmniRoute returned a malformed response", retryable=False,
@@ -1318,6 +1405,8 @@ class HarnessRuntime:
             "provider": headers.get("X-OmniRoute-Provider"),
             "account": headers.get("X-OmniRoute-Account"),
             "model": headers.get("X-OmniRoute-Model"),
+            "route": headers.get("X-OmniRoute-Route"),
+            "connection_id": headers.get("X-OmniRoute-Selected-Connection-Id"),
             "cost": actual_cost,
             "cost_state": "actual" if actual_cost is not None else "unknown",
             "latencyMs": headers.get("X-OmniRoute-Latency-Ms"),
@@ -1485,7 +1574,19 @@ class HarnessRuntime:
             "fallback_used": any(row.get("decision") == "skipped_before_dispatch" for row in safe_decisions),
             "received_at": receipt.get("received_at"),
         }
-        target_payload = private.get("executionTarget") if isinstance(private, Mapping) else None
+        observed_account = receipt.get("actual_account") or receipt.get("account")
+        if isinstance(observed_account, str) and observed_account:
+            actual["account"] = observed_account
+        else:
+            actual["account"] = None
+        observed_route = receipt.get("actual_route") or receipt.get("route")
+        actual["route"] = observed_route if isinstance(observed_route, str) and observed_route else None
+        active_plan = private.get("activeExecutionPlan") if isinstance(private, Mapping) else None
+        target_payload = (
+            active_plan.get("target")
+            if isinstance(active_plan, Mapping) and isinstance(active_plan.get("target"), Mapping)
+            else private.get("executionTarget") if isinstance(private, Mapping) else None
+        )
         target_honored = None
         if isinstance(target_payload, Mapping):
             from quattro_agent.model_registry import ExecutionTarget
@@ -1502,8 +1603,9 @@ class HarnessRuntime:
             )
             target_honored = target_matches_actual(
                 expected, actual_provider=provider, actual_model=model,
+                actual_account=actual.get("account"),
+                actual_route=actual.get("route"),
             )
-            actual["account"] = expected.account if target_honored else None
             actual["target_honored"] = target_honored
         refreshed_snapshot = dict(snapshot)
         refreshed_snapshot["actual_selection"] = actual
@@ -1548,6 +1650,79 @@ class HarnessRuntime:
             raise RuntimeError(
                 f"OmniRoute target mismatch: requested {target_payload.get('route')}, "
                 f"executed {provider}/{model}"
+            )
+
+    def _locked_target_receipt(self, plan_id: str) -> Mapping[str, Any] | None:
+        """Read the gateway's sanitized receipt for one exact delegated attempt."""
+        query = urllib.parse.urlencode({"plan_id": plan_id})
+        request = urllib.request.Request(
+            f"{self._omniroute_base_url()}/routing/locked-receipts?{query}",
+            headers={"Accept": "application/json", "User-Agent": "Quattro-Routing/2"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=3) as response:
+                payload = json.loads(response.read(128_000).decode("utf-8"))
+        except (OSError, TimeoutError, urllib.error.URLError, ValueError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, Mapping) else None
+
+    def _refresh_locked_receipt(self, task_id: str) -> None:
+        task = self.store.get_task(task_id, include_private=True)
+        private = task.get("private_payload")
+        if not isinstance(private, Mapping):
+            return
+        active = private.get("activeExecutionPlan", private.get("executionPlan"))
+        if not isinstance(active, Mapping) or not isinstance(active.get("planId"), str):
+            return
+        receipt = self._locked_target_receipt(str(active["planId"]))
+        target = active.get("target")
+        if not isinstance(receipt, Mapping) or not isinstance(target, Mapping):
+            return
+        expected = _execution_target_from_dict(target)
+        actual = {
+            "provider": receipt.get("actual_provider"),
+            "account": receipt.get("actual_account"),
+            "model": receipt.get("actual_model"),
+            "route": receipt.get("actual_route"),
+            "connectionId": receipt.get("connection_id"),
+            "failure": receipt.get("failure"),
+            "received_at": receipt.get("received_at"),
+        }
+        actual["target_honored"] = target_matches_actual(
+            expected,
+            actual_provider=actual.get("provider"),
+            actual_account=actual.get("account"),
+            actual_model=actual.get("model"),
+            actual_route=actual.get("route"),
+        )
+        refreshed = dict(private)
+        snapshot = dict(refreshed.get("routingSnapshot", {}))
+        snapshot["actual_selection"] = actual
+        refreshed["routingSnapshot"] = snapshot
+        self.store.update_private_payload(task_id, refreshed)
+        metadata = dict(task.get("display_metadata", {}))
+        metadata.update({
+            "actualProvider": actual.get("provider"),
+            "actualAccount": actual.get("account"),
+            "actualModel": actual.get("model"),
+            "actualRoute": actual.get("route"),
+            "targetHonored": actual.get("target_honored"),
+        })
+        self.store.update_display_metadata(task_id, metadata)
+        if actual["target_honored"] is False:
+            self.store.append_event(
+                task_id, "routing.target_mismatch", run_id=None,
+                display={
+                    "requestedRoute": expected.route,
+                    "actualProvider": actual.get("provider"),
+                    "actualAccount": actual.get("account"),
+                    "actualModel": actual.get("model"),
+                    "actualRoute": actual.get("route"),
+                },
+            )
+            raise RuntimeError(
+                f"OmniRoute target mismatch: requested {expected.route}, "
+                f"executed {actual.get('route')}"
             )
 
     def _pre_route(
@@ -1643,7 +1818,17 @@ class HarnessRuntime:
         load_plan = context_load_plan(semantic_task_profile) if semantic_task_profile else None
         model_override = automatic_model_override(config, routing_tier, configured_model)
         execution_target = None
-        persisted_target = private.get("executionTarget")
+        persisted_plan_payload = private.get("activeExecutionPlan", private.get("executionPlan"))
+        persisted_plan = (
+            _execution_plan_from_dict(persisted_plan_payload)
+            if isinstance(persisted_plan_payload, Mapping) else None
+        )
+        if persisted_plan is not None and not persisted_plan.routing_locked:
+            raise ConfigError("persisted execution plan must be routing locked")
+        persisted_target = (
+            persisted_plan.target.to_dict()
+            if persisted_plan is not None else private.get("executionTarget")
+        )
         if isinstance(persisted_target, Mapping):
             configured_catalog = self._configured_codex_catalog(account_home)
             if configured_catalog is None:
@@ -1652,6 +1837,12 @@ class HarnessRuntime:
             matched = next((item for item in registry if item.route == persisted_target.get("route")), None)
             if matched is None:
                 raise ConfigError("persisted execution target is no longer approved")
+            if persisted_plan is not None and (
+                matched.provider != persisted_plan.target.provider
+                or matched.account != persisted_plan.target.account
+                or matched.model != persisted_plan.target.model
+            ):
+                raise ConfigError("persisted execution plan target no longer matches its route")
             execution_target = execution_target_for_route(
                 semantic_task_profile, [matched], matched.route,
                 available_accounts=self._enabled_account_ids(config),
@@ -1663,11 +1854,12 @@ class HarnessRuntime:
                     execution_target, mode="EXPLICIT",
                     reason=str(persisted_target.get("reason", execution_target.reason)),
                 )
-            # Preserve the originally persisted bounded fallback order for telemetry.
-            execution_target = dataclasses.replace(
-                execution_target,
-                fallbacks=tuple(str(item) for item in persisted_target.get("fallbacks", [])),
-            )
+            if persisted_plan is None:
+                # Legacy tasks retain their old target/fallback representation.
+                execution_target = dataclasses.replace(
+                    execution_target,
+                    fallbacks=tuple(str(item) for item in persisted_target.get("fallbacks", [])),
+                )
             model_override = execution_target.route
         elif configured_model == "auto" and semantic_task_profile is not None and account_home is not None:
             configured_catalog = self._configured_codex_catalog(account_home)
@@ -1826,8 +2018,9 @@ class HarnessRuntime:
                 adaptive,
                 envelope=update_envelope_context(adaptive.envelope, dispatch_task_profile),
             )
-        if execution_target is not None and adaptive is not None:
-            exact_envelope = dict(adaptive.envelope or {
+        dispatch_envelope = dict(adaptive.envelope) if adaptive and adaptive.envelope else None
+        if execution_target is not None:
+            exact_envelope = dict(dispatch_envelope or {
                 "schema_version": 1,
                 "tier": routing_tier,
                 "requirements": {"capabilities": [], "minimum_context": 1},
@@ -1838,7 +2031,15 @@ class HarnessRuntime:
                 f"{execution_target.provider}/{execution_target.model}"
             ]
             exact_envelope["task_profile_id"] = str(task["task_id"])
-            adaptive = dataclasses.replace(adaptive, envelope=exact_envelope)
+            active_plan_payload = private.get("activeExecutionPlan", private.get("executionPlan"))
+            if isinstance(active_plan_payload, Mapping):
+                exact_envelope["plan_id"] = active_plan_payload.get("planId")
+                exact_envelope["routing_locked"] = active_plan_payload.get("routingLocked") is True
+                exact_envelope["target"] = active_plan_payload.get("target")
+                exact_envelope["preference_mode"] = "passthrough"
+            dispatch_envelope = exact_envelope
+            if adaptive is not None:
+                adaptive = dataclasses.replace(adaptive, envelope=exact_envelope)
         if (
             task["agent"] == "codex"
             and account_home is not None
@@ -1957,11 +2158,7 @@ class HarnessRuntime:
                 memory_args.extend([
                     "-c", f"plan_mode_reasoning_effort={json.dumps(routing_effort)}",
                 ])
-            if (
-                adaptive
-                and adaptive.envelope
-                and adaptive.negotiation.header_transport
-            ):
+            if dispatch_envelope is not None:
                 memory_args.extend([
                     "-c",
                     'model_providers.omniroute.env_http_headers='
@@ -2038,12 +2235,8 @@ class HarnessRuntime:
         )
         overrides = dict(plan.environment_overrides)
         overrides["QUATTRO_ROUTING_TIER"] = routing_tier
-        if (
-            adaptive
-            and adaptive.envelope
-            and adaptive.negotiation.header_transport
-        ):
-            overrides["QUATTRO_ROUTING_ENVELOPE"] = encode_routing_header(adaptive.envelope)
+        if dispatch_envelope is not None:
+            overrides["QUATTRO_ROUTING_ENVELOPE"] = encode_routing_header(dispatch_envelope)
         if private.get("delegatedWorker") is True:
             worker_home = ensure_pi_worker_home(self.private_root / "pi-worker")
             overrides["PI_CODING_AGENT_DIR"] = str(worker_home)
@@ -2597,12 +2790,36 @@ class HarnessRuntime:
             interactive = user_owned_terminal
             started_monotonic = time.monotonic()
             target_payload = task["private_payload"].get("executionTarget")
-            attempt_routes = [None]
-            if isinstance(target_payload, Mapping) and not interactive and not profile.writable_roots:
-                attempt_routes = [str(target_payload.get("route"))]
-                attempt_routes.extend(str(route) for route in target_payload.get("fallbacks", [])[:2])
+            plan_payload = task["private_payload"].get("executionPlan")
+            root_plan = (
+                _execution_plan_from_dict(plan_payload)
+                if isinstance(plan_payload, Mapping) else None
+            )
+            attempt_plans: list[ExecutionPlan | None] = [None]
+            if root_plan is not None and not interactive and not profile.writable_roots:
+                if not root_plan.routing_locked:
+                    raise ConfigError("persisted execution plan must be routing locked")
+                attempt_plans = [root_plan]
+                attempt_plans.extend(
+                    fallback_execution_plan(root_plan, index, reason="delegated target failure")
+                    for index in range(min(2, len(root_plan.fallback_targets)))
+                )
+            elif isinstance(target_payload, Mapping) and not interactive and not profile.writable_roots:
+                # Compatibility for tasks persisted before ExecutionPlan existed.
+                attempt_plans = [None] * (
+                    1 + min(2, len(target_payload.get("fallbacks", [])))
+                )
+            legacy_routes = [None]
+            if root_plan is None and isinstance(target_payload, Mapping):
+                legacy_routes = [str(target_payload.get("route"))]
+                legacy_routes.extend(str(route) for route in target_payload.get("fallbacks", [])[:2])
             result = None
-            for target_index, attempt_route in enumerate(attempt_routes):
+            recorded_plan_attempts: list[dict[str, Any]] = []
+            for target_index, attempt_plan in enumerate(attempt_plans):
+                attempt_route = (
+                    attempt_plan.target.route
+                    if attempt_plan is not None else legacy_routes[target_index]
+                )
                 if target_index > 0:
                     run_id = self.store.create_run(
                         task_id,
@@ -2614,7 +2831,14 @@ class HarnessRuntime:
                         native_session_ref=task["private_payload"].get("nativeSessionRef"),
                     )
                 attempt_task = task
-                if attempt_route is not None and isinstance(target_payload, Mapping):
+                if attempt_plan is not None:
+                    attempt_private = dict(task["private_payload"])
+                    attempt_private["activeExecutionPlan"] = attempt_plan.to_dict()
+                    recorded_plan_attempts.append(attempt_plan.to_dict())
+                    attempt_private["executionPlanAttempts"] = list(recorded_plan_attempts)
+                    self.store.update_private_payload(task_id, attempt_private)
+                    attempt_task = dict(task) | {"private_payload": attempt_private}
+                elif attempt_route is not None and isinstance(target_payload, Mapping):
                     account_home = pathlib.Path(str(
                         self.account(self.config(), task["private_payload"].get("accountId"))["codexHome"]
                     )).expanduser().resolve()
@@ -2675,30 +2899,55 @@ class HarnessRuntime:
                     capture_thread.join(timeout=5)
                     if capture_thread.is_alive():
                         raise RuntimeError("agent output collector did not stop")
-                if result.state is RunState.SUCCEEDED or target_index + 1 >= len(attempt_routes):
+                if result.state is RunState.SUCCEEDED or target_index + 1 >= len(attempt_plans):
                     break
-                failure_text = (
-                    output_path.read_text(encoding="utf-8", errors="replace")
-                    if output_path.is_file() else ""
-                )
-                if not re.search(
-                    r"(?:HTTP\s*(?:429|5\d\d)|rate.?limit|quota.?exhaust|credits.?exhaust|"
-                    r"provider\s+(?:unavailable|failure)|service\s+unavailable)",
-                    failure_text[:100_000], re.IGNORECASE,
-                ):
-                    break
+                failure_type = None
+                failure_retry_after_ms = None
+                if attempt_plan is not None:
+                    receipt = self._locked_target_receipt(attempt_plan.plan_id)
+                    failure = receipt.get("failure") if isinstance(receipt, Mapping) else None
+                    if isinstance(failure, Mapping):
+                        failure_type = failure.get("type")
+                        failure_retry_after_ms = failure.get("retry_after_ms")
+                    # Locked attempts never fall back based on human-readable process output.
+                    if failure_type not in FALLBACK_ELIGIBLE_TARGET_FAILURES:
+                        break
+                else:
+                    # Legacy pre-ExecutionPlan tasks retain their compatibility parser.
+                    failure_text = (
+                        output_path.read_text(encoding="utf-8", errors="replace")
+                        if output_path.is_file() else ""
+                    )
+                    if not re.search(
+                        r"(?:HTTP\s*(?:429|5\d\d)|rate.?limit|quota.?exhaust|credits.?exhaust|"
+                        r"provider\s+(?:unavailable|failure)|service\s+unavailable)",
+                        failure_text[:100_000], re.IGNORECASE,
+                    ):
+                        break
                 self.store.append_event(
                     task_id, "routing.fallback", run_id=run_id,
                     display={
                         "fromRoute": attempt_route,
-                        "toRoute": attempt_routes[target_index + 1],
+                        "fromPlanId": attempt_plan.plan_id if attempt_plan else None,
+                        "toRoute": (
+                            attempt_plans[target_index + 1].target.route
+                            if attempt_plans[target_index + 1] is not None
+                            else legacy_routes[target_index + 1]
+                        ),
+                        "toPlanId": (
+                            attempt_plans[target_index + 1].plan_id
+                            if attempt_plans[target_index + 1] is not None else None
+                        ),
                         "attempt": target_index + 2,
                         "reason": "retryable_provider_failure",
+                        "failureType": failure_type,
+                        "retryAfterMs": failure_retry_after_ms,
                     },
                 )
             assert result is not None
             duration_ms = max(0, int((time.monotonic() - started_monotonic) * 1_000))
             if task["agent"] == "codex":
+                self._refresh_locked_receipt(task_id)
                 self._refresh_adaptive_receipt(task_id)
             delegation_telemetry: dict[str, Any] | None = None
             if (

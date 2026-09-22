@@ -325,7 +325,7 @@ def select_execution_target(
 
 def target_matches_actual(
     target: ExecutionTarget, *, actual_provider: str | None, actual_model: str | None,
-    actual_account: str | None = None,
+    actual_account: str | None = None, actual_route: str | None = None,
 ) -> bool:
     """Compare exact normalized provider/model identity without fuzzy matching."""
     provider_aliases = {"codex": "codex", "cx": "codex"}
@@ -333,11 +333,15 @@ def target_matches_actual(
     observed_provider = provider_aliases.get(
         (actual_provider or "").lower(), (actual_provider or "").lower()
     )
-    account_matches = actual_account is None or target.account == actual_account
+    # Account identity is part of the locked target.  Missing evidence must not
+    # be treated as proof that the gateway honored the requested connection.
+    account_matches = bool(actual_account) and target.account == actual_account
+    route_matches = bool(actual_route) and target.route == actual_route
     return (
         expected_provider == observed_provider
         and target.model == (actual_model or "")
         and account_matches
+        and route_matches
     )
 
 

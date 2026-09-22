@@ -125,6 +125,10 @@ class ModelRegistryTests(unittest.TestCase):
         target = select_execution_target(profile, self.targets, preferred_account="account-1")
         self.assertTrue(target_matches_actual(
             target, actual_provider="cx", actual_model="gpt-5.6-luna",
+            actual_account="account-1", actual_route="account-1/gpt-5.6-luna",
+        ))
+        self.assertFalse(target_matches_actual(
+            target, actual_provider="cx", actual_model="gpt-5.6-luna",
         ))
         self.assertFalse(target_matches_actual(
             target, actual_provider="cx", actual_model="gpt-5.6-luna-high",
@@ -135,6 +139,10 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertFalse(target_matches_actual(
             target, actual_provider="cx", actual_model="gpt-5.6-luna",
             actual_account="account-2",
+        ))
+        self.assertFalse(target_matches_actual(
+            target, actual_provider="cx", actual_model="gpt-5.6-luna",
+            actual_account="account-1", actual_route="account-2/gpt-5.6-luna",
         ))
 
     def test_manual_account_route_has_no_automatic_fallback(self) -> None:

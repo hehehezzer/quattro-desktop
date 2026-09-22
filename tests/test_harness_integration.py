@@ -195,6 +195,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
                 "X-OmniRoute-Provider": "cx",
                 "X-OmniRoute-Model": "gpt-5.6-luna",
                 "X-OmniRoute-Account": "account-1",
+                "X-OmniRoute-Route": "account-1/gpt-5.6-luna",
             }
 
             def read(self, _limit):
@@ -237,7 +238,9 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         class Response:
             headers = {
                 "X-OmniRoute-Provider": "cx",
+                "X-OmniRoute-Account": "account-1",
                 "X-OmniRoute-Model": "gpt-5.6-luna",
+                "X-OmniRoute-Route": "account-1/gpt-5.6-luna",
             }
 
             def read(self, _limit):
@@ -271,7 +274,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
         successful = (
             {"output_text": "hello", "usage": {"input_tokens": 5, "output_tokens": 1}},
-            {"provider": "cx", "model": "gpt-5.6-luna", "cost": None},
+            {"provider": "cx", "account": "account-2", "model": "gpt-5.6-luna", "route": "account-2/gpt-5.6-luna", "cost": None},
         )
         with (
             mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
@@ -301,7 +304,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
         successful = (
             {"output_text": "hello", "usage": {"input_tokens": 5, "output_tokens": 1}},
-            {"provider": "cx", "model": "gpt-5.6-luna", "cost": None},
+            {"provider": "cx", "account": "account-1", "model": "gpt-5.6-luna", "route": "account-1/gpt-5.6-luna", "cost": None},
         )
         with (
             mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
@@ -343,7 +346,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
         successful = (
             {"output_text": "hello", "usage": {"input_tokens": 5, "output_tokens": 1}},
-            {"provider": "cx", "model": "gpt-5.6-sol", "cost": None},
+            {"provider": "cx", "account": "account-1", "model": "gpt-5.6-sol", "route": "account-1/gpt-5.6-sol", "cost": None},
         )
         with (
             mock.patch.object(
@@ -382,6 +385,32 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         with (
             mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
             mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime,
+                "_locked_target_receipt",
+                side_effect=lambda plan_id: (
+                    {
+                        "plan_id": plan_id,
+                        "success": True,
+                        "actual_provider": "cx",
+                        "actual_account": "account-2",
+                        "actual_model": "gpt-5.6-luna",
+                        "actual_route": "account-2/gpt-5.6-luna",
+                        "connection_id": "connection-2",
+                        "failure": None,
+                    }
+                    if plan_id.endswith(".fallback-1") else
+                    {
+                        "plan_id": plan_id,
+                        "success": False,
+                        "failure": {
+                            "type": "ACCOUNT_UNAVAILABLE",
+                            "retryable": False,
+                            "retry_after_ms": None,
+                        },
+                    }
+                ),
+            ),
         ):
             task_id, code = self.runtime.submit(
                 agent="codex", project=self.project,
@@ -399,6 +428,14 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         fallback = next(event for event in events if event["type"] == "routing.fallback")
         self.assertEqual(fallback["payload"]["fromRoute"], "account-1/gpt-5.6-luna")
         self.assertEqual(fallback["payload"]["toRoute"], "account-2/gpt-5.6-luna")
+        self.assertNotEqual(fallback["payload"]["fromPlanId"], fallback["payload"]["toPlanId"])
+        persisted = self.runtime.store.get_task(task_id, include_private=True)["private_payload"]
+        self.assertEqual(persisted["executionPlan"]["target"]["route"], "account-1/gpt-5.6-luna")
+        self.assertEqual(
+            [plan["target"]["route"] for plan in persisted["executionPlanAttempts"]],
+            ["account-1/gpt-5.6-luna", "account-2/gpt-5.6-luna"],
+        )
+        self.assertTrue(all(plan["routingLocked"] for plan in persisted["executionPlanAttempts"]))
         dispatched = [event for event in events if event["type"] == "routing.dispatched"]
         self.assertEqual(dispatched[-1]["payload"]["effectiveModelRoute"], "account-2/gpt-5.6-luna")
 
