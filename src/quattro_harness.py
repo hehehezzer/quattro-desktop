@@ -2889,6 +2889,7 @@ class HarnessRuntime:
                 legacy_routes = [str(target_payload.get("route"))]
                 legacy_routes.extend(str(route) for route in target_payload.get("fallbacks", [])[:2])
             result = None
+            locked_receipt_unavailable = False
             recorded_plan_attempts: list[dict[str, Any]] = []
             for target_index, attempt_plan in enumerate(attempt_plans):
                 attempt_route = (
@@ -2986,6 +2987,7 @@ class HarnessRuntime:
                         failure_retry_after_ms = failure.get("retry_after_ms")
                     # Locked attempts never fall back based on human-readable process output.
                     if receipt is None:
+                        locked_receipt_unavailable = True
                         self.store.append_event(
                             task_id, "routing.locked_receipt_unavailable", run_id=run_id,
                             display={"planId": attempt_plan.plan_id, "reason": "failed_attempt"},
@@ -3139,8 +3141,15 @@ class HarnessRuntime:
                     return self.run_task(replacement_task)
                 self.store.transition_task(
                     task_id, TaskState.FAILED,
-                    terminal_code="agent_exit_nonzero",
-                    terminal_summary=f"{task['agent']} exited with code {result.exit_code}.",
+                    terminal_code=(
+                        "locked_receipt_unavailable"
+                        if locked_receipt_unavailable else "agent_exit_nonzero"
+                    ),
+                    terminal_summary=(
+                        "Locked execution failed without terminal gateway receipt evidence."
+                        if locked_receipt_unavailable
+                        else f"{task['agent']} exited with code {result.exit_code}."
+                    ),
                 )
                 return int(result.exit_code or 1)
 
@@ -3688,7 +3697,13 @@ class HarnessRuntime:
                     plan_id=f"task_{uuid.uuid4().hex}.plan-0",
                 )
                 pi_plan = dataclasses.replace(
-                    pi_plan, fallback_allowed=False, fallback_targets=(),
+                    pi_plan,
+                    required_tools=(
+                        ("repository_read",)
+                        if "repository_read" in pi_plan.required_tools else ()
+                    ),
+                    fallback_allowed=False,
+                    fallback_targets=(),
                 )
         task_id = self.store.create_task(
             parent_task_id=parent_task_id,

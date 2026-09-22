@@ -452,6 +452,29 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertNotEqual(task["state"], "succeeded")
         self.assertEqual(task["terminalCode"], "locked_receipt_unavailable")
 
+    def test_delegated_locked_failure_without_receipt_has_dedicated_terminal_code(self):
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        self.fake.write_text("#!/bin/sh\necho failed\nexit 7\n", encoding="utf-8")
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(self.runtime, "_locked_target_receipt", return_value=None),
+        ):
+            task_id = self.runtime.create_task(
+                agent="codex", project=self.project, prompt="Inspect README.md",
+                mode="prompt", profile_name="audit-read-only",
+            )
+            task = self.runtime.store.get_task(task_id, include_private=True)
+            private = dict(task["private_payload"])
+            private["delegatedWorker"] = True
+            self.runtime.store.update_private_payload(task_id, private)
+            code = self.runtime.run_task(task_id)
+        self.assertEqual(code, 7)
+        self.assertEqual(
+            self.runtime.store.display_task(task_id)["terminalCode"],
+            "locked_receipt_unavailable",
+        )
+
     def test_direct_nonretryable_failure_does_not_duplicate_request(self):
         catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
         with (
@@ -652,6 +675,14 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         child = self.runtime.store.display_task(str(task_id))
         self.assertEqual(child["parentTaskId"], parent)
         self.assertEqual(child["workflow"], "codex-pi-delegation")
+        child_private = self.runtime.store.get_task(
+            str(task_id), include_private=True,
+        )["private_payload"]
+        self.assertEqual(
+            child_private["executionPlan"]["tools"]["required"],
+            ["repository_read"],
+        )
+        self.assertFalse(child_private["executionPlan"]["fallback"]["allowed"])
         context_event = next(
             event for event in self.runtime.store.display_events(str(task_id))
             if event["type"] == "context.assembled"
