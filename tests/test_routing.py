@@ -3,6 +3,7 @@ from __future__ import annotations
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
@@ -12,6 +13,8 @@ from quattro_agent.routing import (
     RoutingTier, automatic_model_override, classify_request, context_budget_tokens,
     effective_reasoning_effort, next_exceptional_effort, next_tier,
 )
+from quattro_agent.omniroute import OmniRouteRoutingMode, omniroute_routing_mode
+from quattro_agent.errors import ConfigError
 
 
 CONFIG = {"routing": {
@@ -104,6 +107,14 @@ class RoutingTests(unittest.TestCase):
             }),
             "ultra",
         )
+
+    def test_gateway_defaults_to_quattro_passthrough_and_accepts_explicit_legacy(self) -> None:
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertIs(omniroute_routing_mode(None), OmniRouteRoutingMode.PASSTHROUGH)
+        self.assertIs(omniroute_routing_mode("passthrough"), OmniRouteRoutingMode.PASSTHROUGH)
+        self.assertIs(omniroute_routing_mode("LEGACY"), OmniRouteRoutingMode.LEGACY)
+        with self.assertRaisesRegex(ConfigError, "OMNIROUTE_ROUTING_MODE"):
+            omniroute_routing_mode("balanced")
 
 
 if __name__ == "__main__":

@@ -131,6 +131,13 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
                 else HarnessRuntime._configured_codex_model(pathlib.Path(home))
             )
         )
+        # Non-interactive locked tasks require terminal gateway evidence. The
+        # integration suite supplies deterministic receipt evidence without a
+        # live provider; individual tests still patch this method to exercise
+        # missing, delayed, and failed receipts.
+        self.runtime._locked_target_receipt = (  # type: ignore[method-assign]
+            HarnessRuntimeIntegrationTests._matching_locked_receipt.__get__(self, type(self))
+        )
 
     def tearDown(self):
         self.temp.cleanup()
@@ -312,7 +319,8 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             "quattro_harness.urllib.request.urlopen",
             side_effect=[PendingResponse(), Response()],
         ) as open_request:
-            receipt = self.runtime._locked_target_receipt(
+            receipt = HarnessRuntime._locked_target_receipt(
+                self.runtime,
                 "plan-1", attempts=3, delay_seconds=0,
             )
         self.assertEqual(receipt["plan_id"], "plan-1")
@@ -759,7 +767,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(rejected["state"], "declined")
         self.assertEqual(rejected["taskState"], "blocked")
 
-    def test_auto_model_uses_verified_tier_route_and_manual_model_is_preserved(self):
+    def test_auto_and_legacy_aliases_resolve_to_quattro_targets(self):
         account_home = self.root / "account"
         account_home.mkdir()
         (account_home / "config.toml").write_text('model = "auto"\n', encoding="utf-8")
@@ -779,7 +787,12 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(updated["metadata"]["selectedModel"], "auto")
         self.assertEqual(updated["metadata"]["effectiveModelRoute"], "account-1/gpt-5.6-luna")
 
-        for explicit_route in ("auto/coding:cheap", "auto/coding", "auto/reasoning"):
+        expected_routes = {
+            "auto/coding:cheap": "account-1/gpt-5.6-luna",
+            "auto/coding": "account-1/gpt-5.6-terra",
+            "auto/reasoning": "account-1/gpt-5.6-sol",
+        }
+        for explicit_route, expected_route in expected_routes.items():
             with self.subTest(explicit_route=explicit_route):
                 (account_home / "config.toml").write_text(
                     f'model = "{explicit_route}"\n', encoding="utf-8"
@@ -794,11 +807,11 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
                 explicit_argv, _stdin, _environment = self.runtime._agent_plan(
                     explicit, explicit_run, PolicyProfile.from_dict(explicit["policy"])
                 )
-                self.assertNotIn("-m", explicit_argv)
+                self.assertIn(expected_route, explicit_argv)
                 explicit_metadata = self.runtime.store.display_task(explicit_id)["metadata"]
-                self.assertEqual(explicit_metadata["modelSelection"], "manual")
+                self.assertEqual(explicit_metadata["modelSelection"], "quattro-explicit")
                 self.assertEqual(explicit_metadata["selectedModel"], explicit_route)
-                self.assertEqual(explicit_metadata["effectiveModelRoute"], explicit_route)
+                self.assertEqual(explicit_metadata["effectiveModelRoute"], expected_route)
 
         (account_home / "config.toml").write_text('model = "account-1/gpt-5.6-terra"\n', encoding="utf-8")
         manual_id = self.runtime.create_task(
@@ -809,6 +822,31 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         manual_argv, _stdin, _environment = self.runtime._agent_plan(manual, manual_run, PolicyProfile.from_dict(manual["policy"]))
         self.assertNotIn("auto/coding:cheap", manual_argv)
         self.assertEqual(self.runtime.store.display_task(manual_id)["metadata"]["modelSelection"], "manual")
+
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "legacy"}):
+            (account_home / "config.toml").write_text('model = "auto"\n', encoding="utf-8")
+            legacy_id = self.runtime.create_task(
+                agent="codex", project=self.project, prompt="Locate a legacy route", mode="prompt",
+                parent_task_id=task_id,
+            )
+            legacy = self.runtime.store.get_task(legacy_id, include_private=True)
+            legacy_run = self.runtime.store.create_run(legacy_id)
+            legacy_argv, _stdin, _environment = self.runtime._agent_plan(
+                legacy, legacy_run, PolicyProfile.from_dict(legacy["policy"])
+            )
+            self.assertNotIn("account-1/gpt-5.6-luna", legacy_argv)
+            self.assertEqual(
+                self.runtime.store.display_task(legacy_id)["metadata"]["routingMode"],
+                "legacy",
+            )
+
+    def test_invalid_gateway_mode_fails_before_repository_reservation(self):
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "balanced"}):
+            with self.assertRaisesRegex(ConfigError, "OMNIROUTE_ROUTING_MODE"):
+                self.runtime.create_task(
+                    agent="codex", project=self.project, prompt="invalid mode", mode="prompt",
+                )
+        self.assertEqual(self.runtime.store.list_display_tasks(limit=100), [])
 
     def test_task_routing_metadata_and_codex_effort_are_display_safe(self):
         task_id = self.runtime.create_task(

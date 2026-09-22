@@ -66,7 +66,9 @@ from quattro_agent.paths import (
 )
 from quattro_agent.config import migrate_ai_config, validate_ai_config
 from quattro_agent.models import RunState, TaskState
-from quattro_agent.omniroute import validate_omniroute_contract
+from quattro_agent.omniroute import (
+    OmniRouteRoutingMode, omniroute_routing_mode, validate_omniroute_contract,
+)
 from quattro_agent.sessions import load_session_registry, prepare_shared_session_namespace, update_session_registry
 from quattro_agent.supervisor import ProcessIdentity, read_process_identity, verify_process_identity
 from quattro_agent.privacy import redact_secret_text, summarize_display_title
@@ -83,7 +85,8 @@ from quattro_agent.benchmark import load_cases as load_benchmark_cases, run_benc
 from quattro_agent.intelligence.commands import add_intelligence_parser, intelligence_command
 from quattro_agent.routing import automatic_model_override, classify_request
 from quattro_agent.model_registry import (
-    default_policy_path, load_model_registry, select_execution_target,
+    default_policy_path, execution_target_for_route, load_model_registry,
+    select_execution_target,
 )
 from quattro_agent.routing_intelligence import (
     MAX_EVIDENCE_BYTES,
@@ -2516,16 +2519,35 @@ def routing_command(args: argparse.Namespace) -> int:
             )
             configured = args.model or "auto"
             execution_target = None
-            if configured == "auto":
+            routing_mode = omniroute_routing_mode()
+            registry = load_model_registry(default_policy_path(), model_catalog_path())
+            alias_tier = {
+                "auto/coding:cheap": "FAST",
+                "auto/coding": "STANDARD",
+                "auto/reasoning": "REASONING",
+            }.get(configured)
+            if (
+                routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+                and configured in {"auto", "auto/coding:cheap", "auto/coding", "auto/reasoning"}
+            ):
                 execution_target = select_execution_target(
                     task_profile_from_dict(decision.task_profile),
-                    load_model_registry(default_policy_path(), model_catalog_path()),
+                    registry,
                     preferred_account=str(config["defaultCodexAccount"]),
                     available_accounts=frozenset(
                         str(row["id"]) for row in config["accounts"] if row.get("enabled") is True
                     ),
+                    selection_tier=alias_tier,
                 )
                 route = execution_target.route
+            elif routing_mode is OmniRouteRoutingMode.PASSTHROUGH:
+                execution_target = execution_target_for_route(
+                    task_profile_from_dict(decision.task_profile), registry, configured,
+                    available_accounts=frozenset(
+                        str(row["id"]) for row in config["accounts"] if row.get("enabled") is True
+                    ),
+                )
+                route = execution_target.route if execution_target is not None else configured
             else:
                 route = automatic_model_override(config, decision.tier, configured) or configured
             preference = PreferenceMode(str(config["routing"].get("preferenceMode", "balanced")))
@@ -2543,6 +2565,8 @@ def routing_command(args: argparse.Namespace) -> int:
                 "tier": decision.tier.value,
                 "reasoningEffort": decision.reasoning_effort,
                 "effectiveRoute": route,
+                "routingMode": routing_mode.value,
+                "selectedBy": "Quattro" if execution_target is not None else "OmniRoute (legacy)",
                 "executionTarget": execution_target.to_dict() if execution_target else None,
                 "decisionSnapshot": snapshot,
             }

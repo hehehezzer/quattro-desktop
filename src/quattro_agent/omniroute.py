@@ -7,6 +7,7 @@ import json
 import hashlib
 import tomllib
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -24,6 +25,32 @@ REQUIRED_QUATTRO_ROUTES = (
     "auto/reasoning",
 )
 MAX_CATALOG_BYTES = 2_000_000
+ROUTING_MODE_ENV = "OMNIROUTE_ROUTING_MODE"
+
+
+class OmniRouteRoutingMode(StrEnum):
+    """How the gateway is allowed to interpret a Quattro request.
+
+    ``passthrough`` is the authoritative path: Quattro supplies one locked
+    target and OmniRoute only transports it. ``legacy`` is an explicit
+    migration escape hatch for older clients that still rely on OmniRoute's
+    automatic routing engine. The environment variable is intentionally
+    process-scoped so the compatibility switch does not become task state.
+    """
+
+    PASSTHROUGH = "passthrough"
+    LEGACY = "legacy"
+
+
+def omniroute_routing_mode(value: str | None = None) -> OmniRouteRoutingMode:
+    """Return the validated gateway mode, defaulting to Quattro authority."""
+    raw = value if value is not None else os.environ.get(ROUTING_MODE_ENV, "passthrough")
+    try:
+        return OmniRouteRoutingMode(str(raw).strip().lower())
+    except ValueError as error:
+        raise ConfigError(
+            f"{ROUTING_MODE_ENV} must be one of: passthrough, legacy"
+        ) from error
 
 
 def _validate_loopback_endpoint(value: str) -> None:

@@ -13,10 +13,12 @@ confirm that the persisted receipt matches the selected target. Reversing this
 order intentionally causes delegated workers to terminate with
 `locked_receipt_unavailable`; Quattro never falls back to parsing model output.
 
-This phase covers single-shot direct and delegated executions. Interactive and
-resumed multi-turn sessions are not yet gateway-lock complete: they require a
-per-request receipt identifier or a gateway aggregate proving request-count
-completeness before Quattro can claim that every turn honored one locked plan.
+Interactive and resumed sessions now receive the same locked target envelope
+for the session's selected route. Per-turn receipt aggregation is still not
+available, so Quattro reports interactive/resume target evidence as
+session-scoped rather than claiming that every turn has independently
+validated receipt coverage. Single-shot direct and delegated executions remain
+fail-closed on a missing or mismatched terminal receipt.
 
 Normal automatic execution produces a Quattro-owned `ExecutionPlan` with the
 classified task, exact provider/account/model target, reasoning effort, context
@@ -46,6 +48,10 @@ OmniRoute owns transport, provider protocol adaptation, caching, token
 optimization, and runtime health signals. The default registry is
 `quattro_agent/data/model-policy.json`; `QUATTRO_MODEL_POLICY` may point to a
 validated private override. Neither file contains credentials.
+Only routes present in that validated Quattro policy can enter authoritative
+passthrough. Catalog-only provider aliases without a Quattro account contract
+fail closed rather than handing target selection back to OmniRoute; callers
+that still need those routes must opt into `OMNIROUTE_ROUTING_MODE=legacy`.
 
 ## Live path and ownership
 
@@ -433,10 +439,12 @@ text-only models accept the attachment through OmniRoute's configured bounded
 image-to-text modality bridge, so the catalog describes the effective end-to-end
 input contract rather than only the upstream model's native modality.
 
-Selecting `auto` enables per-task Quattro target selection. Selecting one of the three
-`auto/...` values explicitly delegates model choice to the named OmniRoute route.
-Unknown values are rejected by Codex against the same catalog instead of being
-silently converted to `auto`. The catalog is deployed from
+Selecting `auto` enables per-task Quattro target selection. In passthrough mode,
+the three `auto/...` compatibility aliases are also resolved by Quattro to an
+exact account-qualified target before dispatch. In explicit legacy mode they
+retain their historical OmniRoute meaning. Unknown values are rejected by
+Codex against the same catalog instead of being silently converted to `auto`.
+The catalog is deployed from
 `src/quattro/omniroute-model-catalog.json`; Quattro preflight fails closed if a
 required route is missing.
 

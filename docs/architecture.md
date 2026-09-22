@@ -19,8 +19,9 @@ request
 
 - **Quattro:** request classification, agent choice, task lifecycle, policy,
   context budgets, leases, recovery, and display-safe state.
-- **OmniRoute:** provider/model selection, capability eligibility, health,
-  quota, cost, cooldowns, and provider fallbacks.
+- **OmniRoute:** provider protocol normalization, caching, transport, usage
+  accounting, streaming, and provider health signals. It may select a target
+  only for the explicit `OMNIROUTE_ROUTING_MODE=legacy` compatibility path.
 - **Codex/Pi:** execution runtimes. Their native credential stores remain
   outside Quattro state.
 - **Memory/RAG:** optional user-owned context and disposable derived indexes;

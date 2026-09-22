@@ -47,6 +47,13 @@ class AstraEffortTests(unittest.TestCase):
                         task["private_payload"]["routing"] = {
                             "tier": tier, "exceptional_escalations": exceptional,
                         }
+                        # This matrix exercises native Astra effort mapping on
+                        # a fresh interactive selection. The production path
+                        # persists a plan for the real session; clearing the
+                        # fixture plan here avoids reusing the first task's
+                        # initial auto target across the matrix.
+                        task["private_payload"].pop("executionPlan", None)
+                        task["private_payload"].pop("executionTarget", None)
                         expected = (
                             selected if isinstance(selected, str) and selected in {"low", "high"}
                             else "low" if selected is None and tier == "FAST" else "high"
@@ -73,6 +80,12 @@ class AstraEffortTests(unittest.TestCase):
                 with self.subTest(account=account, selected=selected):
                     model = f"{account}/gpt-6-astra"
                     self.select(model, selected)
+                    response.headers = {
+                        "X-OmniRoute-Provider": "cx",
+                        "X-OmniRoute-Account": account,
+                        "X-OmniRoute-Model": "gpt-6-astra",
+                        "X-OmniRoute-Route": model,
+                    }
                     with mock.patch("quattro_harness.urllib.request.urlopen", return_value=response) as request:
                         result = self.runtime.direct_response(project=self.project, prompt="reply with hello")
                     body = json.loads(request.call_args.args[0].data)
