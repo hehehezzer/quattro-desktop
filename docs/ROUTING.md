@@ -52,6 +52,9 @@ Only routes present in that validated Quattro policy can enter authoritative
 passthrough. Catalog-only provider aliases without a Quattro account contract
 fail closed rather than handing target selection back to OmniRoute; callers
 that still need those routes must opt into `OMNIROUTE_ROUTING_MODE=legacy`.
+The older `_session` launcher and standalone PR-review worker also fail closed
+in passthrough until they are migrated to carry a plan and receipt; this keeps
+those compatibility entrypoints from silently reintroducing gateway routing.
 
 ## Live path and ownership
 

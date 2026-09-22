@@ -736,6 +736,14 @@ def resolve_codex_resume_target(
 def session_worker(args: argparse.Namespace) -> int:
     ensure_state_dirs()
     config = load_config()
+    if (
+        args.agent == "codex"
+        and omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH
+    ):
+        die(
+            "the legacy session worker has no locked ExecutionPlan/receipt path; "
+            "use a managed Quattro task or set OMNIROUTE_ROUTING_MODE=legacy"
+        )
     directory = safe_directory(args.directory)
     memory_enabled, memory_vault, memory_enforced = memory_settings(config)
     project_vault = project_memory_path(config)
@@ -3643,6 +3651,11 @@ def main() -> int:
             die("No crash is available to diagnose")
         return diagnose_crash(pid)
     if command == "pr-review":
+        if omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH:
+            die(
+                "the standalone PR-review worker is not gateway-lock complete; "
+                "set OMNIROUTE_ROUTING_MODE=legacy or use a managed locked task"
+            )
         review_config = config.get("prReview", {})
         if not isinstance(review_config, dict):
             review_config = {}

@@ -272,7 +272,8 @@ class CrossAccountSessionTests(unittest.TestCase):
                 mock.patch.object(launcher, "scan_codex_sessions", return_value=[]),
                 mock.patch.object(launcher.subprocess, "run", side_effect=run),
             )
-            with common[0], common[1], common[2], common[3], common[4], \
+            with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "legacy"}), \
+                    common[0], common[1], common[2], common[3], common[4], \
                     common[5], common[6], common[7], common[8], \
                     mock.patch.object(launcher, "require", side_effect=lambda name: name), \
                     mock.patch.object(launcher, "prepare_codex_launch", return_value=root / "codex"), \
