@@ -445,6 +445,11 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             task = self.runtime.store.get_task(task_id, include_private=True)
             private = dict(task["private_payload"])
             private["delegatedWorker"] = True
+            plan = dict(private["executionPlan"])
+            plan["fallback"] = {"allowed": False, "targets": []}
+            plan["target"] = dict(plan["target"]) | {"fallbacks": []}
+            private["executionPlan"] = plan
+            private["executionTarget"] = dict(private["executionTarget"]) | {"fallbacks": []}
             self.runtime.store.update_private_payload(task_id, private)
             code = self.runtime.run_task(task_id)
         self.assertEqual(code, 1)
@@ -467,6 +472,11 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             task = self.runtime.store.get_task(task_id, include_private=True)
             private = dict(task["private_payload"])
             private["delegatedWorker"] = True
+            plan = dict(private["executionPlan"])
+            plan["fallback"] = {"allowed": False, "targets": []}
+            plan["target"] = dict(plan["target"]) | {"fallbacks": []}
+            private["executionPlan"] = plan
+            private["executionTarget"] = dict(private["executionTarget"]) | {"fallbacks": []}
             self.runtime.store.update_private_payload(task_id, private)
             code = self.runtime.run_task(task_id)
         self.assertEqual(code, 7)

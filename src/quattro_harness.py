@@ -2975,7 +2975,7 @@ class HarnessRuntime:
                     capture_thread.join(timeout=5)
                     if capture_thread.is_alive():
                         raise RuntimeError("agent output collector did not stop")
-                if result.state is RunState.SUCCEEDED or target_index + 1 >= len(attempt_plans):
+                if result.state is RunState.SUCCEEDED:
                     break
                 failure_type = None
                 failure_retry_after_ms = None
@@ -3006,6 +3006,8 @@ class HarnessRuntime:
                         failure_text[:100_000], re.IGNORECASE,
                     ):
                         break
+                if target_index + 1 >= len(attempt_plans):
+                    break
                 self.store.append_event(
                     task_id, "routing.fallback", run_id=run_id,
                     display={
