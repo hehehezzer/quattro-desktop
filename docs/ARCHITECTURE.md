@@ -1,5 +1,23 @@
 # Quattro Architecture
 
+## Authoritative inference boundary
+
+The invariant is **Quattro chooses; OmniRoute executes**.
+
+```text
+Request -> Quattro Intelligence -> locked ExecutionPlan -> context compiler
+        -> OmniRoute passthrough gateway -> exact provider/account/model
+        -> result or structured failure -> Quattro fallback plan
+```
+
+Quattro owns classification, capability/complexity assessment, target/account
+selection, reasoning effort, semantic context budgets and compilation, tools,
+cross-target fallback, and routing evidence. OmniRoute owns normalization,
+provider-native caching, exact deduplication, transport and same-target retry,
+streaming, accounting, and health telemetry. Every authoritative plan has
+`routingLocked=true`; each fallback is a new Quattro plan, never an invisible
+gateway override. Legacy routing remains an explicit compatibility path.
+
 Quattro is a local desktop AI orchestration control plane. It preserves a
 separation of responsibility between request orchestration, model routing, and
 execution runtimes.

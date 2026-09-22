@@ -194,10 +194,11 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             headers = {
                 "X-OmniRoute-Provider": "cx",
                 "X-OmniRoute-Model": "gpt-5.6-luna",
+                "X-OmniRoute-Account": "account-1",
             }
 
             def read(self, _limit):
-                return b'{"output_text":"Docker volumes persist data."}'
+                return b'{"output_text":"Docker volumes persist data.","usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":80},"output_tokens":7}}'
 
             def __enter__(self):
                 return self
@@ -220,7 +221,17 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(len(self.runtime.store.list_display_tasks(limit=100)), len(before))
         request = open_request.call_args.args[0]
         self.assertEqual(request.full_url, "http://localhost:20128/api/v1/responses")
-        self.assertTrue(json.loads(request.data.decode("utf-8"))["model"])
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["model"], "account-1/gpt-5.6-luna")
+        self.assertEqual(body["routing"]["preference_mode"], "passthrough")
+        self.assertEqual(
+            result["routingSnapshot"]["execution_plan"]["target"]["route"], body["model"],
+        )
+        self.assertTrue(result["routingSnapshot"]["execution_plan"]["routingLocked"])
+        self.assertEqual(result["tokenTelemetry"]["cachedInputTokens"], 80)
+        self.assertEqual(result["tokenTelemetry"]["uncachedInputTokens"], 20)
+        self.assertEqual(result["tokenTelemetry"]["cacheHitRate"], 0.8)
+        self.assertEqual(result["tokenTelemetry"]["cacheMetricSource"], "provider_reported")
 
     def test_direct_hello_skips_optional_retrieval_and_stays_fast(self):
         class Response:
@@ -282,6 +293,37 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             result["routingSnapshot"]["fallback_events"][0]["route"],
             "account-1/gpt-5.6-luna",
         )
+        self.assertTrue(
+            result["routingSnapshot"]["execution_plan"]["planId"].endswith(".fallback-1")
+        )
+
+    def test_direct_transport_failure_retries_same_locked_target(self):
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        successful = (
+            {"output_text": "hello", "usage": {"input_tokens": 5, "output_tokens": 1}},
+            {"provider": "cx", "model": "gpt-5.6-luna", "cost": None},
+        )
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime, "_send_omniroute_response",
+                side_effect=[
+                    OmniRouteAttemptError(
+                        "connection reset", retryable=True,
+                        error_type="TRANSPORT_FAILURE", transport_retryable=True,
+                    ),
+                    successful,
+                ],
+            ) as send,
+        ):
+            result = self.runtime.direct_response(project=self.project, prompt="hello")
+        self.assertEqual(send.call_count, 2)
+        first = send.call_args_list[0].args[0]
+        second = send.call_args_list[1].args[0]
+        self.assertEqual(first, second)
+        self.assertEqual(result["model"], "account-1/gpt-5.6-luna")
+        self.assertFalse(result["routingSnapshot"]["fallback_used"])
 
     def test_direct_nonretryable_failure_does_not_duplicate_request(self):
         catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"

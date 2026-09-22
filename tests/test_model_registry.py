@@ -12,8 +12,8 @@ if str(SRC) not in sys.path:
 
 from quattro_agent.errors import ConfigError
 from quattro_agent.model_registry import (
-    default_policy_path, execution_target_for_route, load_model_registry, select_execution_target,
-    target_matches_actual,
+    build_execution_plan, default_policy_path, execution_target_for_route,
+    fallback_execution_plan, load_model_registry, select_execution_target, target_matches_actual,
 )
 from quattro_agent.routing_intelligence import profile_task
 
@@ -132,6 +132,10 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertFalse(target_matches_actual(
             target, actual_provider="other", actual_model="gpt-5.6-luna",
         ))
+        self.assertFalse(target_matches_actual(
+            target, actual_provider="cx", actual_model="gpt-5.6-luna",
+            actual_account="account-2",
+        ))
 
     def test_manual_account_route_has_no_automatic_fallback(self) -> None:
         profile = profile_task(
@@ -145,6 +149,42 @@ class ModelRegistryTests(unittest.TestCase):
         assert target is not None
         self.assertEqual(target.mode, "MANUAL")
         self.assertEqual(target.fallbacks, ())
+
+    def test_execution_plan_locks_target_reasoning_context_tools_and_fallbacks(self) -> None:
+        profile = profile_task(
+            "Implement a bounded parser and add regression tests.", agent="codex",
+            workflow="prompt", policy_name="workspace-write",
+        )
+        target = select_execution_target(profile, self.targets, preferred_account="account-1")
+        plan = build_execution_plan(
+            profile, target, self.targets, reasoning_effort="medium", plan_id="plan-1",
+        )
+        payload = plan.to_dict()
+        self.assertTrue(payload["routingLocked"])
+        self.assertEqual(payload["target"]["route"], target.route)
+        self.assertEqual(payload["reasoning"]["effort"], "medium")
+        self.assertEqual(payload["context"]["strategy"], "deep")
+        self.assertGreater(payload["context"]["budgetTokens"], 0)
+        self.assertIn("tool_calling", payload["tools"]["required"])
+        self.assertEqual(
+            [item["route"] for item in payload["fallback"]["targets"]],
+            list(target.fallbacks),
+        )
+
+    def test_fallback_is_a_new_locked_plan_without_mutating_the_original(self) -> None:
+        profile = profile_task(
+            "hello", agent="codex", workflow="direct-response", policy_name="audit-read-only",
+        )
+        target = select_execution_target(profile, self.targets, preferred_account="account-1")
+        first = build_execution_plan(
+            profile, target, self.targets, reasoning_effort="low", plan_id="plan-a",
+        )
+        second = fallback_execution_plan(first, 0, reason="rate limited")
+        self.assertEqual(first.plan_id, "plan-a")
+        self.assertEqual(first.target.route, "account-1/gpt-5.6-luna")
+        self.assertEqual(second.plan_id, "plan-a.fallback-1")
+        self.assertEqual(second.target.route, "account-2/gpt-5.6-luna")
+        self.assertTrue(second.routing_locked)
 
 
 if __name__ == "__main__":

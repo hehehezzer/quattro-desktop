@@ -1,5 +1,19 @@
 # Quattro Evidence-Aware Request Routing
 
+## Execution-plan contract
+
+Normal automatic execution produces a Quattro-owned `ExecutionPlan` with the
+classified task, exact provider/account/model target, reasoning effort, context
+strategy and budgets, required tool capabilities, bounded fallback targets,
+and `routingLocked=true`. Direct gateway calls carry the exact
+account-qualified route plus `preference_mode=passthrough`; OmniRoute strips
+that routing metadata before provider translation.
+
+Target failures return to Quattro. A fallback is a distinct plan with a new
+plan ID. Only transient transport failures may retry the same target. Legacy
+gateway routing remains available for explicit compatibility and comparison.
+See [TOKEN_OPTIMIZATION.md](TOKEN_OPTIMIZATION.md) for the ownership audit.
+
 Routing policy: `quattro-routing-v2`
 
 Benchmark normalization: `benchmark-normalization-v1`

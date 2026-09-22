@@ -36,7 +36,8 @@ from quattro_agent import (
     RoutingDecision, RoutingTier, TaskState, TaskStore, adapter_for, automatic_model_override,
     classify_pre_routing, classify_request, context_budget_tokens, effective_reasoning_effort, load_ai_config,
     next_exceptional_effort, next_tier, policy_profile, default_policy_path,
-    execution_target_for_route, load_model_registry, select_execution_target,
+    build_execution_plan, execution_target_for_route, fallback_execution_plan,
+    load_model_registry, select_execution_target,
     target_matches_actual,
 )
 from quattro_agent.adapters import AgentMode, RunSpec
@@ -129,9 +130,15 @@ MAX_AGENT_OUTPUT_BYTES = 5_000_000
 class OmniRouteAttemptError(RuntimeError):
     """One exact-route transport failure with explicit retry safety."""
 
-    def __init__(self, message: str, *, retryable: bool) -> None:
+    def __init__(
+        self, message: str, *, retryable: bool, error_type: str = "GATEWAY_ERROR",
+        retry_after_ms: int | None = None, transport_retryable: bool = False,
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.error_type = error_type
+        self.retry_after_ms = retry_after_ms
+        self.transport_retryable = transport_retryable
 SELECTABLE_POLICIES = {
     "audit-read-only", "review-untrusted", "workspace-write",
     "desktop-config-write", "publication-capable", "full-access-explicit",
@@ -619,6 +626,14 @@ class HarnessRuntime:
                 )
         pre_envelope = dict(adaptive.envelope) if adaptive and adaptive.envelope else None
         pre_selection = adaptive.selection.to_dict() if adaptive and adaptive.selection else None
+        execution_plan = None
+        if execution_target is not None and configured_catalog is not None:
+            execution_plan = build_execution_plan(
+                pre_profile, execution_target,
+                load_model_registry(default_policy_path(), configured_catalog),
+                reasoning_effort=str(routing.reasoning_effort),
+                plan_id=task_profile_identifier(pre_profile),
+            )
         if pre_envelope is not None:
             # The task id is not known until persistence below.  It is bound to
             # the request-scoped envelope immediately after durable creation.
@@ -653,6 +668,7 @@ class HarnessRuntime:
                         "preferredCandidates": list(adaptive.preferred_candidates) if adaptive else [],
                         "adaptiveMode": adaptive.negotiation.compatibility if adaptive else "standard",
                         "executionTarget": execution_target.to_dict() if execution_target else None,
+                        "executionPlan": execution_plan.to_dict() if execution_plan else None,
                     },
                     "delegationDecision": delegation["decision"],
                     "delegationReason": delegation["reason"],
@@ -681,6 +697,7 @@ class HarnessRuntime:
                     "routingEnvelope": pre_envelope,
                     "routingSelection": pre_selection,
                     "executionTarget": execution_target.to_dict() if execution_target else None,
+                    "executionPlan": execution_plan.to_dict() if execution_plan else None,
                     "routingAdaptive": ({
                         "compatibility": adaptive.negotiation.compatibility,
                         "headerTransport": adaptive.negotiation.header_transport,
@@ -847,10 +864,14 @@ class HarnessRuntime:
         routing = classify_pre_routing(pre_routing_input=boundary, config=config)
         profile_snapshot = task_profile_from_dict(routing.task_profile)
         configured_catalog = self._configured_codex_catalog(account_home)
+        registry = (
+            load_model_registry(default_policy_path(), configured_catalog)
+            if configured_catalog is not None else ()
+        )
         if configured_model == "auto" and configured_catalog is not None:
             execution_target = select_execution_target(
                 profile_snapshot,
-                load_model_registry(default_policy_path(), configured_catalog),
+                registry,
                 preferred_account=str(account["id"]),
                 available_accounts=self._enabled_account_ids(config),
             )
@@ -922,7 +943,6 @@ class HarnessRuntime:
             and configured_model == "auto"
             and configured_catalog is not None
         ):
-            registry = load_model_registry(default_policy_path(), configured_catalog)
             execution_target = select_execution_target(
                 profile_snapshot, registry,
                 preferred_account=str(account["id"]),
@@ -995,46 +1015,80 @@ class HarnessRuntime:
         routing_effort = self._dispatch_reasoning_effort(
             config, routing.display(), model, account_home,
         )
-        attempt_routes = [model]
-        if execution_target is not None:
-            attempt_routes.extend(execution_target.fallbacks[:2])
+        execution_plan = (
+            build_execution_plan(
+                profile_snapshot, execution_target, registry,
+                reasoning_effort=routing_effort,
+                plan_id=intelligence_record_id or task_profile_identifier(profile_snapshot),
+            )
+            if execution_target is not None else None
+        )
+        attempt_plans = [execution_plan] if execution_plan is not None else [None]
+        if execution_plan is not None:
+            attempt_plans.extend(
+                fallback_execution_plan(execution_plan, index, reason="gateway target failure")
+                for index in range(min(2, len(execution_plan.fallback_targets)))
+            )
         fallback_events: list[dict[str, Any]] = []
         last_error: RuntimeError | None = None
         body: Mapping[str, Any] | None = None
         response_metadata: dict[str, Any] | None = None
-        for attempt_index, attempt_route in enumerate(attempt_routes):
+        selected_plan = execution_plan
+        for attempt_index, attempt_plan in enumerate(attempt_plans):
+            attempt_route = attempt_plan.target.route if attempt_plan is not None else model
             request_body: dict[str, Any] = {
                 "model": attempt_route,
                 "input": input_text,
                 "reasoning": {"effort": routing_effort},
             }
+            if attempt_plan is not None:
+                request_body["routing"] = {
+                    "schema_version": 1,
+                    "requirements": {
+                        # Passthrough carries no gateway selection requirements;
+                        # Quattro already enforced its richer capability model.
+                        "capabilities": [],
+                        "minimum_context": profile_snapshot.final_request_tokens,
+                    },
+                    "preferred_candidates": [
+                        f"{attempt_plan.target.provider}/{attempt_plan.target.model}"
+                    ],
+                    "preference_mode": "passthrough",
+                    "task_profile_id": attempt_plan.plan_id,
+                    "tier": profile_snapshot.tier.value,
+                    "routing_policy_version": "quattro-authoritative-v1",
+                }
             if adaptive and adaptive.envelope and execution_target is None:
                 request_body["routing"] = dict(adaptive.envelope)
-            try:
-                body, response_metadata = self._send_omniroute_response(
-                    request_body, timeout_seconds=timeout_seconds,
-                )
-                model = attempt_route
-                if execution_target is not None and attempt_route != execution_target.route:
-                    registry = load_model_registry(default_policy_path(), configured_catalog)
-                    fallback_target = next(item for item in registry if item.route == attempt_route)
-                    execution_target = dataclasses.replace(
-                        execution_target,
-                        provider=fallback_target.provider,
-                        account=fallback_target.account,
-                        model=fallback_target.model,
-                        route=fallback_target.route,
+            for transport_attempt in range(2):
+                try:
+                    body, response_metadata = self._send_omniroute_response(
+                        request_body, timeout_seconds=timeout_seconds,
                     )
-                break
-            except OmniRouteAttemptError as error:
-                last_error = error
-                fallback_events.append({
-                    "route": attempt_route, "attempt": attempt_index + 1,
-                    "error": _bounded(str(error), 500),
-                    "retryable": error.retryable,
-                })
-                if not error.retryable:
+                    model = attempt_route
+                    selected_plan = attempt_plan
+                    execution_target = attempt_plan.target if attempt_plan is not None else execution_target
                     break
+                except OmniRouteAttemptError as error:
+                    last_error = error
+                    if error.transport_retryable and transport_attempt == 0:
+                        continue
+                    fallback_events.append({
+                        "planId": attempt_plan.plan_id if attempt_plan is not None else None,
+                        "route": attempt_route, "attempt": attempt_index + 1,
+                        "error": _bounded(str(error), 500),
+                        "type": error.error_type,
+                        "retryable": error.retryable,
+                        "retryAfterMs": error.retry_after_ms,
+                        "transportRetries": transport_attempt,
+                    })
+                    if not error.retryable:
+                        attempt_plans = []
+                    break
+            if body is not None:
+                break
+            if last_error is not None and not last_error.retryable:
+                break
         if body is None or response_metadata is None:
             update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
                 "success": False,
@@ -1060,31 +1114,34 @@ class HarnessRuntime:
         input_tokens = usage.get("input_tokens") or usage.get("inputTokens")
         cached_input_tokens = input_details.get("cached_tokens")
         uncached_input_tokens = (
-            max(0, int(input_tokens) - int(cached_input_tokens or 0))
-            if isinstance(input_tokens, int) and not isinstance(input_tokens, bool) else None
+            int(input_tokens) - int(cached_input_tokens)
+            if isinstance(input_tokens, int) and not isinstance(input_tokens, bool)
+            and isinstance(cached_input_tokens, int) and not isinstance(cached_input_tokens, bool)
+            and 0 <= cached_input_tokens <= input_tokens else None
+        )
+        cache_hit_rate = (
+            cached_input_tokens / input_tokens
+            if isinstance(input_tokens, int) and input_tokens > 0
+            and isinstance(cached_input_tokens, int)
+            and 0 <= cached_input_tokens <= input_tokens else None
         )
         actual_model = str(response_metadata.get("model") or "")
         target_honored = execution_target is None or target_matches_actual(
             execution_target,
             actual_provider=response_metadata.get("provider"),
             actual_model=actual_model,
+            actual_account=response_metadata.get("account"),
         )
         if execution_target is not None and not target_honored:
             update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
                 "success": False,
                 "failure_category": "execution_target_mismatch",
-                "selected_model": actual_model or None,
-                "selected_provider": response_metadata.get("provider"),
-                "selected_account": execution_target.account,
             })
             raise RuntimeError(
                 f"OmniRoute target mismatch: requested {execution_target.route}, "
                 f"executed {response_metadata.get('provider')}/{actual_model}"
             )
         update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
-            "selected_model": response_metadata.get("model") or model,
-            "selected_provider": response_metadata.get("provider") or "omniroute",
-            "selected_account": execution_target.account if execution_target else str(account["id"]),
             "context_tokens": profile_snapshot.final_request_tokens,
             "retrieval_used": int(diagnostics.get("selectedChunks", 0) or 0) > 0,
             "retrieved_chunk_ids": diagnostics.get("selectedChunkIds", []),
@@ -1138,6 +1195,7 @@ class HarnessRuntime:
         snapshot["execution_target"] = execution_target.to_dict() if execution_target else {
             "mode": "MANUAL", "route": model,
         }
+        snapshot["execution_plan"] = selected_plan.to_dict() if selected_plan else None
         snapshot["target_honored"] = target_honored
         snapshot["fallback_events"] = fallback_events
         snapshot["fallback_used"] = bool(fallback_events)
@@ -1165,6 +1223,10 @@ class HarnessRuntime:
                 "transmittedInputTokens": input_tokens,
                 "cachedInputTokens": cached_input_tokens,
                 "uncachedInputTokens": uncached_input_tokens,
+                "cacheHitRate": cache_hit_rate,
+                "cacheMetricSource": (
+                    "provider_reported" if cached_input_tokens is not None else "unavailable"
+                ),
                 "outputTokens": usage.get("output_tokens") or usage.get("outputTokens"),
             },
             "adaptiveRouting": {
@@ -1201,13 +1263,36 @@ class HarnessRuntime:
                 headers = getattr(response, "headers", {})
         except urllib.error.HTTPError as error:
             detail = error.read(8_192).decode("utf-8", errors="replace")
+            parsed: Mapping[str, Any] = {}
+            try:
+                candidate = json.loads(detail)
+                if isinstance(candidate, Mapping):
+                    parsed = candidate.get("error", candidate)
+                    if not isinstance(parsed, Mapping):
+                        parsed = {}
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            retry_after = error.headers.get("Retry-After") if error.headers else None
+            retry_after_ms = None
+            try:
+                retry_after_ms = int(float(retry_after) * 1_000) if retry_after else None
+            except (TypeError, ValueError):
+                pass
+            error_type = str(parsed.get("type") or {
+                429: "PROVIDER_RATE_LIMITED",
+                401: "AUTHENTICATION_FAILED",
+                403: "CREDITS_OR_PERMISSION_EXHAUSTED",
+                404: "MODEL_UNAVAILABLE",
+            }.get(error.code, "PROVIDER_UNAVAILABLE" if error.code >= 500 else "PROVIDER_ERROR"))
             raise OmniRouteAttemptError(
                 f"OmniRoute provider failure: HTTP {error.code}: {detail}",
                 retryable=error.code == 429 or 500 <= error.code <= 599,
+                error_type=error_type, retry_after_ms=retry_after_ms,
             ) from error
         except urllib.error.URLError as error:
             raise OmniRouteAttemptError(
-                f"OmniRoute routing failure: {error.reason}", retryable=False,
+                f"OmniRoute transport failure: {error.reason}", retryable=True,
+                error_type="TRANSPORT_FAILURE", transport_retryable=True,
             ) from error
         except TimeoutError as error:
             raise OmniRouteAttemptError("OmniRoute target timed out", retryable=False) from error
@@ -1217,7 +1302,8 @@ class HarnessRuntime:
             ) from error
         except OSError as error:
             raise OmniRouteAttemptError(
-                "OmniRoute response could not be read", retryable=False,
+                "OmniRoute response could not be read", retryable=True,
+                error_type="TRANSPORT_FAILURE", transport_retryable=True,
             ) from error
         if not isinstance(body, Mapping):
             raise OmniRouteAttemptError(
@@ -1230,6 +1316,7 @@ class HarnessRuntime:
             actual_cost = None
         return body, {
             "provider": headers.get("X-OmniRoute-Provider"),
+            "account": headers.get("X-OmniRoute-Account"),
             "model": headers.get("X-OmniRoute-Model"),
             "cost": actual_cost,
             "cost_state": "actual" if actual_cost is not None else "unknown",

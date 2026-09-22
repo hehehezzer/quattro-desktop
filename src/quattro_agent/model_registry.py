@@ -54,6 +54,127 @@ class ExecutionTarget:
         return value
 
 
+@dataclass(frozen=True, slots=True)
+class ContextDecision:
+    """Quattro-owned semantic context contract."""
+
+    strategy: str
+    budget_tokens: int
+    conversation_budget_tokens: int
+    retrieval_budget_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionPlan:
+    """Final authoritative decision handed to the inference gateway.
+
+    A gateway may retry transport for this exact target, but changing any target
+    field or reasoning effort requires Quattro to issue a new plan.
+    """
+
+    plan_id: str
+    task_category: str
+    task_complexity: str
+    target: ExecutionTarget
+    reasoning_effort: str
+    context: ContextDecision
+    required_tools: tuple[str, ...]
+    fallback_allowed: bool
+    fallback_targets: tuple[ExecutionTarget, ...]
+    routing_locked: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "planId": self.plan_id,
+            "task": {"category": self.task_category, "complexity": self.task_complexity},
+            "target": self.target.to_dict(),
+            "reasoning": {"effort": self.reasoning_effort},
+            "context": {
+                "strategy": self.context.strategy,
+                "budgetTokens": self.context.budget_tokens,
+                "conversationBudgetTokens": self.context.conversation_budget_tokens,
+                "retrievalBudgetTokens": self.context.retrieval_budget_tokens,
+            },
+            "tools": {"required": list(self.required_tools)},
+            "fallback": {
+                "allowed": self.fallback_allowed,
+                "targets": [item.to_dict() for item in self.fallback_targets],
+            },
+            "routingLocked": self.routing_locked,
+        }
+
+
+def build_execution_plan(
+    profile: TaskProfile,
+    target: ExecutionTarget,
+    targets: Sequence[ModelTarget],
+    *,
+    reasoning_effort: str,
+    plan_id: str,
+) -> ExecutionPlan:
+    """Materialize one immutable plan from an already selected exact target."""
+    if reasoning_effort not in {"low", "medium", "high", "xhigh"}:
+        raise ConfigError("execution plan reasoning effort is unsupported")
+    by_route = {item.route: item for item in targets}
+
+    def exact(route: str, reason: str) -> ExecutionTarget:
+        item = by_route.get(route)
+        if item is None:
+            raise ConfigError(f"execution plan fallback is not approved: {route}")
+        return ExecutionTarget(
+            mode="FALLBACK", provider=item.provider, account=item.account,
+            model=item.model, route=item.route, tier=profile.tier.value,
+            reason=reason, fallbacks=(),
+        )
+
+    fallback_targets = tuple(
+        exact(route, f"Quattro fallback from {target.route}") for route in target.fallbacks
+    )
+    strategy = {
+        "CHAT_MINIMAL": "minimal",
+        "CODE_SIMPLE": "normal",
+        "REPOSITORY_EXECUTION": "deep",
+        "SECURITY_REVIEW": "deep",
+        "DESIGN": "normal",
+    }.get(profile.context_profile.value, "normal")
+    budget = max(profile.final_request_tokens, profile.task_context_tokens)
+    retrieval = 0 if strategy == "minimal" else max(0, budget // (2 if strategy == "deep" else 3))
+    conversation = max(0, budget - retrieval)
+    tool_capabilities = {"shell", "git", "tool_calling", "repository_read", "repository_write"}
+    required_tools = tuple(sorted(set(profile.required_capabilities) & tool_capabilities))
+    return ExecutionPlan(
+        plan_id=plan_id,
+        task_category=profile.task_type,
+        task_complexity=profile.complexity.value,
+        target=target,
+        reasoning_effort=reasoning_effort,
+        context=ContextDecision(strategy, budget, conversation, retrieval),
+        required_tools=required_tools,
+        fallback_allowed=bool(fallback_targets),
+        fallback_targets=fallback_targets,
+    )
+
+
+def fallback_execution_plan(plan: ExecutionPlan, index: int, *, reason: str) -> ExecutionPlan:
+    """Create a new auditable Quattro plan for one approved fallback target."""
+    if not plan.fallback_allowed or index < 0 or index >= len(plan.fallback_targets):
+        raise ConfigError("execution plan has no such fallback")
+    target = plan.fallback_targets[index]
+    remaining = plan.fallback_targets[index + 1 :]
+    return ExecutionPlan(
+        plan_id=f"{plan.plan_id}.fallback-{index + 1}",
+        task_category=plan.task_category,
+        task_complexity=plan.task_complexity,
+        target=target,
+        reasoning_effort=plan.reasoning_effort,
+        context=plan.context,
+        required_tools=plan.required_tools,
+        fallback_allowed=bool(remaining),
+        fallback_targets=remaining,
+        routing_locked=True,
+    )
+
+
 def default_policy_path() -> Path:
     override = os.environ.get("QUATTRO_MODEL_POLICY")
     if override:
@@ -204,6 +325,7 @@ def select_execution_target(
 
 def target_matches_actual(
     target: ExecutionTarget, *, actual_provider: str | None, actual_model: str | None,
+    actual_account: str | None = None,
 ) -> bool:
     """Compare exact normalized provider/model identity without fuzzy matching."""
     provider_aliases = {"codex": "codex", "cx": "codex"}
@@ -211,7 +333,12 @@ def target_matches_actual(
     observed_provider = provider_aliases.get(
         (actual_provider or "").lower(), (actual_provider or "").lower()
     )
-    return expected_provider == observed_provider and target.model == (actual_model or "")
+    account_matches = actual_account is None or target.account == actual_account
+    return (
+        expected_provider == observed_provider
+        and target.model == (actual_model or "")
+        and account_matches
+    )
 
 
 def execution_target_for_route(

@@ -28,7 +28,8 @@ from .mandatory_context import (
 )
 from .collaboration import ProjectIdentity, RepositoryCoordinator, canonical_project
 from .model_registry import (
-    ExecutionTarget, ModelTarget, default_policy_path, load_model_registry,
+    ContextDecision, ExecutionPlan, ExecutionTarget, ModelTarget, build_execution_plan,
+    fallback_execution_plan, default_policy_path, load_model_registry,
     execution_target_for_route, select_execution_target, target_matches_actual,
 )
 
@@ -66,11 +67,15 @@ __all__ = [
     "validate_catalog_parity",
     "validate_ai_config",
     "ExecutionTarget",
+    "ExecutionPlan",
+    "ContextDecision",
     "ModelTarget",
     "default_policy_path",
     "load_model_registry",
     "execution_target_for_route",
     "select_execution_target",
+    "build_execution_plan",
+    "fallback_execution_plan",
     "target_matches_actual",
 ]
 
