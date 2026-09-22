@@ -13,7 +13,6 @@ import sys
 import tempfile
 import threading
 import unittest
-import urllib.error
 from unittest import mock
 
 SRC = pathlib.Path(__file__).parents[1] / "src"
@@ -289,9 +288,19 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(result["tokenTelemetry"]["cacheMetricSource"], "unavailable")
 
     def test_locked_receipt_polling_accepts_delayed_exact_receipt(self):
+        class PendingResponse:
+            def read(self, _limit):
+                return b'{"plan_id":"plan-1","status":"pending"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
         class Response:
             def read(self, _limit):
-                return b'{"plan_id":"plan-1","success":true}'
+                return b'{"plan_id":"plan-1","success":true,"actual_provider":"codex","actual_account":"account-1","actual_model":"gpt-5.6-luna","actual_route":"account-1/gpt-5.6-luna"}'
 
             def __enter__(self):
                 return self
@@ -301,12 +310,12 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
 
         with mock.patch(
             "quattro_harness.urllib.request.urlopen",
-            side_effect=[urllib.error.URLError("pending"), Response()],
+            side_effect=[PendingResponse(), Response()],
         ) as open_request:
             receipt = self.runtime._locked_target_receipt(
                 "plan-1", attempts=3, delay_seconds=0,
             )
-        self.assertEqual(receipt, {"plan_id": "plan-1", "success": True})
+        self.assertEqual(receipt["plan_id"], "plan-1")
         self.assertEqual(open_request.call_count, 2)
 
     def test_direct_hello_skips_optional_retrieval_and_stays_fast(self):
@@ -441,6 +450,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(code, 1)
         task = self.runtime.store.display_task(task_id)
         self.assertNotEqual(task["state"], "succeeded")
+        self.assertEqual(task["terminalCode"], "locked_receipt_unavailable")
 
     def test_direct_nonretryable_failure_does_not_duplicate_request(self):
         catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"

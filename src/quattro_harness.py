@@ -145,6 +145,14 @@ class OmniRouteAttemptError(RuntimeError):
         self.transport_retryable = transport_retryable
 
 
+class LockedReceiptError(RuntimeError):
+    """A locked execution could not be proven from gateway receipt evidence."""
+
+    def __init__(self, message: str, *, terminal_code: str) -> None:
+        super().__init__(message)
+        self.terminal_code = terminal_code
+
+
 TARGET_FAILURE_TYPES = frozenset({
     "RATE_LIMITED", "QUOTA_EXHAUSTED", "CREDITS_EXHAUSTED",
     "MODEL_UNAVAILABLE", "ACCOUNT_UNAVAILABLE", "PROVIDER_UNAVAILABLE",
@@ -1681,8 +1689,17 @@ class HarnessRuntime:
             try:
                 with urllib.request.urlopen(request, timeout=3) as response:
                     payload = json.loads(response.read(128_000).decode("utf-8"))
-                if isinstance(payload, Mapping):
-                    return payload
+                if isinstance(payload, Mapping) and payload.get("plan_id") == plan_id:
+                    success = payload.get("success")
+                    if success is True and all(
+                        isinstance(payload.get(key), str) and bool(payload.get(key))
+                        for key in (
+                            "actual_provider", "actual_account", "actual_model", "actual_route",
+                        )
+                    ):
+                        return payload
+                    if success is False and isinstance(payload.get("failure"), Mapping):
+                        return payload
             except (OSError, TimeoutError, urllib.error.URLError, ValueError, json.JSONDecodeError):
                 pass
             if attempt + 1 < max(1, attempts):
@@ -1709,12 +1726,21 @@ class HarnessRuntime:
                     task_id, "routing.locked_receipt_unavailable", run_id=None,
                     display={"planId": active.get("planId"), "reason": "missing_or_malformed"},
                 )
-                raise RuntimeError("locked_receipt_unavailable: receipt is missing or malformed")
+                raise LockedReceiptError(
+                    "locked receipt is unavailable, pending, or incomplete",
+                    terminal_code="locked_receipt_unavailable",
+                )
             return
         if receipt.get("plan_id") != active["planId"]:
-            raise RuntimeError("locked target receipt does not match the active execution plan")
+            raise LockedReceiptError(
+                "locked target receipt does not match the active execution plan",
+                terminal_code="locked_receipt_mismatch",
+            )
         if receipt.get("success") is not True:
-            raise RuntimeError("locked target receipt does not prove successful execution")
+            raise LockedReceiptError(
+                "locked target receipt does not prove successful execution",
+                terminal_code="locked_receipt_failed",
+            )
         expected = _execution_target_from_dict(target)
         actual = {
             "provider": receipt.get("actual_provider"),
@@ -1733,7 +1759,10 @@ class HarnessRuntime:
             actual_route=actual.get("route"),
         )
         if not actual["target_honored"]:
-            raise RuntimeError("locked target receipt failed provider/account/model/route fidelity")
+            raise LockedReceiptError(
+                "locked target receipt failed provider/account/model/route fidelity",
+                terminal_code="locked_target_mismatch",
+            )
         refreshed = dict(private)
         snapshot = dict(refreshed.get("routingSnapshot", {}))
         snapshot["actual_selection"] = actual
@@ -3228,18 +3257,22 @@ class HarnessRuntime:
                     self.supervisor.cancel(managed)
                 except (OSError, RuntimeError, StateTransitionError):
                     pass
+            error_code = (
+                error.terminal_code
+                if isinstance(error, LockedReceiptError) else "harness_error"
+            )
             current = TaskState(self.store.get_task(task_id)["state"])
             if current not in TERMINAL_TASK_STATES and current not in {TaskState.BLOCKED, TaskState.FAILED}:
                 try:
                     self.store.transition_task(
                         task_id, TaskState.FAILED,
-                        terminal_code="harness_error", terminal_summary=_bounded(str(error)),
+                        terminal_code=error_code, terminal_summary=_bounded(str(error)),
                     )
                 except StateTransitionError:
                     pass
             self.store.append_event(
                 task_id, "task.error", run_id=run_id,
-                display={"code": "harness_error", "detail": _bounded(str(error))},
+                display={"code": error_code, "detail": _bounded(str(error))},
             )
             return 1
         finally:
