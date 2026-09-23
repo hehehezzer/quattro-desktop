@@ -1399,6 +1399,7 @@ def routing_snapshot(
     *,
     route: str,
     configured_model: str | None,
+    execution_target: Mapping[str, Any] | None = None,
     preference: PreferenceMode = PreferenceMode.BALANCED,
     benchmark_version: str = "none",
     local_outcomes_version: str = "none",
@@ -1426,6 +1427,8 @@ def routing_snapshot(
         "adaptive_overhead_ms": max(0.0, float(adaptive_overhead_ms)),
         "adaptive_cache_hit": bool(adaptive_cache_hit),
     }
+    if execution_target is not None:
+        payload["execution_target"] = dict(execution_target)
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return payload | {"decision_id": "route-" + hashlib.sha256(canonical).hexdigest()[:20]}
 
@@ -1447,6 +1450,14 @@ def replay_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     configured = snapshot.get("configured_model")
     expected = str(snapshot.get("effective_route"))
     replayed = route if configured == "auto" else str(configured or "configured default")
+    target = snapshot.get("execution_target")
+    if target is not None:
+        if not isinstance(target, Mapping) or not all(
+            isinstance(target.get(key), str) and target[key]
+            for key in ("provider", "account", "model", "route")
+        ) or target["route"] != f"{target['account']}/{target['model']}":
+            raise ValueError("routing snapshot has an invalid execution target")
+        replayed = target["route"]
     selection = snapshot.get("selection")
     preferred = []
     if isinstance(selection, Mapping) and isinstance(selection.get("candidates"), list):

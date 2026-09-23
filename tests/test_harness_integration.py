@@ -26,7 +26,7 @@ from quattro_harness import (
 )
 from quattro_agent.policy import PolicyProfile
 from quattro_agent.models import RunState, TaskState
-from quattro_agent.errors import ConfigError
+from quattro_agent.errors import ConfigError, LeaseConflict
 from quattro_agent.policy import MemoryAccess
 from quattro_agent.retrieval import RetrievalStore
 from quattro_agent.retrieval import RepositoryIndexer
@@ -396,6 +396,22 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertTrue(raised.exception.retryable)
         self.assertFalse(raised.exception.transport_retryable)
 
+    def test_resource_pressure_code_is_gateway_failure_not_provider_failure(self):
+        error = urllib.error.HTTPError(
+            "http://localhost/api/v1/responses", 503, "unavailable",
+            {"Retry-After": "2"},
+            io.BytesIO(b'{"error":{"type":"server_error","code":"resource_pressure"}}'),
+        )
+        self.addCleanup(error.close)
+        with mock.patch("quattro_harness.urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(OmniRouteAttemptError) as raised:
+                self.runtime._send_omniroute_response({}, timeout_seconds=1)
+        self.assertEqual(raised.exception.error_type, "GATEWAY_RESOURCE_PRESSURE")
+        self.assertEqual(raised.exception.retry_after_ms, 2_000)
+        self.assertTrue(raised.exception.retryable)
+        self.assertFalse(raised.exception.transport_retryable)
+        self.assertNotIn(raised.exception.error_type, FALLBACK_ELIGIBLE_TARGET_FAILURES)
+
     def test_default_codex_preflight_requires_runtime_handshake_only_for_passthrough(self):
         with (
             mock.patch("quattro_harness.validate_omniroute_contract"),
@@ -516,6 +532,53 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(result["model"], "account-1/gpt-5.6-luna")
         self.assertFalse(result["routingSnapshot"]["fallback_used"])
+
+    def test_direct_gateway_pressure_retries_same_plan_without_fallback(self):
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        successful = (
+            {"output_text": "hello", "usage": {"input_tokens": 5, "output_tokens": 1}},
+            {"provider": "cx", "account": "account-1", "model": "gpt-5.6-luna", "route": "account-1/gpt-5.6-luna", "cost": None},
+        )
+        pressure = OmniRouteAttemptError(
+            "busy", retryable=True, error_type="GATEWAY_RESOURCE_PRESSURE",
+            retry_after_ms=1,
+        )
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime, "_locked_target_receipt",
+                side_effect=self._direct_locked_receipt("account-1/gpt-5.6-luna"),
+            ),
+            mock.patch.object(
+                self.runtime, "_send_omniroute_response", side_effect=[pressure, pressure, successful],
+            ) as send,
+            mock.patch("quattro_harness.time.sleep") as sleep,
+            mock.patch("quattro_harness.random.uniform", return_value=0),
+        ):
+            result = self.runtime.direct_response(project=self.project, prompt="hello")
+        self.assertEqual(send.call_count, 3)
+        self.assertTrue(all(call.args[0] == send.call_args_list[0].args[0] for call in send.call_args_list))
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(result["model"], "account-1/gpt-5.6-luna")
+        self.assertFalse(result["routingSnapshot"]["fallback_used"])
+
+    def test_direct_gateway_pressure_does_not_retry_before_long_server_delay(self):
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        pressure = OmniRouteAttemptError(
+            "busy", retryable=True, error_type="GATEWAY_RESOURCE_PRESSURE",
+            retry_after_ms=60_000,
+        )
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(self.runtime, "_send_omniroute_response", side_effect=pressure) as send,
+            mock.patch("quattro_harness.time.sleep") as sleep,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "busy"):
+                self.runtime.direct_response(project=self.project, prompt="hello")
+        self.assertEqual(send.call_count, 1)
+        sleep.assert_not_called()
 
     def test_direct_exhausted_transport_retry_never_advances_target(self):
         catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
@@ -677,6 +740,10 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
                     }
                 ),
             ),
+            mock.patch.object(
+                self.runtime.scheduler, "try_acquire",
+                wraps=self.runtime.scheduler.try_acquire,
+            ) as acquire,
         ):
             task_id, code = self.runtime.submit(
                 agent="codex", project=self.project,
@@ -704,6 +771,96 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertTrue(all(plan["routingLocked"] for plan in persisted["executionPlanAttempts"]))
         dispatched = [event for event in events if event["type"] == "routing.dispatched"]
         self.assertEqual(dispatched[-1]["payload"]["effectiveModelRoute"], "account-2/gpt-5.6-luna")
+        acquired_targets = [
+            (call.kwargs.get("account_id"), call.kwargs.get("provider_id"))
+            for call in acquire.call_args_list
+        ]
+        self.assertIn(("account-1", "codex"), acquired_targets)
+        self.assertIn(("account-2", "codex"), acquired_targets)
+        initial_acquire = acquire.call_args_list[0].kwargs
+        fallback_acquire = next(
+            call.kwargs for call in acquire.call_args_list
+            if call.kwargs.get("account_id") == "account-2"
+        )
+        self.assertEqual(
+            fallback_acquire.get("native_session_ref"),
+            initial_acquire.get("native_session_ref"),
+        )
+        self.assertEqual(
+            fallback_acquire.get("quattro_session_id"),
+            initial_acquire.get("quattro_session_id"),
+        )
+
+    def test_delegated_gateway_pressure_relaunches_same_plan_with_bound(self):
+        attempts_file = self.root / "pressure-attempts"
+        pressure_agent = self.root / "pressure-agent"
+        pressure_agent.write_text(
+            "#!/bin/sh\n"
+            f"n=$(cat '{attempts_file}' 2>/dev/null || echo 0)\n"
+            "n=$((n + 1))\n"
+            f"printf '%s' \"$n\" > '{attempts_file}'\n"
+            "[ \"$n\" -ge 3 ] && { echo 'HARNESS_VERDICT: PASS'; exit 0; }\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        pressure_agent.chmod(0o755)
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        resolver = self.runtime.command_resolver
+        self.runtime.command_resolver = (
+            lambda name: str(pressure_agent) if name == "codex" else resolver(name)
+        )
+        receipt_calls = 0
+
+        def receipt(plan_id, **_kwargs):
+            nonlocal receipt_calls
+            receipt_calls += 1
+            if receipt_calls < 3:
+                return {
+                    "plan_id": plan_id,
+                    "success": False,
+                    "failure": {
+                        "type": "GATEWAY_RESOURCE_PRESSURE",
+                        "retryable": True,
+                        "retry_after_ms": 0,
+                    },
+                }
+            return {
+                "plan_id": plan_id,
+                "success": True,
+                "actual_provider": "codex",
+                "actual_account": "account-1",
+                "actual_model": "gpt-5.6-luna",
+                "actual_route": "account-1/gpt-5.6-luna",
+                "connection_id": "connection-1",
+                "failure": None,
+            }
+
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(self.runtime, "_locked_target_receipt", side_effect=receipt),
+            mock.patch("quattro_harness.random.uniform", return_value=0),
+        ):
+            task_id, code = self.runtime.submit(
+                agent="codex", project=self.project,
+                prompt="Inspect README.md without modifying files.",
+                mode="prompt", profile_name="audit-read-only",
+            )
+        self.assertEqual(
+            code, 0,
+            json.dumps({
+                "task": self.runtime.show_task(task_id),
+                "events": self.runtime.store.display_events(task_id),
+            }, default=str),
+        )
+        events = self.runtime.store.display_events(task_id)
+        retries = [event for event in events if event["type"] == "routing.same_plan_retry"]
+        self.assertEqual(len(retries), 2)
+        self.assertEqual({event["payload"]["planId"] for event in retries}, {
+            self.runtime.store.get_task(task_id, include_private=True)["private_payload"]
+            ["executionPlan"]["planId"]
+        })
+        self.assertFalse(any(event["type"] == "routing.fallback" for event in events))
 
     def test_delegated_writable_failure_never_replays_from_output_text(self):
         unsafe_agent = self.root / "unsafe-fallback-agent"
@@ -1275,9 +1432,10 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(implementation["metadata"]["writeOwnership"], ["src/auth", "tests/auth"])
 
     def test_passthrough_workflow_gives_every_child_a_locked_plan(self):
-        parent = self.runtime.create_workflow(
-            count=4, project=self.project, objective="audit and implement routing",
-        )
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "passthrough"}):
+            parent = self.runtime.create_workflow(
+                count=4, project=self.project, objective="audit and implement routing",
+            )
         children = self.runtime.store.children(parent)
         self.assertEqual(len(children), 4)
         for child in children:
@@ -1286,6 +1444,96 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             )["private_payload"]
             self.assertTrue(private["executionPlan"]["routingLocked"])
             self.assertEqual(private["executionPlan"]["target"], private["executionTarget"])
+
+    def test_pi_workflow_children_launch_locked_worker_transport(self):
+        for count in (2, 3, 4):
+            with self.subTest(count=count), mock.patch.dict(
+                os.environ, {"OMNIROUTE_ROUTING_MODE": "passthrough"},
+            ):
+                parent = self.runtime.create_workflow(
+                    count=count, project=self.project, objective="audit routing",
+                )
+                try:
+                    for child in self.runtime.store.children(parent):
+                        task = self.runtime.store.get_task(child["taskId"], include_private=True)
+                        if task["agent"] != "pi":
+                            continue
+                        private = task["private_payload"]
+                        self.assertTrue(private["delegatedWorker"])
+                        run = self.runtime.store.create_run(task["task_id"], agent="pi")
+                        argv, _, env = self.runtime._agent_plan(
+                            task, run, PolicyProfile.from_dict(task["policy"]),
+                        )
+                        self.assertEqual(argv[argv.index("--provider") + 1], "omniroute")
+                        self.assertEqual(
+                            argv[argv.index("--model") + 1], private["executionPlan"]["target"]["route"],
+                        )
+                        self.assertIn("QUATTRO_ROUTING_ENVELOPE", env)
+                        self.assertIn("PI_CODING_AGENT_DIR", env)
+                finally:
+                    payload = self.runtime.store.get_task(parent, include_private=True)["private_payload"]
+                    self.runtime.coordinator.finish(
+                        payload["coordinationSessionId"], validation="Not Run", abandoned=True,
+                    )
+
+    def test_worker_preserves_stored_mode_over_ambient_mode(self):
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "legacy"}):
+            task_id = self.runtime.create_task(
+                agent="codex", project=self.project, prompt="Inspect README.md",
+                mode="prompt", profile_name="audit-read-only",
+            )
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "passthrough"}):
+            with mock.patch("quattro_harness.subprocess.Popen") as popen:
+                self.runtime.spawn_worker(task_id)
+            self.assertEqual(popen.call_args.kwargs["env"]["OMNIROUTE_ROUTING_MODE"], "legacy")
+            task = self.runtime.store.get_task(task_id, include_private=True)
+            run = self.runtime.store.create_run(task_id, agent="codex")
+            self.runtime.codex_preflight = self.runtime._default_codex_preflight
+            with (
+                mock.patch("quattro_harness.validate_omniroute_contract"),
+                mock.patch("quattro_harness.validate_catalog_parity"),
+                mock.patch("quattro_harness.prepare_shared_session_namespace"),
+                mock.patch("quattro_harness.validate_omniroute_runtime_capabilities") as handshake,
+            ):
+                _, _, env = self.runtime._agent_plan(
+                    task, run, PolicyProfile.from_dict(task["policy"]),
+                )
+            handshake.assert_not_called()
+            self.assertEqual(env["OMNIROUTE_ROUTING_MODE"], "legacy")
+            private = dict(task["private_payload"], routingMode="invalid")
+            self.runtime.store.update_private_payload(task_id, private)
+            with mock.patch("quattro_harness.subprocess.Popen") as popen:
+                with self.assertRaises(ConfigError):
+                    self.runtime.spawn_worker(task_id)
+                popen.assert_not_called()
+
+    def test_fallback_plan_recalculates_astra_effort_for_target_account(self):
+        from quattro_harness import _execution_plan_from_dict
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "passthrough"}):
+            task_id = self.runtime.create_task(
+                agent="codex", project=self.project,
+                prompt="Implement a normal API feature and unit tests", mode="prompt",
+            )
+        private = self.runtime.store.get_task(task_id, include_private=True)["private_payload"]
+        plan = _execution_plan_from_dict(private["executionPlan"])
+        import dataclasses
+        astra = dataclasses.replace(
+            plan.target, account="account-2", model="gpt-6-astra",
+            route="account-2/gpt-6-astra",
+        )
+        plan = dataclasses.replace(
+            plan, reasoning_effort="medium", fallback_allowed=True, fallback_targets=(astra,),
+        )
+        home = self.root / "astra-home"
+        home.mkdir()
+        (home / "config.toml").write_text('model_reasoning_effort = "low"\n')
+        with mock.patch.object(self.runtime, "account", return_value={"codexHome": str(home)}):
+            fallback = self.runtime._fallback_plan(
+                plan, 0, {"tier": "STANDARD"}, reason="provider unavailable",
+            )
+        self.assertEqual(fallback.reasoning_effort, "low")
+        self.assertEqual(plan.reasoning_effort, "medium")
+        self.assertEqual(fallback.target, astra)
 
     def test_multi_agent_workflow_coordinates_dependencies_and_join(self):
         parent = self.runtime.create_workflow(
@@ -1419,6 +1667,41 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         thread.join(timeout=5)
         self.assertFalse(thread.is_alive())
         self.assertEqual(self.runtime.task_projection(task_id)["state"], "cancelled")
+        self.assertEqual(self.runtime.store.latest_run(task_id)["state"], "cancelled")
+
+    def test_capacity_queued_cancellation_is_idempotent(self):
+        task_id = self.runtime.create_task(
+            agent="codex", project=self.project, prompt="wait for capacity", mode="prompt",
+        )
+        results: list[int] = []
+        failures: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                results.append(self.runtime.run_task(task_id))
+            except BaseException as error:  # test captures the worker boundary
+                failures.append(error)
+
+        with mock.patch.object(
+            self.runtime.scheduler, "try_acquire",
+            side_effect=LeaseConflict("provider capacity full"),
+        ):
+            thread = threading.Thread(target=run)
+            thread.start()
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if any(
+                    event["type"] == "execution.capacity_queued"
+                    for event in self.runtime.store.display_events(task_id)
+                ):
+                    break
+                time.sleep(0.01)
+            self.runtime.request_cancel(task_id)
+            thread.join(timeout=3)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(results, [130])
+        self.assertEqual(self.runtime.store.get_task(task_id)["state"], "cancelled")
         self.assertEqual(self.runtime.store.latest_run(task_id)["state"], "cancelled")
 
     def test_terminal_close_uses_verified_cancellation_and_leaves_no_agent(self):

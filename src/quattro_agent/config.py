@@ -320,15 +320,27 @@ def validate_ai_config(source: Mapping[str, Any], *, home: Path | None = None) -
     cooperation = _mapping(
         root.get("cooperation", {"globalLimit": 5, "perRepositoryLimit": 3}),
         "$.cooperation",
-        {"globalLimit", "perRepositoryLimit", "worktreeIsolation", "worktreeRoot"},
+        {"globalLimit", "perRepositoryLimit", "perAccountLimit", "perProviderLimit", "worktreeIsolation", "worktreeRoot"},
         required={"globalLimit", "perRepositoryLimit"},
     )
     global_limit = _integer(cooperation["globalLimit"], "$.cooperation.globalLimit", 1, 32)
     repository_limit = _integer(
         cooperation["perRepositoryLimit"], "$.cooperation.perRepositoryLimit", 1, 16
     )
+    account_limit = _integer(
+        cooperation.get("perAccountLimit", min(3, global_limit)),
+        "$.cooperation.perAccountLimit", 1, 32,
+    )
+    provider_limit = _integer(
+        cooperation.get("perProviderLimit", min(3, global_limit)),
+        "$.cooperation.perProviderLimit", 1, 32,
+    )
     if repository_limit > global_limit:
         _fail("$.cooperation.perRepositoryLimit", "must not exceed globalLimit")
+    if account_limit > global_limit:
+        _fail("$.cooperation.perAccountLimit", "must not exceed globalLimit")
+    if provider_limit > global_limit:
+        _fail("$.cooperation.perProviderLimit", "must not exceed globalLimit")
     if "worktreeIsolation" in cooperation:
         _bool(cooperation["worktreeIsolation"], "$.cooperation.worktreeIsolation")
     if "worktreeRoot" in cooperation:
@@ -336,6 +348,8 @@ def validate_ai_config(source: Mapping[str, Any], *, home: Path | None = None) -
     normalized["cooperation"] = {
         "globalLimit": global_limit,
         "perRepositoryLimit": repository_limit,
+        "perAccountLimit": account_limit,
+        "perProviderLimit": provider_limit,
     }
 
     raw_routing = dict(root.get("routing", {

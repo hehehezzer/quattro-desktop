@@ -2483,6 +2483,7 @@ def routing_command(args: argparse.Namespace) -> int:
             snapshot = routing_snapshot(
                 task_profile_from_dict(routing["task_profile"]),
                 route=route,
+                execution_target=execution_target.to_dict() if execution_target else None,
                 configured_model=configured,
             )
         return snapshot

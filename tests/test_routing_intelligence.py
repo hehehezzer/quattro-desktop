@@ -450,6 +450,23 @@ class EvidenceAndReplayTests(unittest.TestCase):
         snapshot = routing_snapshot(profile, route="auto/coding", configured_model="auto")
         self.assertTrue(replay_snapshot(snapshot)["matches"])
 
+    def test_passthrough_replay_preserves_exact_selection(self) -> None:
+        profile = profile_task("Implement a normal API feature and unit tests")
+        target = {"provider": "cx", "account": "account-2", "model": "gpt-6-astra",
+                  "route": "account-2/gpt-6-astra"}
+        for configured in ("auto", "auto/coding", "account-2/gpt-6-astra"):
+            with self.subTest(configured=configured):
+                snapshot = routing_snapshot(
+                    profile, route=target["route"], configured_model=configured,
+                    execution_target=target,
+                )
+                self.assertTrue(replay_snapshot(snapshot)["matches"])
+                snapshot["effective_route"] = "account-1/gpt-5.6-terra"
+                self.assertFalse(replay_snapshot(snapshot)["matches"])
+                snapshot["execution_target"] = dict(target, route="auto")
+                with self.assertRaises(ValueError):
+                    replay_snapshot(snapshot)
+
     def test_manual_override_rejects_known_vision_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = pathlib.Path(temporary) / "catalog.json"
