@@ -15,6 +15,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import uuid
 from unittest import mock
 
 SRC = pathlib.Path(__file__).parents[1] / "src"
@@ -463,6 +464,8 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         request = open_request.call_args.args[0]
         body = json.loads(request.data.decode("utf-8"))
         self.assertEqual(body["input"], "reply with hello")
+        plan_id = body["routing"]["plan_id"]
+        uuid.UUID(plan_id.rsplit(".plan-", 1)[1])
         self.assertEqual(result["routing"]["tier"], "FAST")
         self.assertEqual(result["context"]["profile"], "CHAT_MINIMAL")
         self.assertEqual(result["retrieval"]["route"], "gated")
