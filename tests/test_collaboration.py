@@ -96,7 +96,8 @@ class CollaborationTests(unittest.TestCase):
         context = self.coordinator.context(session["sessionId"])
         self.assertIn("shared_working_tree", context)
         self.assertIn("Before writing, determine and claim", context)
-        self.assertIn("never reset, clean, stash", context)
+        self.assertIn("classify every path", context)
+        self.assertIn("Never reset, clean, discard", context)
 
     def test_shared_sessions_cannot_run_branch_integration(self) -> None:
         source = self.coordinator.reserve(self.repo, task_summary="source", task_scope=("src/source",))

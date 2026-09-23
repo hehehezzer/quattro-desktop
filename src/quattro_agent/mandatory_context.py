@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 import pathlib
 import re
+import subprocess
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from typing import Any, Mapping
 
 
@@ -44,6 +46,117 @@ class ProjectDestination:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+class WorktreeClassification(StrEnum):
+    """Safety classification for existing changes before a repository write."""
+
+    CLEAN = "CLEAN"
+    CURRENT_TASK = "CURRENT_TASK"
+    RECOVERED_INTERRUPTED_WORK = "RECOVERED_INTERRUPTED_WORK"
+    UNRELATED_USER_WORK = "UNRELATED_USER_WORK"
+    UNKNOWN = "UNKNOWN"
+    UNSAFE_GIT_STATE = "UNSAFE_GIT_STATE"
+
+
+@dataclass(frozen=True, slots=True)
+class WorktreeInspection:
+    """A bounded, non-mutating Git preflight result.
+
+    This deliberately records evidence rather than attempting a checkout, reset,
+    clean, stash, or commit.  The execution agent receives the classification and
+    applies the corresponding reversible recovery workflow.
+    """
+
+    classification: WorktreeClassification
+    repository_root: str | None
+    branch: str | None
+    head: str | None
+    changed_paths: tuple[str, ...] = ()
+    hard_block_reason: str | None = None
+
+    @property
+    def is_dirty(self) -> bool:
+        return bool(self.changed_paths)
+
+
+def _git_output(directory: pathlib.Path, *args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(directory), *args],
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_TERMINAL_PROMPT": "0"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return str(getattr(result, "stdout", "")) if getattr(result, "returncode", 1) == 0 else None
+
+
+def _scope_covers(path: str, scopes: tuple[str, ...]) -> bool:
+    return any(scope == "**" or path == scope or path.startswith(scope.rstrip("/") + "/") for scope in scopes)
+
+
+def inspect_worktree(
+    directory: pathlib.Path,
+    *,
+    current_task_paths: tuple[str, ...] = (),
+    recovered_interrupted_paths: tuple[str, ...] = (),
+    unrelated_user_paths: tuple[str, ...] = (),
+) -> WorktreeInspection | None:
+    """Inspect a Git worktree without mutation and classify every dirty tree.
+
+    Callers can supply file/scope provenance recorded for the active task or a
+    stale Quattro session.  Lack of provenance intentionally becomes UNKNOWN,
+    never permission to clean up somebody else's work.
+    """
+    root = _git_output(directory, "rev-parse", "--show-toplevel")
+    if root is None:
+        return None
+    branch = _git_output(directory, "branch", "--show-current")
+    head = _git_output(directory, "rev-parse", "HEAD")
+    status = _git_output(directory, "status", "--porcelain=v1", "--untracked-files=all")
+    if status is None:
+        return WorktreeInspection(
+            WorktreeClassification.UNSAFE_GIT_STATE, root.strip(), branch.strip() if branch else None,
+            head.strip() if head else None, hard_block_reason="Git status could not be read safely",
+        )
+    changed = tuple(line[3:] for line in status.splitlines() if len(line) >= 4)
+    unresolved = _git_output(directory, "diff", "--name-only", "--diff-filter=U")
+    git_dir = _git_output(directory, "rev-parse", "--git-dir")
+    dangerous_state = bool(unresolved and unresolved.strip())
+    if git_dir:
+        state_root = (directory / git_dir.strip()).resolve(strict=False)
+        dangerous_state = dangerous_state or any(
+            (state_root / marker).exists()
+            for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD", "rebase-merge", "rebase-apply")
+        )
+    if dangerous_state:
+        return WorktreeInspection(
+            WorktreeClassification.UNSAFE_GIT_STATE, root.strip(), branch.strip() if branch else None,
+            head.strip() if head else None, changed,
+            "unresolved merge, rebase, cherry-pick, or conflict state",
+        )
+    if not changed:
+        return WorktreeInspection(
+            WorktreeClassification.CLEAN, root.strip(), branch.strip() if branch else None,
+            head.strip() if head else None,
+        )
+    if recovered_interrupted_paths and all(_scope_covers(path, recovered_interrupted_paths) for path in changed):
+        kind = WorktreeClassification.RECOVERED_INTERRUPTED_WORK
+    elif current_task_paths and all(_scope_covers(path, current_task_paths) for path in changed):
+        kind = WorktreeClassification.CURRENT_TASK
+    elif unrelated_user_paths and all(_scope_covers(path, unrelated_user_paths) for path in changed):
+        kind = WorktreeClassification.UNRELATED_USER_WORK
+    else:
+        kind = WorktreeClassification.UNKNOWN
+    return WorktreeInspection(
+        kind, root.strip(), branch.strip() if branch else None,
+        head.strip() if head else None, changed,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,7 +260,9 @@ def destination_from_request(
 
 def build_mandatory_context(
     config: Mapping[str, Any], *, request: str = "", cwd: pathlib.Path | None = None,
-    delegated: bool = False,
+    delegated: bool = False, current_task_paths: tuple[str, ...] = (),
+    recovered_interrupted_paths: tuple[str, ...] = (),
+    unrelated_user_paths: tuple[str, ...] = (),
 ) -> MandatoryContext:
     """Build compact authority text outside the retrieval/reranking budget."""
     root = project_root_from_config(config)
@@ -157,6 +272,15 @@ def build_mandatory_context(
         str(current_root)
         if current_root is not None and current_root.name == "quattro-desktop"
         else "the Quattro Desktop repository"
+    )
+    inspection = (
+        inspect_worktree(
+            current_root,
+            current_task_paths=current_task_paths,
+            recovered_interrupted_paths=recovered_interrupted_paths,
+            unrelated_user_paths=unrelated_user_paths,
+        )
+        if current_root is not None else None
     )
     lines = [
         "MANDATORY OPERATIONAL POLICY (trusted; not RAG):",
@@ -175,12 +299,35 @@ def build_mandatory_context(
         "autonomous merge after all required checks and reviews pass; never merge failing "
         "CI. An explicit user override for a specific task may replace this workflow. If "
         "no repository files change, no branch or PR is required.",
-        f"[{QUATTRO_DESKTOP_CLEAN_POLICY_ID}] Before modifying {quattro_desktop}, "
-        "require a clean worktree after checking git status, branch, HEAD, and remotes. If "
-        "dirty, do not modify, stash, reset, clean, discard, commit, merge, or overwrite; "
-        "report 'BLOCKED — QUATTRO DESKTOP WORKTREE NOT CLEAN' with the dirty paths. Once "
-        "clean, use the repository mutation invariant above.",
+        f"[{QUATTRO_DESKTOP_CLEAN_POLICY_ID}] Before modifying {quattro_desktop}, inspect "
+        "Git status, branch, HEAD, remotes, conflict state, and the diff. A dirty worktree "
+        "is not automatically a blocker: classify every changed path as CURRENT_TASK, "
+        "RECOVERED_INTERRUPTED_WORK, UNRELATED_USER_WORK, or UNKNOWN. For CURRENT_TASK "
+        "and provenance-verified RECOVERED_INTERRUPTED_WORK, inspect, validate, repair if "
+        "needed, stage only intended files on a non-main feature branch, commit, push, "
+        "verify the remote, and verify the worktree is clean before continuing. A stale "
+        "Quattro session is authorization to recover only its provenance-matched files. "
+        "For UNRELATED_USER_WORK or UNKNOWN, never discard, reset, clean, force-push, or "
+        "mix it into the task: record paths, original branch, and HEAD, then preserve it "
+        "using an isolated clean worktree, a preservation branch, or a descriptive stash "
+        "only when safe and reversible. Dirty main requires a feature branch or isolated "
+        "worktree before a task commit. Unresolved merge/rebase/cherry-pick conflicts, "
+        "corruption, secrets risk, or divergence requiring force push remain hard blocks.",
     ]
+    if inspection is not None:
+        if inspection.classification is WorktreeClassification.UNSAFE_GIT_STATE:
+            lines.append(
+                "Git preflight: UNSAFE_GIT_STATE; do not mutate until "
+                f"resolved ({inspection.hard_block_reason})."
+            )
+        elif inspection.classification is WorktreeClassification.CLEAN:
+            lines.append("Git preflight: CLEAN; normal branch workflow may continue.")
+        else:
+            lines.append(
+                f"Git preflight: {inspection.classification.value}; changed paths: "
+                f"{', '.join(inspection.changed_paths)}; original branch: "
+                f"{inspection.branch or 'detached'}; original HEAD: {inspection.head or 'unknown'}."
+            )
     if destination is not None:
         lines.append(
             f"Resolved task destination: {destination.destination} "

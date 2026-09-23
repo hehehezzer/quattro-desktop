@@ -23,7 +23,10 @@ from .retrieval import ContextAssembler, QueryRouter, RepositoryIndexer, Retriev
 from .mandatory_context import (
     MandatoryContext,
     ProjectDestination,
+    WorktreeClassification,
+    WorktreeInspection,
     build_mandatory_context,
+    inspect_worktree,
     resolve_project_destination,
 )
 from .collaboration import ProjectIdentity, RepositoryCoordinator, canonical_project
@@ -53,10 +56,13 @@ __all__ = [
     "RetrievalStore",
     "MandatoryContext",
     "ProjectDestination",
+    "WorktreeClassification",
+    "WorktreeInspection",
     "ProjectIdentity",
     "RepositoryCoordinator",
     "adapter_for",
     "build_mandatory_context",
+    "inspect_worktree",
     "canonical_project",
     "load_ai_config",
     "migrate_ai_config",

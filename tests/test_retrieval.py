@@ -134,7 +134,7 @@ class RetrievalTests(unittest.TestCase):
         )
         self.assertFalse(denied)
 
-    def test_global_git_workflow_and_quattro_gate_are_retrievable(self):
+    def test_global_git_workflow_and_quattro_recovery_policy_are_retrievable(self):
         shared = self.root / "shared-policy"
         shared.mkdir()
         (shared / "AGENT-WORKFLOWS.md").write_text(
@@ -142,9 +142,10 @@ class RetrievalTests(unittest.TestCase):
             "## Mandatory Git Workflow — Branch Push PR Policy\n"
             "Repository modification rules require a dedicated non-main branch, "
             "validation, commit, verified remote push, and PR to main.\n\n"
-            "### Quattro Desktop clean-worktree hard gate\n"
-            "Before changing Quattro Desktop, require a clean worktree. If dirty, "
-            "report BLOCKED — QUATTRO DESKTOP WORKTREE NOT CLEAN.\n",
+            "### Quattro Desktop dirty-worktree recovery policy\n"
+            "Before changing Quattro Desktop, inspect and classify dirty paths as "
+            "CURRENT_TASK, RECOVERED_INTERRUPTED_WORK, UNRELATED_USER_WORK, or UNKNOWN. "
+            "Preserve unknown work and recover only provenance-matched interrupted work.\n",
             encoding="utf-8",
         )
         RepositoryIndexer(self.store).index(
@@ -158,7 +159,7 @@ class RetrievalTests(unittest.TestCase):
             "mandatory git workflow",
             "branch push PR policy",
             "repository modification rules",
-            "quattro desktop clean worktree",
+            "quattro desktop dirty worktree recovery",
             "before changing quattro desktop",
         ):
             results, _ = self.store.search(
