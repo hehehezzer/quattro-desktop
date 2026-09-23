@@ -66,7 +66,9 @@ from quattro_agent.paths import (
 )
 from quattro_agent.config import migrate_ai_config, validate_ai_config
 from quattro_agent.models import RunState, TaskState
-from quattro_agent.omniroute import validate_omniroute_contract
+from quattro_agent.omniroute import (
+    OmniRouteRoutingMode, omniroute_routing_mode, validate_omniroute_contract,
+)
 from quattro_agent.sessions import load_session_registry, prepare_shared_session_namespace, update_session_registry
 from quattro_agent.supervisor import ProcessIdentity, read_process_identity, verify_process_identity
 from quattro_agent.privacy import redact_secret_text, summarize_display_title
@@ -83,7 +85,8 @@ from quattro_agent.benchmark import load_cases as load_benchmark_cases, run_benc
 from quattro_agent.intelligence.commands import add_intelligence_parser, intelligence_command
 from quattro_agent.routing import automatic_model_override, classify_request
 from quattro_agent.model_registry import (
-    default_policy_path, load_model_registry, select_execution_target,
+    default_policy_path, execution_target_for_route, load_model_registry,
+    select_execution_target,
 )
 from quattro_agent.routing_intelligence import (
     MAX_EVIDENCE_BYTES,
@@ -733,6 +736,14 @@ def resolve_codex_resume_target(
 def session_worker(args: argparse.Namespace) -> int:
     ensure_state_dirs()
     config = load_config()
+    if (
+        args.agent == "codex"
+        and omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH
+    ):
+        die(
+            "the legacy session worker has no locked ExecutionPlan/receipt path; "
+            "use a managed Quattro task or set OMNIROUTE_ROUTING_MODE=legacy"
+        )
     directory = safe_directory(args.directory)
     memory_enabled, memory_vault, memory_enforced = memory_settings(config)
     project_vault = project_memory_path(config)
@@ -2462,6 +2473,8 @@ def routing_command(args: argparse.Namespace) -> int:
                     raise ValueError("routing snapshot must be an object")
                 return loaded
         private = task.get("private_payload")
+        persisted_target = private.get("executionTarget") if isinstance(private, Mapping) else None
+        execution_target = dict(persisted_target) if isinstance(persisted_target, Mapping) else None
         snapshot = private.get("routingSnapshot") if isinstance(private, Mapping) else None
         if not isinstance(snapshot, Mapping):
             routing = private.get("routing") if isinstance(private, Mapping) else None
@@ -2472,6 +2485,7 @@ def routing_command(args: argparse.Namespace) -> int:
             snapshot = routing_snapshot(
                 task_profile_from_dict(routing["task_profile"]),
                 route=route,
+                execution_target=execution_target,
                 configured_model=configured,
             )
         return snapshot
@@ -2516,15 +2530,38 @@ def routing_command(args: argparse.Namespace) -> int:
             )
             configured = args.model or "auto"
             execution_target = None
-            if configured == "auto":
+            routing_mode = omniroute_routing_mode()
+            registry = load_model_registry(default_policy_path(), model_catalog_path())
+            alias_tier = {
+                "auto/coding:cheap": "FAST",
+                "auto/coding": "STANDARD",
+                "auto/reasoning": "REASONING",
+            }.get(configured)
+            if (
+                routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+                and configured in {"auto", "auto/coding:cheap", "auto/coding", "auto/reasoning"}
+            ):
                 execution_target = select_execution_target(
                     task_profile_from_dict(decision.task_profile),
-                    load_model_registry(default_policy_path(), model_catalog_path()),
+                    registry,
                     preferred_account=str(config["defaultCodexAccount"]),
                     available_accounts=frozenset(
                         str(row["id"]) for row in config["accounts"] if row.get("enabled") is True
                     ),
+                    selection_tier=alias_tier,
                 )
+                route = execution_target.route
+            elif routing_mode is OmniRouteRoutingMode.PASSTHROUGH:
+                execution_target = execution_target_for_route(
+                    task_profile_from_dict(decision.task_profile), registry, configured,
+                    available_accounts=frozenset(
+                        str(row["id"]) for row in config["accounts"] if row.get("enabled") is True
+                    ),
+                )
+                if execution_target is None:
+                    raise ConfigError(
+                        "passthrough mode requires a validated Quattro execution target"
+                    )
                 route = execution_target.route
             else:
                 route = automatic_model_override(config, decision.tier, configured) or configured
@@ -2543,6 +2580,8 @@ def routing_command(args: argparse.Namespace) -> int:
                 "tier": decision.tier.value,
                 "reasoningEffort": decision.reasoning_effort,
                 "effectiveRoute": route,
+                "routingMode": routing_mode.value,
+                "selectedBy": "Quattro" if execution_target is not None else "OmniRoute (legacy)",
                 "executionTarget": execution_target.to_dict() if execution_target else None,
                 "decisionSnapshot": snapshot,
             }
@@ -3619,6 +3658,11 @@ def main() -> int:
             die("No crash is available to diagnose")
         return diagnose_crash(pid)
     if command == "pr-review":
+        if omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH:
+            die(
+                "the standalone PR-review worker is not gateway-lock complete; "
+                "set OMNIROUTE_ROUTING_MODE=legacy or use a managed locked task"
+            )
         review_config = config.get("prReview", {})
         if not isinstance(review_config, dict):
             review_config = {}

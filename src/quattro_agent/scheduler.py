@@ -23,12 +23,13 @@ class SchedulerLimits:
     max_total: int = 5
     per_agent: dict[str, int] = field(default_factory=lambda: {"codex": 5, "pi": 5})
     per_account: int = 5
+    per_provider: int = 5
     max_delegated_workers: int = 3
     per_repository: int = 3
     lease_ttl_seconds: float = 30.0
 
     def __post_init__(self) -> None:
-        if (self.max_total <= 0 or self.per_account <= 0 or self.per_repository <= 0
+        if (self.max_total <= 0 or self.per_account <= 0 or self.per_provider <= 0 or self.per_repository <= 0
                 or self.max_delegated_workers <= 0 or self.lease_ttl_seconds <= 0):
             raise ValueError("scheduler limits and lease TTL must be positive")
         if set(self.per_agent) - SUPPORTED_AGENTS:
@@ -78,6 +79,7 @@ class LocalScheduler:
         run_id: str,
         agent: str,
         account_id: str | None,
+        provider_id: str | None = None,
         project_path: str | os.PathLike[str],
         delegated_worker: bool = False,
         subagent_worker: bool = False,
@@ -92,14 +94,20 @@ class LocalScheduler:
         project_key = self.project_resource(project_path)
         top_level = not delegated_worker and not subagent_worker
         groups = []
+        # Every process capable of issuing model traffic consumes the shared
+        # execution budgets. Previously child/delegated workers bypassed these
+        # groups entirely, so one workflow could exceed both the global and
+        # account limits even though the UI reported bounded concurrency.
+        groups.extend([
+            _slot_group("global", self.limits.max_total),
+            _slot_group(f"agent:{agent}", agent_limit),
+        ])
         if top_level:
-            groups.extend([
-                _slot_group("global", self.limits.max_total),
-                _slot_group(f"agent:{agent}", agent_limit),
-                _slot_group(project_key, self.limits.per_repository),
-            ])
-            if agent == "codex" and account_id:
-                groups.append(_slot_group(f"account:{account_id}", self.limits.per_account))
+            groups.append(_slot_group(project_key, self.limits.per_repository))
+        if account_id:
+            groups.append(_slot_group(f"account:{account_id}", self.limits.per_account))
+        if provider_id:
+            groups.append(_slot_group(f"provider:{provider_id}", self.limits.per_provider))
         if delegated_worker:
             groups.append(_slot_group("delegated-worker", self.limits.max_delegated_workers))
         fixed = [f"subagent:{task_id}"] if subagent_worker and not delegated_worker else []

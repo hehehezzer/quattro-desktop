@@ -6,7 +6,10 @@ import os
 import json
 import hashlib
 import tomllib
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -24,6 +27,33 @@ REQUIRED_QUATTRO_ROUTES = (
     "auto/reasoning",
 )
 MAX_CATALOG_BYTES = 2_000_000
+ROUTING_MODE_ENV = "OMNIROUTE_ROUTING_MODE"
+MAX_CAPABILITY_BYTES = 64_000
+
+
+class OmniRouteRoutingMode(StrEnum):
+    """How the gateway is allowed to interpret a Quattro request.
+
+    ``passthrough`` is the authoritative path: Quattro supplies one locked
+    target and OmniRoute only transports it. ``legacy`` is an explicit
+    migration escape hatch for older clients that still rely on OmniRoute's
+    automatic routing engine. The environment variable is intentionally
+    process-scoped so the compatibility switch does not become task state.
+    """
+
+    PASSTHROUGH = "passthrough"
+    LEGACY = "legacy"
+
+
+def omniroute_routing_mode(value: str | None = None) -> OmniRouteRoutingMode:
+    """Return the validated gateway mode, defaulting to Quattro authority."""
+    raw = value if value is not None else os.environ.get(ROUTING_MODE_ENV, "passthrough")
+    try:
+        return OmniRouteRoutingMode(str(raw).strip().lower())
+    except ValueError as error:
+        raise ConfigError(
+            f"{ROUTING_MODE_ENV} must be one of: passthrough, legacy"
+        ) from error
 
 
 def _validate_loopback_endpoint(value: str) -> None:
@@ -46,6 +76,62 @@ class OmniRouteContract:
     base_url: str
     wire_api: str
     model_catalog: Path
+
+
+@dataclass(frozen=True, slots=True)
+class OmniRouteRuntimeCapabilities:
+    """Security-relevant capabilities reported by the running gateway."""
+
+    routing_mode: str
+    locked_target_supported: bool
+    receipt_supported: bool
+    target_rerouting: bool
+
+
+def validate_omniroute_runtime_capabilities(
+    base_url: str = APPROVED_BASE_URL,
+    *,
+    timeout_seconds: float = 3.0,
+) -> OmniRouteRuntimeCapabilities:
+    """Prove that the running gateway supports Quattro-owned passthrough.
+
+    Local configuration is not runtime evidence.  Passthrough therefore fails
+    closed when the endpoint is absent, malformed, or advertises any target
+    selection authority.  Explicit legacy mode remains the only compatibility
+    boundary that skips this check.
+    """
+    _validate_loopback_endpoint(base_url)
+    endpoint = f"{base_url.rstrip('/')}/routing/status"
+    request = urllib.request.Request(endpoint, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            payload = json.loads(response.read(MAX_CAPABILITY_BYTES + 1).decode("utf-8"))
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError,
+            UnicodeDecodeError) as error:
+        raise ConfigError("OmniRoute passthrough capability handshake failed") from error
+    if not isinstance(payload, dict) or len(json.dumps(payload)) > MAX_CAPABILITY_BYTES:
+        raise ConfigError("OmniRoute passthrough capability response is invalid")
+    target_rerouting = payload.get("target_rerouting")
+    if not isinstance(target_rerouting, bool):
+        raise ConfigError("OmniRoute passthrough capability response is invalid")
+    capabilities = OmniRouteRuntimeCapabilities(
+        routing_mode=str(payload.get("routing_mode", "")),
+        locked_target_supported=payload.get("locked_target_supported") is True,
+        receipt_supported=payload.get("receipt_supported") is True,
+        target_rerouting=target_rerouting,
+    )
+    if capabilities != OmniRouteRuntimeCapabilities(
+        routing_mode="passthrough",
+        locked_target_supported=True,
+        receipt_supported=True,
+        target_rerouting=False,
+    ):
+        raise ConfigError(
+            "OmniRoute runtime is incompatible with locked passthrough: expected "
+            "routing_mode=passthrough, locked_target_supported=true, "
+            "receipt_supported=true, target_rerouting=false"
+        )
+    return capabilities
 
 
 def validate_model_catalog(path: Path) -> tuple[str, ...]:

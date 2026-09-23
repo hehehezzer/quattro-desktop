@@ -138,6 +138,56 @@
       ],
       "costRank": 3,
       "priority": 2
+    },
+    {
+      "route": "account-1/gpt-6-astra",
+      "provider": "codex",
+      "account": "account-1",
+      "model": "gpt-6-astra",
+      "capabilities": [
+        "conversation",
+        "coding",
+        "repository_read",
+        "repository_write",
+        "shell",
+        "git",
+        "reasoning",
+        "long_context",
+        "tool_calling",
+        "vision"
+      ],
+      "tiers": [
+        "FAST",
+        "STANDARD",
+        "REASONING"
+      ],
+      "costRank": 4,
+      "priority": 1
+    },
+    {
+      "route": "account-2/gpt-6-astra",
+      "provider": "codex",
+      "account": "account-2",
+      "model": "gpt-6-astra",
+      "capabilities": [
+        "conversation",
+        "coding",
+        "repository_read",
+        "repository_write",
+        "shell",
+        "git",
+        "reasoning",
+        "long_context",
+        "tool_calling",
+        "vision"
+      ],
+      "tiers": [
+        "FAST",
+        "STANDARD",
+        "REASONING"
+      ],
+      "costRank": 4,
+      "priority": 2
     }
   ]
 }

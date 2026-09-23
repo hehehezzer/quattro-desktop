@@ -194,6 +194,17 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertEqual(second.target.route, "account-2/gpt-5.6-luna")
         self.assertTrue(second.routing_locked)
 
+    def test_legacy_auto_alias_is_resolved_to_an_exact_quattro_target(self) -> None:
+        profile = profile_task(
+            "hello", agent="codex", workflow="direct-response", policy_name="audit-read-only",
+        )
+        target = select_execution_target(
+            profile, self.targets, preferred_account="account-1", selection_tier="REASONING",
+        )
+        self.assertEqual(target.tier, "REASONING")
+        self.assertEqual(target.route, "account-1/gpt-5.6-sol")
+        self.assertEqual(target.fallbacks[0], "account-2/gpt-5.6-sol")
+
 
 if __name__ == "__main__":
     unittest.main()

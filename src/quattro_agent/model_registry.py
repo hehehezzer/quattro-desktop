@@ -83,6 +83,14 @@ class ExecutionPlan:
     fallback_targets: tuple[ExecutionTarget, ...]
     routing_locked: bool = True
 
+    def __post_init__(self) -> None:
+        if self.routing_locked is not True:
+            raise ConfigError("Quattro execution plans must be routing locked")
+        if self.reasoning_effort not in {"low", "medium", "high", "xhigh", "max", "ultra"}:
+            raise ConfigError("execution plan reasoning effort is unsupported")
+        if self.context.budget_tokens < 0:
+            raise ConfigError("execution plan context budget cannot be negative")
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "planId": self.plan_id,
@@ -123,7 +131,7 @@ def build_execution_plan(
             raise ConfigError(f"execution plan fallback is not approved: {route}")
         return ExecutionTarget(
             mode="FALLBACK", provider=item.provider, account=item.account,
-            model=item.model, route=item.route, tier=profile.tier.value,
+            model=item.model, route=item.route, tier=target.tier,
             reason=reason, fallbacks=(),
         )
 
@@ -290,12 +298,19 @@ def select_execution_target(
     preferred_account: str | None,
     available_accounts: frozenset[str] | None = None,
     unavailable_routes: frozenset[str] = frozenset(),
+    selection_tier: str | None = None,
 ) -> ExecutionTarget:
-    """Choose the cheapest verified capable target and bounded fallbacks."""
+    """Choose the cheapest verified capable target and bounded fallbacks.
+
+    ``selection_tier`` is only for translating the historical ``auto/*``
+    aliases into an exact Quattro target. It never gives OmniRoute a chance to
+    reinterpret the decision after this function returns.
+    """
     required = set(profile.required_capabilities)
+    tier = selection_tier or profile.tier.value
     eligible = [
         target for target in targets
-        if profile.tier.value in target.tiers
+        if tier in target.tiers
         and (available_accounts is None or target.account in available_accounts)
         and target.route not in unavailable_routes
         and required <= set(target.capabilities)
@@ -314,7 +329,7 @@ def select_execution_target(
     fallbacks = tuple(target.route for target in eligible[1:8])
     return ExecutionTarget(
         mode="EXPLICIT", provider=selected.provider, account=selected.account,
-        model=selected.model, route=selected.route, tier=profile.tier.value,
+        model=selected.model, route=selected.route, tier=tier,
         reason=(
             "lowest configured cost rank among verified capable, context-compatible, "
             "tier-eligible targets"

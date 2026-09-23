@@ -5,7 +5,12 @@
 ### Locked-receipt rollout order
 
 Mandatory receipt verification must be activated in dependency order. Deploy
-OmniRoute's passthrough envelope and `/routing/locked-receipts` support first,
+OmniRoute's passthrough envelope, `/routing/status`, and
+`/routing/locked-receipts` support first. Before any passthrough execution,
+Quattro requires the running gateway to report `routing_mode=passthrough`,
+`locked_target_supported=true`, `receipt_supported=true`, and
+`target_rerouting=false`; an absent, malformed, or incompatible response fails
+closed and never falls back to legacy routing. Then
 health-check a terminal receipt containing the exact plan ID plus provider,
 account, model, and route, and only then deploy Quattro's fail-closed delegated
 worker enforcement. After both sides are active, run a real delegated smoke and
@@ -13,10 +18,12 @@ confirm that the persisted receipt matches the selected target. Reversing this
 order intentionally causes delegated workers to terminate with
 `locked_receipt_unavailable`; Quattro never falls back to parsing model output.
 
-This phase covers single-shot direct and delegated executions. Interactive and
-resumed multi-turn sessions are not yet gateway-lock complete: they require a
-per-request receipt identifier or a gateway aggregate proving request-count
-completeness before Quattro can claim that every turn honored one locked plan.
+Interactive and resumed sessions now receive the same locked target envelope
+for the session's selected route. Per-turn receipt aggregation is still not
+available, so Quattro reports interactive/resume target evidence as
+session-scoped rather than claiming that every turn has independently
+validated receipt coverage. Single-shot direct and delegated executions remain
+fail-closed on a missing or mismatched terminal receipt.
 
 Normal automatic execution produces a Quattro-owned `ExecutionPlan` with the
 classified task, exact provider/account/model target, reasoning effort, context
@@ -26,7 +33,9 @@ account-qualified route plus `preference_mode=passthrough`; OmniRoute strips
 that routing metadata before provider translation.
 
 Target failures return to Quattro. A fallback is a distinct plan with a new
-plan ID. Only transient transport failures may retry the same target. Legacy
+plan ID. Only structured target-failure evidence can authorize that fallback;
+an unstructured gateway HTTP 5xx is a same-target transport failure. Only
+transient transport failures may retry the same target. Legacy
 gateway routing remains available for explicit compatibility and comparison.
 See [TOKEN_OPTIMIZATION.md](TOKEN_OPTIMIZATION.md) for the ownership audit.
 
@@ -46,6 +55,13 @@ OmniRoute owns transport, provider protocol adaptation, caching, token
 optimization, and runtime health signals. The default registry is
 `quattro_agent/data/model-policy.json`; `QUATTRO_MODEL_POLICY` may point to a
 validated private override. Neither file contains credentials.
+Only routes present in that validated Quattro policy can enter authoritative
+passthrough. Catalog-only provider aliases without a Quattro account contract
+fail closed rather than handing target selection back to OmniRoute; callers
+that still need those routes must opt into `OMNIROUTE_ROUTING_MODE=legacy`.
+The older `_session` launcher and standalone PR-review worker also fail closed
+in passthrough until they are migrated to carry a plan and receipt; this keeps
+those compatibility entrypoints from silently reintroducing gateway routing.
 
 ## Live path and ownership
 
@@ -389,11 +405,12 @@ non-idempotent edits or commands.
 
 ## Manual `/model` behavior and precedence
 
-A concrete `/model` choice is always respected. Only the model/route portion is
-preserved; native reasoning effort is still replaced for other models. If Codex's selected model is
-anything other than exactly `auto` (for example an account-pinned GPT-5.6
-route or `auto/coding` explicitly chosen by the user), Quattro does not
-replace it. It sends the automatically selected reasoning effort except for the Astra policy above.
+In explicit legacy mode, a concrete `/model` choice is always respected. Only
+the model/route portion is preserved; native reasoning effort is still replaced
+for other models. In passthrough mode, account-qualified concrete routes are
+preserved, while `auto` and the `auto/...` compatibility aliases are resolved
+by Quattro to an exact target. Quattro sends the automatically selected
+reasoning effort except for the Astra policy above.
 
 The shared Codex model catalog is the single picker/direct-selection registry.
 It publishes these Quattro route modes first, followed by the eight account-pinned
@@ -433,10 +450,12 @@ text-only models accept the attachment through OmniRoute's configured bounded
 image-to-text modality bridge, so the catalog describes the effective end-to-end
 input contract rather than only the upstream model's native modality.
 
-Selecting `auto` enables per-task Quattro target selection. Selecting one of the three
-`auto/...` values explicitly delegates model choice to the named OmniRoute route.
-Unknown values are rejected by Codex against the same catalog instead of being
-silently converted to `auto`. The catalog is deployed from
+Selecting `auto` enables per-task Quattro target selection. In passthrough mode,
+the three `auto/...` compatibility aliases are also resolved by Quattro to an
+exact account-qualified target before dispatch. In explicit legacy mode they
+retain their historical OmniRoute meaning. Unknown values are rejected by
+Codex against the same catalog instead of being silently converted to `auto`.
+The catalog is deployed from
 `src/quattro/omniroute-model-catalog.json`; Quattro preflight fails closed if a
 required route is missing.
 

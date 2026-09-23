@@ -225,7 +225,12 @@ def ensure_pi_worker_home(path: Path, *, model: str = PI_WORKER_MODEL) -> Path:
     return path
 
 
-def compact_pi_json_output(payload: str, limit: int = 32_000) -> tuple[str, dict[str, Any]]:
+def compact_pi_json_output(
+    payload: str,
+    limit: int = 32_000,
+    *,
+    enforce_worker_contract: bool = True,
+) -> tuple[str, dict[str, Any]]:
     """Reduce Pi's JSON event stream to the final answer and safe usage telemetry."""
     final_text = ""
     telemetry: dict[str, Any] = {
@@ -263,7 +268,7 @@ def compact_pi_json_output(payload: str, limit: int = 32_000) -> tuple[str, dict
     if not final_text:
         final_text = "STATUS\nFAILED\nFINDINGS\nPi returned no final answer.\nFILES_CHANGED\nNone\nVALIDATION\nNot Run\nRISKS\nWorker output was unavailable.\nNEXT_ACTION\nCodex should handle the task directly."
     required = ("STATUS", "FINDINGS", "FILES_CHANGED", "VALIDATION", "RISKS", "NEXT_ACTION")
-    if not all(heading in final_text for heading in required):
+    if enforce_worker_contract and not all(heading in final_text for heading in required):
         final_text = (
             "STATUS\nCOMPLETE\nFINDINGS\n" + final_text
             + "\nFILES_CHANGED\nNone reported\nVALIDATION\nNot Run\nRISKS\nContract normalized by Quattro."

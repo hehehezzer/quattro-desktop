@@ -43,10 +43,12 @@ then Codex integrates and validates it. Direct Pi behavior is unchanged.
 
 Delegated workers use a Quattro-private, credential-free Pi runtime under private
 harness state. Its custom `openai-responses` provider targets the existing loopback
-OmniRoute endpoint and selects model `auto`, leaving route/model selection to
-OmniRoute. The required Pi key field contains only the documented non-secret local
+OmniRoute endpoint and inherits an exact account-qualified target from the parent
+`ExecutionPlan`; OmniRoute executes that target and returns usage and provider-health
+evidence. The required Pi key field contains only the documented non-secret local
 placeholder; no Codex, Pi, or OmniRoute credential is copied. Global Pi settings and
-direct Pi sessions are not changed.
+direct Pi sessions are not changed. `OMNIROUTE_ROUTING_MODE=legacy` remains an
+explicit migration path for older callers without a locked plan.
 
 ## Result and failure contract
 

@@ -1,7 +1,8 @@
 """Deterministic, evidence-ready request routing for Quattro.
 
-Quattro selects only a reasoning tier.  OmniRoute remains the authority for
-provider, account, quota, and cost routing behind the selected request.
+Quattro classifies the request and selects the reasoning tier before the
+model registry materializes an exact execution plan. The legacy auto-route
+labels remain available only for an explicit compatibility mode.
 """
 
 from __future__ import annotations
@@ -182,11 +183,10 @@ def next_tier(decision: RoutingDecision, *, evidence: str, max_automatic_escalat
 
 
 def automatic_model_override(config: Mapping[str, object], tier: RoutingTier, configured_model: str | None) -> str | None:
-    """Select an existing OmniRoute auto-combo only when `/model` is auto.
+    """Return the legacy OmniRoute auto-combo for explicit compatibility.
 
-    A specific `/model` route is user intent and is never silently replaced.
-    The returned IDs are gateway routes; OmniRoute still scores providers,
-    accounts, quotas, resets, and fallback candidates inside that route.
+    Authoritative passthrough dispatch does not call this helper: Quattro's
+    model registry resolves the alias to an account-qualified target first.
     """
     if configured_model != "auto":
         return None

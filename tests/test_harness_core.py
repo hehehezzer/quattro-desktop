@@ -141,7 +141,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(validated["delegation"], {"enabled": True, "maxWorkers": 3})
         self.assertEqual(validated["cooperation"]["globalLimit"], 5)
         self.assertEqual(validated["cooperation"]["perRepositoryLimit"], 3)
-        self.assertEqual(validated["cooperation"], {"globalLimit": 5, "perRepositoryLimit": 3})
+        self.assertEqual(validated["cooperation"], {
+            "globalLimit": 5, "perRepositoryLimit": 3,
+            "perAccountLimit": 3, "perProviderLimit": 3,
+        })
         self.assertEqual(validated["workspace"], {"projectRoot": "~/Projects"})
         self.assertIsNot(validated, self.config)
 
@@ -166,15 +169,22 @@ class ConfigTests(unittest.TestCase):
         explicit["cooperation"] = {
             "globalLimit": 7,
             "perRepositoryLimit": 2,
+            "perAccountLimit": 3,
+            "perProviderLimit": 4,
         }
         validated = validate_ai_config(explicit, home=self.home)["cooperation"]
         self.assertEqual((validated["globalLimit"], validated["perRepositoryLimit"]), (7, 2))
+        self.assertEqual((validated["perAccountLimit"], validated["perProviderLimit"]), (3, 4))
         invalid = copy.deepcopy(explicit)
         invalid["cooperation"]["perRepositoryLimit"] = 8
         with self.assertRaises(ConfigError):
             validate_ai_config(invalid, home=self.home)
         invalid = copy.deepcopy(explicit)
         invalid["cooperation"]["globalLimit"] = 0
+        with self.assertRaises(ConfigError):
+            validate_ai_config(invalid, home=self.home)
+        invalid = copy.deepcopy(explicit)
+        invalid["cooperation"]["perProviderLimit"] = 8
         with self.assertRaises(ConfigError):
             validate_ai_config(invalid, home=self.home)
 
@@ -235,6 +245,22 @@ class DelegationPolicyTests(unittest.TestCase):
         self.assertIn("focused finding", result)
         self.assertEqual(usage["provider"], "omniroute")
         self.assertEqual(usage["totalTokens"], 29)
+
+    def test_pi_review_compaction_preserves_final_verdict(self):
+        payload = json.dumps({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{
+                    "type": "text",
+                    "text": "Reviewed the implementation.\nHARNESS_VERDICT: PASS",
+                }],
+                "usage": {},
+            },
+        })
+        result, _usage = compact_pi_json_output(payload, enforce_worker_contract=False)
+        self.assertEqual(result.strip().splitlines()[-1], "HARNESS_VERDICT: PASS")
+        self.assertNotIn("NEXT_ACTION", result)
 
     def test_unknown_fields_and_non_boolean_flags_are_rejected(self):
         unknown = copy.deepcopy(self.config)
@@ -668,6 +694,29 @@ class SchedulerTests(StoreTestCase):
             task_id=second_task, run_id=second_run, agent="codex", account_id="account-1",
             project_path=self.project,
         )
+
+    def test_child_workers_consume_global_account_and_provider_capacity(self):
+        scheduler = LocalScheduler(
+            self.store,
+            SchedulerLimits(
+                max_total=3, per_agent={"codex": 3, "pi": 3}, per_account=3,
+                per_provider=2, per_repository=3, lease_ttl_seconds=1,
+            ),
+        )
+        for index in range(2):
+            task_id, run_id = self._run()
+            scheduler.try_acquire(
+                task_id=task_id, run_id=run_id, agent="codex",
+                account_id="account-1", provider_id="cx", project_path=self.project,
+                subagent_worker=True,
+            )
+        task_id, run_id = self._run()
+        with self.assertRaises(LeaseConflict):
+            scheduler.try_acquire(
+                task_id=task_id, run_id=run_id, agent="codex",
+                account_id="account-1", provider_id="cx", project_path=self.project,
+                subagent_worker=True,
+            )
 
     def test_two_top_level_tasks_can_share_repository_with_separate_slots(self):
         first_task, first_run = self._run()

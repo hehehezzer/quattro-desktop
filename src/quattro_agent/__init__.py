@@ -16,7 +16,10 @@ from .delegation import (
 from .config import CURRENT_AI_CONFIG_VERSION, load_ai_config, migrate_ai_config, validate_ai_config
 from .models import RunState, TaskState
 from .policy import PolicyProfile, policy_profile
-from .omniroute import OmniRouteContract, validate_catalog_parity, validate_omniroute_contract
+from .omniroute import (
+    OmniRouteContract, OmniRouteRoutingMode, omniroute_routing_mode,
+    validate_catalog_parity, validate_omniroute_contract,
+)
 from .sessions import prepare_shared_session_namespace
 from .store import TaskStore
 from .retrieval import ContextAssembler, QueryRouter, RepositoryIndexer, RetrievalStore
@@ -47,6 +50,8 @@ __all__ = [
     "decide_delegation",
     "PolicyProfile",
     "OmniRouteContract",
+    "OmniRouteRoutingMode",
+    "omniroute_routing_mode",
     "RunState",
     "TaskState",
     "TaskStore",

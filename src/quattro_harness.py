@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import pathlib
+import random
 import re
 import shutil
 import signal
@@ -64,9 +65,12 @@ from quattro_agent.delegation import (
 from quattro_agent.errors import ConfigError, LeaseConflict, PolicyEscalationError, StateTransitionError
 from quattro_agent.models import RunState, StepState, TERMINAL_TASK_STATES
 from quattro_agent.omniroute import (
+    OmniRouteRoutingMode,
+    omniroute_routing_mode,
     validate_catalog_parity,
     validate_manual_route_requirements,
     validate_omniroute_contract,
+    validate_omniroute_runtime_capabilities,
 )
 from quattro_agent.mandatory_context import build_mandatory_context
 from quattro_agent.intelligence.telemetry import (
@@ -137,12 +141,31 @@ class OmniRouteAttemptError(RuntimeError):
     def __init__(
         self, message: str, *, retryable: bool, error_type: str = "GATEWAY_ERROR",
         retry_after_ms: int | None = None, transport_retryable: bool = False,
+        provider: str | None = None, account: str | None = None,
+        model: str | None = None, route: str | None = None,
     ) -> None:
         super().__init__(message)
         self.retryable = retryable
         self.error_type = error_type
         self.retry_after_ms = retry_after_ms
         self.transport_retryable = transport_retryable
+        self.provider = provider
+        self.account = account
+        self.model = model
+        self.route = route
+
+    def display_dict(self) -> dict[str, Any]:
+        """Return a sanitized provider-health signal for evidence and UI."""
+        return {
+            "type": self.error_type,
+            "provider": self.provider,
+            "account": self.account,
+            "model": self.model,
+            "route": self.route,
+            "retryable": self.retryable,
+            "retryAfterMs": self.retry_after_ms,
+            "transportRetryable": self.transport_retryable,
+        }
 
 
 class LockedReceiptError(RuntimeError):
@@ -159,6 +182,9 @@ TARGET_FAILURE_TYPES = frozenset({
     "AUTHENTICATION_FAILED", "CONTEXT_LIMIT", "CAPABILITY_UNSUPPORTED",
     "TRANSPORT_FAILURE",
 })
+GATEWAY_RESOURCE_PRESSURE = "GATEWAY_RESOURCE_PRESSURE"
+GATEWAY_PRESSURE_MAX_RETRIES = 2
+GATEWAY_PRESSURE_MAX_BACKOFF_SECONDS = 30.0
 FALLBACK_ELIGIBLE_TARGET_FAILURES = TARGET_FAILURE_TYPES - frozenset({
     "CONTEXT_LIMIT", "CAPABILITY_UNSUPPORTED", "TRANSPORT_FAILURE",
 })
@@ -380,12 +406,15 @@ class HarnessRuntime:
         pi_workers = int(delegation.get("maxWorkers", 3))
         global_limit = int(cooperation.get("globalLimit", 5))
         repository_limit = int(cooperation.get("perRepositoryLimit", 3))
+        account_limit = int(cooperation.get("perAccountLimit", min(3, global_limit)))
+        provider_limit = int(cooperation.get("perProviderLimit", min(3, global_limit)))
         self.scheduler = LocalScheduler(
             self.store,
             SchedulerLimits(
                 max_total=global_limit,
                 per_agent={"codex": global_limit, "pi": global_limit},
-                per_account=global_limit,
+                per_account=account_limit,
+                per_provider=provider_limit,
                 max_delegated_workers=pi_workers,
                 per_repository=repository_limit,
             ),
@@ -454,8 +483,12 @@ class HarnessRuntime:
                     # capacity authority for those workers.
                     continue
 
-    def _default_codex_preflight(self, account_home: pathlib.Path) -> None:
+    def _default_codex_preflight(
+        self, account_home: pathlib.Path, routing_mode: OmniRouteRoutingMode | None = None,
+    ) -> None:
         validate_omniroute_contract(account_home)
+        if (routing_mode or omniroute_routing_mode()) is OmniRouteRoutingMode.PASSTHROUGH:
+            validate_omniroute_runtime_capabilities()
         validate_catalog_parity(
             self.default_workspace / "src/quattro/omniroute-model-catalog.json"
         )
@@ -581,6 +614,10 @@ class HarnessRuntime:
         config = self.config()
         if agent not in {"codex", "pi"}:
             raise ValueError(f"unsupported agent: {agent}")
+        # Validate the process-level gateway contract before reserving a
+        # repository/coordinator session; malformed compatibility flags must
+        # not leak a reservation on their way to a user-visible error.
+        routing_mode = omniroute_routing_mode()
         delegation = classify_task_request(prompt, preferred_agent=agent).to_dict()
         selected_account = None
         if agent == "codex":
@@ -666,9 +703,11 @@ class HarnessRuntime:
                 "require the run-scoped full-access-explicit policy and confirmation"
             )
         configured_model = None
+        configured_catalog = None
         if agent == "codex":
             account_home = pathlib.Path(str(self.account(config, selected_account)["codexHome"])).expanduser().resolve()
-            configured_model = self._configured_codex_model(account_home)
+            configured_model = self._configured_codex_model(account_home) or "auto"
+            configured_catalog = self._configured_codex_catalog(account_home)
         routing, adaptive, pre_routing_diagnostics = self._pre_route(
             config=config,
             request=prompt,
@@ -683,8 +722,17 @@ class HarnessRuntime:
         )
         pre_profile = task_profile_from_dict(routing.task_profile)
         execution_target = None
-        if agent == "codex" and configured_model == "auto":
-            configured_catalog = self._configured_codex_catalog(account_home)
+        if (
+            agent == "codex"
+            and routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+            and configured_catalog is not None
+            and configured_model in {"auto", "auto/coding:cheap", "auto/coding", "auto/reasoning"}
+        ):
+            selection_tier = {
+                "auto/coding:cheap": "FAST",
+                "auto/coding": "STANDARD",
+                "auto/reasoning": "REASONING",
+            }.get(configured_model)
             if configured_catalog is not None:
                 registry = load_model_registry(default_policy_path(), configured_catalog)
                 execution_target = select_execution_target(
@@ -693,9 +741,14 @@ class HarnessRuntime:
                     preferred_account=selected_account,
                     available_accounts=self._enabled_account_ids(config),
                     unavailable_routes=self._unavailable_registry_routes(adaptive, registry),
+                    selection_tier=selection_tier,
                 )
-        elif agent == "codex" and configured_model:
-            configured_catalog = self._configured_codex_catalog(account_home)
+        elif (
+            agent == "codex"
+            and routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+            and configured_model
+            and configured_catalog is not None
+        ):
             if configured_catalog is not None:
                 execution_target = execution_target_for_route(
                     pre_profile,
@@ -710,12 +763,40 @@ class HarnessRuntime:
         # auditable plan lineage.
         task_id = f"task_{uuid.uuid4().hex}"
         execution_plan = None
-        if execution_target is not None and configured_catalog is not None:
+        if (
+            execution_target is not None
+            and configured_catalog is not None
+        ):
+            plan_effort = self._dispatch_reasoning_effort(
+                config,
+                routing.display(),
+                execution_target.route,
+                account_home,
+            )
             execution_plan = build_execution_plan(
                 pre_profile, execution_target,
                 load_model_registry(default_policy_path(), configured_catalog),
-                reasoning_effort=str(routing.reasoning_effort),
+                reasoning_effort=plan_effort,
                 plan_id=f"{task_id}.plan-0",
+            )
+        if (
+            agent == "codex"
+            and routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+            and execution_plan is None
+        ):
+            if coordination:
+                try:
+                    if new_reservation:
+                        self.coordinator.rollback_reservation(str(coordination["sessionId"]))
+                    else:
+                        self.coordinator.finish(
+                            str(coordination["sessionId"]), validation="Not Run", abandoned=True
+                        )
+                except (KeyError, OSError, RuntimeError, ValueError):
+                    pass
+            raise ConfigError(
+                "passthrough mode requires a validated Quattro execution plan; "
+                "configure the approved catalog/route or set OMNIROUTE_ROUTING_MODE=legacy"
             )
         if pre_envelope is not None:
             # The task id is not known until persistence below.  It is bound to
@@ -742,6 +823,8 @@ class HarnessRuntime:
                     "coordinationSessionId": coordination.get("sessionId") if coordination else None,
                     "routingTier": routing.tier.value,
                     "routingReason": routing.reason,
+                    "routingMode": routing_mode.value,
+                    "selectedBy": "Quattro" if execution_plan is not None else "OmniRoute (legacy)",
                     "preRouting": {
                         "phase": "PRE_ROUTING",
                         "taskProfileId": task_profile_identifier(pre_profile),
@@ -750,6 +833,7 @@ class HarnessRuntime:
                         "taskContextTokens": pre_profile.task_context_tokens,
                         "preferredCandidates": list(adaptive.preferred_candidates) if adaptive else [],
                         "adaptiveMode": adaptive.negotiation.compatibility if adaptive else "standard",
+                        "routingMode": routing_mode.value,
                         "executionTarget": execution_target.to_dict() if execution_target else None,
                         "executionPlan": execution_plan.to_dict() if execution_plan else None,
                     },
@@ -777,6 +861,7 @@ class HarnessRuntime:
                     "canonicalRepository": str(canonical_repository),
                     "writeScopes": list(ownership) if profile.writable_roots else [],
                     "routing": routing.display(),
+                    "routingMode": routing_mode.value,
                     "routingEnvelope": pre_envelope,
                     "routingSelection": pre_selection,
                     "executionTarget": execution_target.to_dict() if execution_target else None,
@@ -935,6 +1020,7 @@ class HarnessRuntime:
         account = self.account(config, account_id)
         account_home = pathlib.Path(str(account["codexHome"])).expanduser().resolve()
         configured_model = self._configured_codex_model(account_home) or "auto"
+        routing_mode = omniroute_routing_mode()
         # DIRECT requests use the same request-boundary pre-router, before any
         # retrieval or execution context is assembled.
         boundary = make_pre_routing_input(
@@ -942,7 +1028,7 @@ class HarnessRuntime:
             working_directory=str(project),
             repository_present=(project / ".git").exists(),
             explicit_model=configured_model,
-            routing_mode="auto" if configured_model == "auto" else "manual",
+            routing_mode="auto" if configured_model and configured_model.startswith("auto") else "manual",
             selected_account=str(account["id"]),
             workflow="direct-response",
             policy_name=profile.name,
@@ -955,15 +1041,26 @@ class HarnessRuntime:
             load_model_registry(default_policy_path(), configured_catalog)
             if configured_catalog is not None else ()
         )
-        if configured_model == "auto" and configured_catalog is not None:
+        auto_alias_tier = {
+            "auto/coding:cheap": "FAST",
+            "auto/coding": "STANDARD",
+            "auto/reasoning": "REASONING",
+        }.get(configured_model)
+        execution_target = None
+        if (
+            routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+            and configured_catalog is not None
+            and configured_model in {"auto", "auto/coding:cheap", "auto/coding", "auto/reasoning"}
+        ):
             execution_target = select_execution_target(
                 profile_snapshot,
                 registry,
                 preferred_account=str(account["id"]),
                 available_accounts=self._enabled_account_ids(config),
+                selection_tier=auto_alias_tier,
             )
             model = execution_target.route
-        else:
+        elif routing_mode is OmniRouteRoutingMode.PASSTHROUGH and configured_catalog is not None:
             execution_target = (
                 execution_target_for_route(
                     profile_snapshot,
@@ -972,7 +1069,16 @@ class HarnessRuntime:
                     available_accounts=self._enabled_account_ids(config),
                 ) if configured_catalog is not None else None
             )
+            model = execution_target.route if execution_target is not None else configured_model
+        else:
+            # Explicit legacy mode retains the old OmniRoute auto-combo path;
+            # it is never used by the authoritative default.
             model = automatic_model_override(config, routing.tier, configured_model) or configured_model
+        if routing_mode is OmniRouteRoutingMode.PASSTHROUGH and execution_target is None:
+            raise ConfigError(
+                "passthrough mode requires a validated Quattro execution target; "
+                "configure the approved catalog/route or set OMNIROUTE_ROUTING_MODE=legacy"
+            )
         intelligence_record_id = record_routing_telemetry(
             self.intelligence_database,
             request=prompt,
@@ -1113,7 +1219,9 @@ class HarnessRuntime:
         attempt_plans = [execution_plan] if execution_plan is not None else [None]
         if execution_plan is not None:
             attempt_plans.extend(
-                fallback_execution_plan(execution_plan, index, reason="gateway target failure")
+                self._fallback_plan(
+                    execution_plan, index, routing.display(), reason="gateway target failure",
+                )
                 for index in range(min(2, len(execution_plan.fallback_targets)))
             )
         fallback_events: list[dict[str, Any]] = []
@@ -1126,7 +1234,9 @@ class HarnessRuntime:
             request_body: dict[str, Any] = {
                 "model": attempt_route,
                 "input": input_text,
-                "reasoning": {"effort": routing_effort},
+                "reasoning": {
+                    "effort": attempt_plan.reasoning_effort if attempt_plan else routing_effort,
+                },
             }
             if attempt_plan is not None:
                 request_body["routing"] = {
@@ -1150,18 +1260,50 @@ class HarnessRuntime:
                 }
             if adaptive and adaptive.envelope and execution_target is None:
                 request_body["routing"] = dict(adaptive.envelope)
-            for transport_attempt in range(2):
+            transport_attempt = 0
+            pressure_attempt = 0
+            while True:
                 try:
                     body, response_metadata = self._send_omniroute_response(
                         request_body, timeout_seconds=timeout_seconds,
                     )
                     model = attempt_route
                     selected_plan = attempt_plan
+                    if attempt_plan is not None:
+                        routing_effort = attempt_plan.reasoning_effort
                     execution_target = attempt_plan.target if attempt_plan is not None else execution_target
                     break
                 except OmniRouteAttemptError as error:
                     last_error = error
+                    if error.error_type == GATEWAY_RESOURCE_PRESSURE and pressure_attempt < GATEWAY_PRESSURE_MAX_RETRIES:
+                        server_retry_seconds = (
+                            error.retry_after_ms / 1_000
+                            if error.retry_after_ms is not None else None
+                        )
+                        if (
+                            server_retry_seconds is not None
+                            and server_retry_seconds > GATEWAY_PRESSURE_MAX_BACKOFF_SECONDS
+                        ):
+                            break
+                        retry_seconds = max(
+                            0.0,
+                            server_retry_seconds
+                            if server_retry_seconds is not None
+                            else 0.5 * (2 ** pressure_attempt),
+                        ) + random.uniform(0.0, 0.25)
+                        fallback_events.append({
+                            "planId": attempt_plan.plan_id if attempt_plan is not None else None,
+                            "route": attempt_route, "attempt": attempt_index + 1,
+                            "type": error.error_type, "retryable": True,
+                            "retryAfterMs": round(retry_seconds * 1_000),
+                            "samePlanRetry": pressure_attempt + 1,
+                            "health": error.display_dict(),
+                        })
+                        pressure_attempt += 1
+                        time.sleep(retry_seconds)
+                        continue
                     if error.transport_retryable and transport_attempt == 0:
+                        transport_attempt += 1
                         continue
                     fallback_events.append({
                         "planId": attempt_plan.plan_id if attempt_plan is not None else None,
@@ -1171,6 +1313,8 @@ class HarnessRuntime:
                         "retryable": error.retryable,
                         "retryAfterMs": error.retry_after_ms,
                         "transportRetries": transport_attempt,
+                        "samePlanRetries": pressure_attempt,
+                        "health": error.display_dict(),
                     })
                     if not (
                         error.error_type in FALLBACK_ELIGIBLE_TARGET_FAILURES
@@ -1247,6 +1391,34 @@ class HarnessRuntime:
                 f"OmniRoute target mismatch: requested {execution_target.route}, "
                 f"executed {response_metadata.get('provider')}/{actual_model}"
             )
+        if selected_plan is not None:
+            receipt = self._locked_target_receipt(selected_plan.plan_id, attempts=4)
+            if not isinstance(receipt, Mapping):
+                raise LockedReceiptError(
+                    "locked receipt is unavailable, pending, or incomplete",
+                    terminal_code="locked_receipt_unavailable",
+                )
+            if receipt.get("plan_id") != selected_plan.plan_id:
+                raise LockedReceiptError(
+                    "locked target receipt does not match the active execution plan",
+                    terminal_code="locked_receipt_mismatch",
+                )
+            if receipt.get("success") is not True:
+                raise LockedReceiptError(
+                    "locked target receipt does not prove successful execution",
+                    terminal_code="locked_receipt_failed",
+                )
+            if not target_matches_actual(
+                selected_plan.target,
+                actual_provider=receipt.get("actual_provider"),
+                actual_account=receipt.get("actual_account"),
+                actual_model=receipt.get("actual_model"),
+                actual_route=receipt.get("actual_route"),
+            ):
+                raise LockedReceiptError(
+                    "locked target receipt failed provider/account/model/route fidelity",
+                    terminal_code="locked_target_mismatch",
+                )
         update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
             "context_tokens": profile_snapshot.final_request_tokens,
             "retrieval_used": int(diagnostics.get("selectedChunks", 0) or 0) > 0,
@@ -1270,6 +1442,7 @@ class HarnessRuntime:
         snapshot = routing_snapshot(
             profile_snapshot,
             route=model,
+            execution_target=execution_target.to_dict() if execution_target else None,
             configured_model=configured_model,
             preference=preference,
             benchmark_version=self._file_version(routing_state / "benchmark-cache.json"),
@@ -1303,11 +1476,34 @@ class HarnessRuntime:
         }
         snapshot["execution_plan"] = selected_plan.to_dict() if selected_plan else None
         snapshot["target_honored"] = target_honored
+        snapshot["routing_mode"] = routing_mode.value
+        snapshot["selected_by"] = "Quattro" if selected_plan is not None else "OmniRoute (legacy)"
+        snapshot["executed_by"] = "OmniRoute"
         snapshot["fallback_events"] = fallback_events
-        snapshot["fallback_used"] = bool(fallback_events)
+        target_fallback_events = [event for event in fallback_events if "samePlanRetry" not in event]
+        snapshot["fallback_used"] = bool(target_fallback_events)
+        health_signals = [
+            event["health"] for event in fallback_events
+            if isinstance(event.get("health"), Mapping)
+        ]
+        if target_honored and response_metadata is not None:
+            health_signals.append({
+                "type": "AVAILABLE",
+                "provider": response_metadata.get("provider"),
+                "account": response_metadata.get("account"),
+                "model": response_metadata.get("model"),
+                "route": response_metadata.get("route"),
+                "latencyMs": response_metadata.get("latencyMs"),
+                "retryable": False,
+                "retryAfterMs": None,
+            })
+        snapshot["health_signals"] = health_signals
         return {
             "schemaVersion": 1, "decision": decision, "response": output.strip(),
             "model": model,
+            "routingMode": routing_mode.value,
+            "selectedBy": "Quattro" if selected_plan is not None else "OmniRoute (legacy)",
+            "executedBy": "OmniRoute",
             "routing": routing.display() | {"reasoning_effort": routing_effort},
             "retrieval": diagnostics,
             "context": {
@@ -1344,7 +1540,12 @@ class HarnessRuntime:
                 "executionTarget": execution_target.to_dict() if execution_target else None,
                 "targetHonored": target_honored,
             },
-            "retry": "fallback_succeeded" if fallback_events else "not_attempted",
+            "providerHealth": health_signals,
+            "retry": (
+                "fallback_succeeded" if target_fallback_events
+                else "same_plan_retry_succeeded" if fallback_events
+                else "not_attempted"
+            ),
         }
 
     @staticmethod
@@ -1387,18 +1588,43 @@ class HarnessRuntime:
             parsed_retry_after = parsed.get("retry_after_ms")
             if isinstance(parsed_retry_after, (int, float)) and not isinstance(parsed_retry_after, bool):
                 retry_after_ms = max(0, int(parsed_retry_after))
-            error_type = str(parsed.get("type") or {
+            structured_code = parsed.get("code")
+            structured_error_type = parsed.get("type")
+            if structured_code in {"resource_pressure", "gateway_resource_pressure"}:
+                error_type = GATEWAY_RESOURCE_PRESSURE
+            else:
+                error_type = str(structured_error_type or {
                 429: "RATE_LIMITED",
                 401: "AUTHENTICATION_FAILED",
                 403: "CREDITS_EXHAUSTED",
                 404: "MODEL_UNAVAILABLE",
-            }.get(error.code, "PROVIDER_UNAVAILABLE" if error.code >= 500 else "TRANSPORT_FAILURE"))
+                }.get(error.code, "TRANSPORT_FAILURE"))
             fallback_eligible = error_type in FALLBACK_ELIGIBLE_TARGET_FAILURES
             raise OmniRouteAttemptError(
                 f"OmniRoute provider failure: HTTP {error.code}: {detail}",
-                retryable=fallback_eligible,
+                retryable=fallback_eligible or error_type == GATEWAY_RESOURCE_PRESSURE,
                 error_type=error_type, retry_after_ms=retry_after_ms,
                 transport_retryable=(error_type == "TRANSPORT_FAILURE"),
+                provider=(
+                    parsed.get("provider")
+                    if isinstance(parsed.get("provider"), str) else
+                    error.headers.get("X-OmniRoute-Provider") if error.headers else None
+                ),
+                account=(
+                    parsed.get("account")
+                    if isinstance(parsed.get("account"), str) else
+                    error.headers.get("X-OmniRoute-Account") if error.headers else None
+                ),
+                model=(
+                    parsed.get("model")
+                    if isinstance(parsed.get("model"), str) else
+                    error.headers.get("X-OmniRoute-Model") if error.headers else None
+                ),
+                route=(
+                    parsed.get("route")
+                    if isinstance(parsed.get("route"), str) else
+                    error.headers.get("X-OmniRoute-Route") if error.headers else None
+                ),
             ) from error
         except urllib.error.URLError as error:
             raise OmniRouteAttemptError(
@@ -1475,6 +1701,21 @@ class HarnessRuntime:
         # An obsolete selection such as medium must never reach Astra. With
         # no saved choice, retain the inexpensive default for FAST work.
         return "low" if selected is None and effort == "low" else "high"
+
+    def _fallback_plan(
+        self, plan: ExecutionPlan, index: int, routing: Mapping[str, Any], *, reason: str,
+    ) -> ExecutionPlan:
+        fallback = fallback_execution_plan(plan, index, reason=reason)
+        config = self.config()
+        home = pathlib.Path(str(
+            self.account(config, fallback.target.account)["codexHome"]
+        )).expanduser().resolve()
+        return dataclasses.replace(
+            fallback,
+            reasoning_effort=self._dispatch_reasoning_effort(
+                config, routing, fallback.target.route, home,
+            ),
+        )
 
     @staticmethod
     def _configured_codex_catalog(account_home: pathlib.Path | None) -> pathlib.Path | None:
@@ -1823,7 +2064,7 @@ class HarnessRuntime:
             working_directory=str(project),
             repository_present=(project / ".git").exists(),
             explicit_model=configured_model,
-            routing_mode="auto" if configured_model == "auto" else "manual",
+            routing_mode="auto" if configured_model and configured_model.startswith("auto") else "manual",
             selected_account=selected_account,
             attachments=attachments,
             session_continuation=session_continuation,
@@ -1868,11 +2109,18 @@ class HarnessRuntime:
         account_id = private.get("accountId")
         account_home = None
         config = self.config()
+        routing_mode = omniroute_routing_mode(private.get("routingMode"))
         if task["agent"] == "codex":
             account_home = pathlib.Path(str(self.account(config, account_id)["codexHome"]))
             account_home = pathlib.Path(os.path.expandvars(os.path.expanduser(str(account_home)))).resolve()
-            self.codex_preflight(account_home)
-        configured_model = self._configured_codex_model(account_home) if task["agent"] == "codex" else None
+            if self.codex_preflight == self._default_codex_preflight:
+                self._default_codex_preflight(account_home, routing_mode)
+            else:
+                self.codex_preflight(account_home)
+        configured_model = (
+            self._configured_codex_model(account_home) or "auto"
+            if task["agent"] == "codex" else None
+        )
         routing_payload = private.get("routing") if isinstance(private.get("routing"), Mapping) else {}
         routing_tier_value = str(routing_payload.get("tier", RoutingTier.STANDARD.value))
         try:
@@ -1887,7 +2135,10 @@ class HarnessRuntime:
             except (KeyError, TypeError, ValueError):
                 semantic_task_profile = None
         load_plan = context_load_plan(semantic_task_profile) if semantic_task_profile else None
-        model_override = automatic_model_override(config, routing_tier, configured_model)
+        model_override = (
+            automatic_model_override(config, routing_tier, configured_model)
+            if routing_mode is OmniRouteRoutingMode.LEGACY else None
+        )
         execution_target = None
         persisted_plan_payload = private.get("activeExecutionPlan", private.get("executionPlan"))
         persisted_plan = (
@@ -1902,7 +2153,10 @@ class HarnessRuntime:
             )).expanduser().resolve()
         persisted_target = (
             persisted_plan.target.to_dict()
-            if persisted_plan is not None else private.get("executionTarget")
+            if persisted_plan is not None
+            else None
+            if mode in {AgentMode.INTERACTIVE, AgentMode.RESUME}
+            else private.get("executionTarget")
         )
         if isinstance(persisted_target, Mapping):
             configured_catalog = self._configured_codex_catalog(account_home)
@@ -1918,34 +2172,71 @@ class HarnessRuntime:
                 or matched.model != persisted_plan.target.model
             ):
                 raise ConfigError("persisted execution plan target no longer matches its route")
-            execution_target = execution_target_for_route(
-                semantic_task_profile, [matched], matched.route,
-                available_accounts=self._enabled_account_ids(config),
-            )
-            if execution_target is None:
-                raise ConfigError("persisted execution target is no longer approved")
-            if str(persisted_target.get("mode")) == "EXPLICIT":
-                execution_target = dataclasses.replace(
-                    execution_target, mode="EXPLICIT",
-                    reason=str(persisted_target.get("reason", execution_target.reason)),
+            if persisted_plan is not None:
+                # A persisted plan is already the authoritative decision. Do
+                # not re-run selection (or require a reconstructed profile) on
+                # resume; only validate that its exact route is still approved.
+                execution_target = persisted_plan.target
+            elif semantic_task_profile is not None:
+                execution_target = execution_target_for_route(
+                    semantic_task_profile, [matched], matched.route,
+                    available_accounts=self._enabled_account_ids(config),
                 )
-            if persisted_plan is None:
+                if execution_target is None:
+                    raise ConfigError("persisted execution target is no longer approved")
+                if str(persisted_target.get("mode")) == "EXPLICIT":
+                    execution_target = dataclasses.replace(
+                        execution_target, mode="EXPLICIT",
+                        reason=str(persisted_target.get("reason", execution_target.reason)),
+                    )
                 # Legacy tasks retain their old target/fallback representation.
                 execution_target = dataclasses.replace(
                     execution_target,
                     fallbacks=tuple(str(item) for item in persisted_target.get("fallbacks", [])),
                 )
+            else:
+                execution_target = ExecutionTarget(
+                    mode=str(persisted_target.get("mode", "MANUAL")),
+                    provider=matched.provider,
+                    account=matched.account,
+                    model=matched.model,
+                    route=matched.route,
+                    tier=str(persisted_target.get("tier", matched.tiers and sorted(matched.tiers)[0] or "STANDARD")),
+                    reason=str(persisted_target.get("reason", "approved persisted route")),
+                    fallbacks=tuple(str(item) for item in persisted_target.get("fallbacks", [])),
+                )
             model_override = execution_target.route
-        elif configured_model == "auto" and semantic_task_profile is not None and account_home is not None:
+        elif (
+            routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+            and configured_model in {"auto", "auto/coding:cheap", "auto/coding", "auto/reasoning"}
+            and semantic_task_profile is not None
+            and account_home is not None
+        ):
             configured_catalog = self._configured_codex_catalog(account_home)
             if configured_catalog is not None:
+                selection_tier = {
+                    "auto/coding:cheap": "FAST",
+                    "auto/coding": "STANDARD",
+                    "auto/reasoning": "REASONING",
+                }.get(configured_model)
                 execution_target = select_execution_target(
                     semantic_task_profile,
                     load_model_registry(default_policy_path(), configured_catalog),
                     preferred_account=str(account_id) if account_id else None,
                     available_accounts=self._enabled_account_ids(config),
+                    selection_tier=selection_tier,
                 )
                 model_override = execution_target.route
+        if (
+            task["agent"] == "codex"
+            and routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+            and mode not in {AgentMode.INTERACTIVE, AgentMode.RESUME}
+            and persisted_plan is None
+        ):
+            raise ConfigError(
+                "passthrough mode requires a persisted Quattro execution plan; "
+                "legacy tasks must run with OMNIROUTE_ROUTING_MODE=legacy"
+            )
         private_input = str(private.get("prompt", ""))
         retrieval_diagnostics: dict[str, Any] = {
             "methods": [], "selectedSources": [], "selectedChunks": 0,
@@ -1956,6 +2247,10 @@ class HarnessRuntime:
                 session_id=private.get("logicalSessionId"), task_id=str(task["task_id"]),
                 memory_access=profile.memory_access,
                 routing_tier=routing_tier,
+                budget_tokens=(
+                    persisted_plan.context.retrieval_budget_tokens
+                    if persisted_plan is not None else None
+                ),
                 diagnostics=retrieval_diagnostics,
             )
             if retrieval_context:
@@ -2053,8 +2348,11 @@ class HarnessRuntime:
         model_route = model_override or configured_model or "configured default"
         # Tier effort remains authoritative except for explicit Astra routes,
         # whose supported low/high choice is preserved from native config.
-        routing_effort = self._dispatch_reasoning_effort(
-            config, routing, model_route, account_home,
+        routing_effort = (
+            persisted_plan.reasoning_effort
+            if persisted_plan is not None else self._dispatch_reasoning_effort(
+                config, routing, model_route, account_home,
+            )
         )
         # Normal tasks already carry the request-boundary result.  Do not
         # re-rank after Codex context assembly: final size updates the hard
@@ -2151,6 +2449,9 @@ class HarnessRuntime:
             "selectedModel": configured_model or "configured default",
             "effectiveModelRoute": model_route,
             "modelSelection": model_selection,
+            "routingMode": routing_mode.value,
+            "selectedBy": "Quattro" if persisted_plan is not None else "OmniRoute (legacy)",
+            "executedBy": "OmniRoute",
             "reasoningEffort": routing_effort,
             "routingCompatibility": (
                 adaptive.negotiation.compatibility if adaptive else "standard"
@@ -2167,6 +2468,7 @@ class HarnessRuntime:
                 snapshot = routing_snapshot(
                     dispatch_task_profile,
                     route=model_route,
+                    execution_target=execution_target.to_dict() if execution_target else None,
                     configured_model=configured_model,
                     preference=PreferenceMode.BALANCED,
                     benchmark_version=self._file_version(routing_state / "benchmark-cache.json"),
@@ -2210,6 +2512,9 @@ class HarnessRuntime:
         self.store.append_event(str(task["task_id"]), "routing.dispatched", run_id=run_id, display={
             "phase": "DISPATCH",
             "tier": routing_tier, "reasoningEffort": routing_effort,
+            "routingMode": routing_mode.value,
+            "selectedBy": "Quattro" if persisted_plan is not None else "OmniRoute (legacy)",
+            "executedBy": "OmniRoute",
             "selectedModel": configured_model or "configured default",
             "effectiveModelRoute": model_route,
             "modelRoute": model_route, "modelSelection": model_selection,
@@ -2325,6 +2630,7 @@ class HarnessRuntime:
             },
         )
         overrides = dict(plan.environment_overrides)
+        overrides["OMNIROUTE_ROUTING_MODE"] = routing_mode.value
         overrides["QUATTRO_ROUTING_TIER"] = routing_tier
         if dispatch_envelope is not None:
             overrides["QUATTRO_ROUTING_ENVELOPE"] = encode_routing_header(dispatch_envelope)
@@ -2364,6 +2670,7 @@ class HarnessRuntime:
         self, query: str, project: pathlib.Path, *, session_id: str | None,
         task_id: str, memory_access: MemoryAccess,
         routing_tier: RoutingTier = RoutingTier.STANDARD,
+        budget_tokens: int | None = None,
         diagnostics: dict[str, Any] | None = None,
     ) -> str:
         """Incrementally retrieve bounded context without destabilizing launches."""
@@ -2414,7 +2721,7 @@ class HarnessRuntime:
                 state_projection["recentTasks"] = tasks[:10]
                 state_projection["logicalSessions"] = sessions[:10]
             if route.intent == "live_state":
-                budget = context_budget_tokens(self.config(), routing_tier)
+                budget = budget_tokens or context_budget_tokens(self.config(), routing_tier)
                 context = ContextAssembler().assemble(
                     request=query, structured_state=state_projection, results=[],
                     budget_tokens=budget, instruction_tokens=0, include_request=False,
@@ -2440,7 +2747,7 @@ class HarnessRuntime:
             )
             context = ContextAssembler().assemble(
                 request=query, structured_state=state_projection, results=results,
-                budget_tokens=context_budget_tokens(self.config(), routing_tier),
+                budget_tokens=budget_tokens or context_budget_tokens(self.config(), routing_tier),
                 instruction_tokens=0, include_request=False,
             )
             if diagnostics is not None:
@@ -2766,23 +3073,53 @@ class HarnessRuntime:
             self.store.update_private_payload(task_id, refreshed_private)
             task = self.store.get_task(task_id, include_private=True)
         lease = None
+        capacity_wait_started = time.monotonic()
+        capacity_wait_logged = False
         try:
-            lease = self.scheduler.try_acquire(
-                task_id=task_id,
-                run_id=run_id,
-                agent=task["agent"],
-                account_id=task["private_payload"].get("accountId"),
-                project_path=task["project_path"],
-                delegated_worker=task["private_payload"].get("delegatedWorker") is True,
-                subagent_worker=subagent_worker,
-                native_session_ref=(
-                    str(task["private_payload"].get("nativeSessionRef"))
-                    if task["private_payload"].get("nativeSessionRef") else None
-                ),
-                quattro_session_id=(
-                    str(logical_session_id) if logical_session_id else None
-                ),
-            )
+            while lease is None:
+                try:
+                    lease = self.scheduler.try_acquire(
+                        task_id=task_id,
+                        run_id=run_id,
+                        agent=task["agent"],
+                        account_id=task["private_payload"].get("accountId"),
+                        provider_id=(
+                            task["private_payload"].get("executionTarget", {}).get("provider")
+                            if isinstance(task["private_payload"].get("executionTarget"), Mapping)
+                            else "omniroute"
+                        ),
+                        project_path=task["project_path"],
+                        delegated_worker=task["private_payload"].get("delegatedWorker") is True,
+                        subagent_worker=subagent_worker,
+                        native_session_ref=(
+                            str(task["private_payload"].get("nativeSessionRef"))
+                            if task["private_payload"].get("nativeSessionRef") else None
+                        ),
+                        quattro_session_id=(
+                            str(logical_session_id) if logical_session_id else None
+                        ),
+                    )
+                except LeaseConflict:
+                    current = TaskState(self.store.get_task(task_id)["state"])
+                    if current in TERMINAL_TASK_STATES or current is TaskState.CANCELLING:
+                        return 130
+                    wait_limit = WORKFLOW_MAX_SECONDS if user_owned_terminal else profile.max_seconds
+                    if time.monotonic() - capacity_wait_started >= wait_limit:
+                        raise
+                    if not capacity_wait_logged:
+                        capacity_wait_logged = True
+                        self.store.append_event(
+                            task_id, "execution.capacity_queued", run_id=run_id,
+                            display={"reason": "bounded_execution_capacity"},
+                        )
+                    time.sleep(0.25)
+            if capacity_wait_logged:
+                self.store.append_event(
+                    task_id, "execution.capacity_admitted", run_id=run_id,
+                    display={
+                        "waitMs": round((time.monotonic() - capacity_wait_started) * 1_000),
+                    },
+                )
         except LeaseConflict as error:
             self.store.transition_run(run_id, RunState.FAILED, error_code="capacity_unavailable")
             current = TaskState(self.store.get_task(task_id)["state"])
@@ -2895,7 +3232,10 @@ class HarnessRuntime:
                     raise ConfigError("persisted execution plan must be routing locked")
                 attempt_plans = [root_plan]
                 attempt_plans.extend(
-                    fallback_execution_plan(root_plan, index, reason="delegated target failure")
+                    self._fallback_plan(
+                        root_plan, index, task["private_payload"].get("routing", {}),
+                        reason="delegated target failure",
+                    )
                     for index in range(min(2, len(root_plan.fallback_targets)))
                 )
             elif isinstance(target_payload, Mapping) and not interactive and not profile.writable_roots:
@@ -2910,6 +3250,7 @@ class HarnessRuntime:
             result = None
             locked_receipt_unavailable = False
             recorded_plan_attempts: list[dict[str, Any]] = []
+            pressure_retries_by_plan: dict[str, int] = {}
             for target_index, attempt_plan in enumerate(attempt_plans):
                 attempt_route = (
                     attempt_plan.target.route
@@ -2925,6 +3266,42 @@ class HarnessRuntime:
                         ),
                         native_session_ref=task["private_payload"].get("nativeSessionRef"),
                     )
+                    # Process supervision releases the prior run's capacity
+                    # leases on exit. Reacquire against the exact fallback
+                    # account/provider before launching it; otherwise fallback
+                    # traffic would run outside every execution budget.
+                    fallback_account = (
+                        attempt_plan.target.account
+                        if attempt_plan is not None else str(attempt_route).split("/", 1)[0]
+                    )
+                    fallback_provider = (
+                        attempt_plan.target.provider if attempt_plan is not None else "omniroute"
+                    )
+                    fallback_wait_started = time.monotonic()
+                    while True:
+                        try:
+                            lease = self.scheduler.try_acquire(
+                                task_id=task_id, run_id=run_id, agent=task["agent"],
+                                account_id=fallback_account, provider_id=fallback_provider,
+                                project_path=task["project_path"],
+                                delegated_worker=task["private_payload"].get("delegatedWorker") is True,
+                                subagent_worker=subagent_worker,
+                                native_session_ref=(
+                                    str(task["private_payload"].get("nativeSessionRef"))
+                                    if task["private_payload"].get("nativeSessionRef") else None
+                                ),
+                                quattro_session_id=(
+                                    str(logical_session_id) if logical_session_id else None
+                                ),
+                            )
+                            break
+                        except LeaseConflict:
+                            current = TaskState(self.store.get_task(task_id)["state"])
+                            if current in TERMINAL_TASK_STATES or current is TaskState.CANCELLING:
+                                return 130
+                            if time.monotonic() - fallback_wait_started >= profile.max_seconds:
+                                raise
+                            time.sleep(0.25)
                 attempt_task = task
                 if attempt_plan is not None:
                     attempt_private = dict(task["private_payload"])
@@ -3011,6 +3388,47 @@ class HarnessRuntime:
                             task_id, "routing.locked_receipt_unavailable", run_id=run_id,
                             display={"planId": attempt_plan.plan_id, "reason": "failed_attempt"},
                         )
+                    if failure_type == "GATEWAY_RESOURCE_PRESSURE":
+                        pressure_retries = pressure_retries_by_plan.get(attempt_plan.plan_id, 0)
+                        retry_seconds = (
+                            max(0.0, float(failure_retry_after_ms) / 1_000)
+                            if isinstance(failure_retry_after_ms, (int, float))
+                            and not isinstance(failure_retry_after_ms, bool)
+                            else 0.5 * (2 ** pressure_retries)
+                        )
+                        if (
+                            pressure_retries < GATEWAY_PRESSURE_MAX_RETRIES
+                            and retry_seconds <= GATEWAY_PRESSURE_MAX_BACKOFF_SECONDS
+                        ):
+                            retry_seconds += random.uniform(0.0, 0.25)
+                            pressure_retries_by_plan[attempt_plan.plan_id] = pressure_retries + 1
+                            self.store.append_event(
+                                task_id, "routing.same_plan_retry", run_id=run_id,
+                                display={
+                                    "planId": attempt_plan.plan_id,
+                                    "route": attempt_route,
+                                    "failureType": failure_type,
+                                    "samePlanRetry": pressure_retries + 1,
+                                    "retryAfterMs": round(retry_seconds * 1_000),
+                                },
+                            )
+                            wait_deadline = time.monotonic() + retry_seconds
+                            while time.monotonic() < wait_deadline:
+                                current = TaskState(self.store.get_task(task_id)["state"])
+                                if current is TaskState.CANCELLING:
+                                    self.store.transition_task(
+                                        task_id,
+                                        TaskState.CANCELLED,
+                                        terminal_code="cancelled",
+                                        terminal_summary="Task cancelled during gateway pressure retry.",
+                                    )
+                                    return 130
+                                if current in TERMINAL_TASK_STATES:
+                                    return 130
+                                time.sleep(min(0.25, wait_deadline - time.monotonic()))
+                            attempt_plans.insert(target_index + 1, attempt_plan)
+                            continue
+                        break
                     if failure_type not in FALLBACK_ELIGIBLE_TARGET_FAILURES:
                         break
                 else:
@@ -3053,9 +3471,12 @@ class HarnessRuntime:
             if (
                 result.state is RunState.SUCCEEDED
                 and isinstance(active_plan, Mapping)
-                and task["private_payload"].get("delegatedWorker") is True
                 and not interactive
             ):
+                # Every non-interactive locked execution must be proven by a
+                # gateway receipt. A clean child exit is not evidence that
+                # OmniRoute honored the plan; the child could have received a
+                # provider-side success after an invisible route override.
                 self._refresh_locked_receipt(task_id, required=True)
             if task["agent"] == "codex":
                 self._refresh_adaptive_receipt(task_id)
@@ -3065,7 +3486,10 @@ class HarnessRuntime:
                 and output_path.is_file() and output_path.stat().st_size
             ):
                 raw_output = output_path.read_text(encoding="utf-8", errors="replace")
-                compact_output, delegation_telemetry = compact_pi_json_output(raw_output)
+                compact_output, delegation_telemetry = compact_pi_json_output(
+                    raw_output,
+                    enforce_worker_contract=task.get("workflow") == "codex-pi-delegation",
+                )
                 output_path.write_text(compact_output, encoding="utf-8")
                 os.chmod(output_path, 0o600)
                 delegation_telemetry["durationMs"] = duration_ms
@@ -3554,7 +3978,12 @@ class HarnessRuntime:
         return summary
 
     def spawn_worker(self, task_id: str) -> None:
-        environment = minimal_environment({"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+        task = self.store.get_task(task_id, include_private=True)
+        routing_mode = omniroute_routing_mode(task["private_payload"].get("routingMode"))
+        environment = minimal_environment({
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "OMNIROUTE_ROUTING_MODE": routing_mode.value,
+        })
         subprocess.Popen(
             [str(self.script_path), "_task-worker", task_id],
             cwd=self.default_workspace,
@@ -3696,15 +4125,15 @@ class HarnessRuntime:
         pi_plan = None
         child_profile = None
         if parent is not None:
+            child_profile = profile_task(
+                objective, agent="pi", workflow="codex-pi-delegation",
+                policy_name="audit-read-only",
+            )
             parent_plan = parent["private_payload"].get(
                 "activeExecutionPlan", parent["private_payload"].get("executionPlan")
             )
             if isinstance(parent_plan, Mapping):
                 inherited = _execution_plan_from_dict(parent_plan)
-                child_profile = profile_task(
-                    objective, agent="pi", workflow="codex-pi-delegation",
-                    policy_name="audit-read-only",
-                )
                 account_home = pathlib.Path(str(
                     self.account(config, inherited.target.account)["codexHome"]
                 )).expanduser().resolve()
@@ -3715,6 +4144,63 @@ class HarnessRuntime:
                 pi_plan = build_execution_plan(
                     child_profile, inherited.target, registry,
                     reasoning_effort=inherited.reasoning_effort,
+                    plan_id=f"task_{uuid.uuid4().hex}.plan-0",
+                )
+                pi_plan = dataclasses.replace(
+                    pi_plan,
+                    required_tools=(
+                        ("repository_read",)
+                        if "repository_read" in pi_plan.required_tools else ()
+                    ),
+                    fallback_allowed=False,
+                    fallback_targets=(),
+                )
+            elif omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH:
+                # Interactive/resumed parents intentionally do not carry a
+                # per-turn plan, but a delegated child is single-shot and can
+                # still receive a fresh exact Quattro target.
+                child_account = str(
+                    parent["private_payload"].get("accountId")
+                    or config["defaultCodexAccount"]
+                )
+                account_home = pathlib.Path(
+                    str(self.account(config, child_account)["codexHome"])
+                ).expanduser().resolve()
+                configured_model = self._configured_codex_model(account_home) or "auto"
+                catalog = self._configured_codex_catalog(account_home)
+                if catalog is None:
+                    raise ConfigError("passthrough delegated worker requires the approved model catalog")
+                registry = load_model_registry(default_policy_path(), catalog)
+                alias_tier = {
+                    "auto/coding:cheap": "FAST",
+                    "auto/coding": "STANDARD",
+                    "auto/reasoning": "REASONING",
+                }.get(configured_model)
+                if configured_model in {"auto", "auto/coding:cheap", "auto/coding", "auto/reasoning"}:
+                    inherited_target = select_execution_target(
+                        child_profile,
+                        registry,
+                        preferred_account=child_account,
+                        available_accounts=self._enabled_account_ids(config),
+                        selection_tier=alias_tier,
+                    )
+                else:
+                    inherited_target = execution_target_for_route(
+                        child_profile,
+                        registry,
+                        configured_model,
+                        available_accounts=self._enabled_account_ids(config),
+                    )
+                if inherited_target is None:
+                    raise ConfigError("passthrough delegated worker target is not approved")
+                child_effort = self._dispatch_reasoning_effort(
+                    config, {"tier": child_profile.tier.value}, inherited_target.route, account_home
+                )
+                pi_plan = build_execution_plan(
+                    child_profile,
+                    inherited_target,
+                    registry,
+                    reasoning_effort=child_effort,
                     plan_id=f"task_{uuid.uuid4().hex}.plan-0",
                 )
                 pi_plan = dataclasses.replace(
@@ -4278,11 +4764,12 @@ class HarnessRuntime:
             payload = self.store.get_task(identifiers[name], include_private=True)["private_payload"]
             child_id = identifiers[name]
             child_task = self.store.get_task(child_id, include_private=True)
-            child_configured_model = None
-            if child_task["agent"] == "codex":
-                child_account = str(payload.get("accountId") or config["defaultCodexAccount"])
-                child_home = pathlib.Path(str(self.account(config, child_account)["codexHome"])).expanduser().resolve()
-                child_configured_model = self._configured_codex_model(child_home)
+            child_account = str(payload.get("accountId") or config["defaultCodexAccount"])
+            child_home = pathlib.Path(
+                str(self.account(config, child_account)["codexHome"])
+            ).expanduser().resolve()
+            child_configured_model = self._configured_codex_model(child_home) or "auto"
+            child_catalog = self._configured_codex_catalog(child_home)
             child_routing, child_adaptive, child_boundary = self._pre_route(
                 config=config,
                 request=prompt,
@@ -4297,9 +4784,69 @@ class HarnessRuntime:
             child_envelope = dict(child_adaptive.envelope) if child_adaptive and child_adaptive.envelope else None
             if child_envelope is not None:
                 child_envelope["task_profile_id"] = child_id
+            child_profile = task_profile_from_dict(child_routing.task_profile)
+            child_execution_target = None
+            child_plan = None
+            routing_mode = omniroute_routing_mode()
+            if (
+                routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+                and child_catalog is not None
+            ):
+                child_registry = load_model_registry(default_policy_path(), child_catalog)
+                alias_tier = {
+                    "auto/coding:cheap": "FAST",
+                    "auto/coding": "STANDARD",
+                    "auto/reasoning": "REASONING",
+                }.get(child_configured_model)
+                if child_configured_model in {"auto", "auto/coding:cheap", "auto/coding", "auto/reasoning"}:
+                    child_execution_target = select_execution_target(
+                        child_profile,
+                        child_registry,
+                        preferred_account=child_account,
+                        available_accounts=self._enabled_account_ids(config),
+                        selection_tier=alias_tier,
+                    )
+                else:
+                    child_execution_target = execution_target_for_route(
+                        child_profile,
+                        child_registry,
+                        child_configured_model,
+                        available_accounts=self._enabled_account_ids(config),
+                    )
+                if child_execution_target is not None:
+                    child_effort = self._dispatch_reasoning_effort(
+                        config,
+                        child_routing.display(),
+                        child_execution_target.route,
+                        child_home,
+                    )
+                    child_plan = build_execution_plan(
+                        child_profile,
+                        child_execution_target,
+                        child_registry,
+                        reasoning_effort=child_effort,
+                        plan_id=f"{child_id}.plan-0",
+                    )
+            if (
+                routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+                and child_plan is None
+            ):
+                raise ConfigError(
+                    "passthrough workflow child requires a validated Quattro execution plan"
+                )
             child_private = {
                 **payload,
                 "prompt": prompt,
+                "accountId": (
+                    child_execution_target.account
+                    if child_execution_target is not None else payload.get("accountId")
+                ),
+                "executionTarget": (
+                    child_execution_target.to_dict() if child_execution_target is not None else None
+                ),
+                **({"delegatedWorker": True} if child_task["agent"] == "pi" else {}),
+                "executionPlan": child_plan.to_dict() if child_plan is not None else None,
+                "routingMode": routing_mode.value,
                 "routing": child_routing.display(),
                 "routingEnvelope": child_envelope,
                 "routingSelection": child_adaptive.selection.to_dict() if child_adaptive and child_adaptive.selection else None,
@@ -4316,9 +4863,14 @@ class HarnessRuntime:
             }
             self.store.update_private_payload(child_id, child_private)
             child_metadata = dict(child_task.get("display_metadata", {}))
-            child_profile = task_profile_from_dict(child_routing.task_profile)
             child_metadata["routingTier"] = child_routing.tier.value
             child_metadata["routingReason"] = child_routing.reason
+            child_metadata["routingMode"] = routing_mode.value
+            child_metadata["selectedBy"] = "Quattro" if child_plan is not None else "OmniRoute (legacy)"
+            child_metadata["executedBy"] = "OmniRoute"
+            child_metadata["executionTarget"] = (
+                child_execution_target.to_dict() if child_execution_target is not None else None
+            )
             child_metadata["preRouting"] = {
                 "phase": "PRE_ROUTING",
                 "taskProfileId": child_private["preRoutingProfileId"],
