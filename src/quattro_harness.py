@@ -777,7 +777,7 @@ class HarnessRuntime:
                 pre_profile, execution_target,
                 load_model_registry(default_policy_path(), configured_catalog),
                 reasoning_effort=plan_effort,
-                plan_id=f"{task_id}.plan-0",
+                plan_id=f"{task_id}.plan-{uuid.uuid4()}",
             )
         if (
             agent == "codex"
@@ -1212,7 +1212,10 @@ class HarnessRuntime:
             build_execution_plan(
                 profile_snapshot, execution_target, registry,
                 reasoning_effort=routing_effort,
-                plan_id=intelligence_record_id or task_profile_identifier(profile_snapshot),
+                plan_id=(
+                    f"{intelligence_record_id or task_profile_identifier(profile_snapshot)}"
+                    f".plan-{uuid.uuid4()}"
+                ),
             )
             if execution_target is not None else None
         )
@@ -4144,7 +4147,7 @@ class HarnessRuntime:
                 pi_plan = build_execution_plan(
                     child_profile, inherited.target, registry,
                     reasoning_effort=inherited.reasoning_effort,
-                    plan_id=f"task_{uuid.uuid4().hex}.plan-0",
+                    plan_id=f"task_{uuid.uuid4().hex}.plan-{uuid.uuid4()}",
                 )
                 pi_plan = dataclasses.replace(
                     pi_plan,
@@ -4201,7 +4204,7 @@ class HarnessRuntime:
                     inherited_target,
                     registry,
                     reasoning_effort=child_effort,
-                    plan_id=f"task_{uuid.uuid4().hex}.plan-0",
+                    plan_id=f"task_{uuid.uuid4().hex}.plan-{uuid.uuid4()}",
                 )
                 pi_plan = dataclasses.replace(
                     pi_plan,
@@ -4825,7 +4828,7 @@ class HarnessRuntime:
                         child_execution_target,
                         child_registry,
                         reasoning_effort=child_effort,
-                        plan_id=f"{child_id}.plan-0",
+                        plan_id=f"{child_id}.plan-{uuid.uuid4()}",
                     )
             if (
                 routing_mode is OmniRouteRoutingMode.PASSTHROUGH
