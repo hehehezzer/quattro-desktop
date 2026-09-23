@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import pathlib
+import json
 import sys
 import unittest
+import urllib.error
 from unittest import mock
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
@@ -13,7 +15,10 @@ from quattro_agent.routing import (
     RoutingTier, automatic_model_override, classify_request, context_budget_tokens,
     effective_reasoning_effort, next_exceptional_effort, next_tier,
 )
-from quattro_agent.omniroute import OmniRouteRoutingMode, omniroute_routing_mode
+from quattro_agent.omniroute import (
+    OmniRouteRoutingMode, omniroute_routing_mode,
+    validate_omniroute_runtime_capabilities,
+)
 from quattro_agent.errors import ConfigError
 
 
@@ -115,6 +120,49 @@ class RoutingTests(unittest.TestCase):
         self.assertIs(omniroute_routing_mode("LEGACY"), OmniRouteRoutingMode.LEGACY)
         with self.assertRaisesRegex(ConfigError, "OMNIROUTE_ROUTING_MODE"):
             omniroute_routing_mode("balanced")
+
+    def test_passthrough_runtime_capability_handshake_requires_exact_contract(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return json.dumps({
+                    "routing_mode": "passthrough",
+                    "locked_target_supported": True,
+                    "receipt_supported": True,
+                    "target_rerouting": False,
+                }).encode()
+
+        with mock.patch("quattro_agent.omniroute.urllib.request.urlopen", return_value=Response()) as opened:
+            capabilities = validate_omniroute_runtime_capabilities()
+        self.assertEqual(capabilities.routing_mode, "passthrough")
+        self.assertFalse(capabilities.target_rerouting)
+        self.assertTrue(opened.call_args.args[0].full_url.endswith("/routing/status"))
+
+    def test_passthrough_runtime_capability_handshake_fails_closed(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return b'{"routing_mode":"legacy","locked_target_supported":true,"receipt_supported":true,"target_rerouting":true}'
+
+        with mock.patch("quattro_agent.omniroute.urllib.request.urlopen", return_value=Response()):
+            with self.assertRaisesRegex(ConfigError, "incompatible with locked passthrough"):
+                validate_omniroute_runtime_capabilities()
+        with mock.patch(
+            "quattro_agent.omniroute.urllib.request.urlopen",
+            side_effect=urllib.error.URLError("offline"),
+        ):
+            with self.assertRaisesRegex(ConfigError, "handshake failed"):
+                validate_omniroute_runtime_capabilities()
 
 
 if __name__ == "__main__":

@@ -16,6 +16,11 @@ locked `ExecutionPlan`. A concrete account-qualified route selected by the
 user is preserved. The managed task's effective effort still comes from
 Quattro's tier policy.
 
+Before passthrough execution, Quattro verifies the running gateway's
+`/routing/capabilities` contract and fails closed unless locked targets and
+receipts are supported while target rerouting is disabled. Local environment
+configuration alone is not accepted as runtime proof.
+
 OmniRoute is the gateway for protocol normalization, provider-native caching,
 exact deduplication, transport, usage accounting, streaming, and health
 signals. It does not choose a provider, account, model, effort, context, or

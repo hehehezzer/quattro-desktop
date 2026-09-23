@@ -5,7 +5,12 @@
 ### Locked-receipt rollout order
 
 Mandatory receipt verification must be activated in dependency order. Deploy
-OmniRoute's passthrough envelope and `/routing/locked-receipts` support first,
+OmniRoute's passthrough envelope, `/routing/capabilities`, and
+`/routing/locked-receipts` support first. Before any passthrough execution,
+Quattro requires the running gateway to report `routing_mode=passthrough`,
+`locked_target_supported=true`, `receipt_supported=true`, and
+`target_rerouting=false`; an absent, malformed, or incompatible response fails
+closed and never falls back to legacy routing. Then
 health-check a terminal receipt containing the exact plan ID plus provider,
 account, model, and route, and only then deploy Quattro's fail-closed delegated
 worker enforcement. After both sides are active, run a real delegated smoke and
@@ -28,7 +33,9 @@ account-qualified route plus `preference_mode=passthrough`; OmniRoute strips
 that routing metadata before provider translation.
 
 Target failures return to Quattro. A fallback is a distinct plan with a new
-plan ID. Only transient transport failures may retry the same target. Legacy
+plan ID. Only structured target-failure evidence can authorize that fallback;
+an unstructured gateway HTTP 5xx is a same-target transport failure. Only
+transient transport failures may retry the same target. Legacy
 gateway routing remains available for explicit compatibility and comparison.
 See [TOKEN_OPTIMIZATION.md](TOKEN_OPTIMIZATION.md) for the ownership audit.
 

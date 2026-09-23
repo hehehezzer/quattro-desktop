@@ -69,6 +69,7 @@ from quattro_agent.omniroute import (
     validate_catalog_parity,
     validate_manual_route_requirements,
     validate_omniroute_contract,
+    validate_omniroute_runtime_capabilities,
 )
 from quattro_agent.mandatory_context import build_mandatory_context
 from quattro_agent.intelligence.telemetry import (
@@ -477,6 +478,8 @@ class HarnessRuntime:
 
     def _default_codex_preflight(self, account_home: pathlib.Path) -> None:
         validate_omniroute_contract(account_home)
+        if omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH:
+            validate_omniroute_runtime_capabilities()
         validate_catalog_parity(
             self.default_workspace / "src/quattro/omniroute-model-catalog.json"
         )
@@ -1501,12 +1504,13 @@ class HarnessRuntime:
             parsed_retry_after = parsed.get("retry_after_ms")
             if isinstance(parsed_retry_after, (int, float)) and not isinstance(parsed_retry_after, bool):
                 retry_after_ms = max(0, int(parsed_retry_after))
-            error_type = str(parsed.get("type") or {
+            structured_error_type = parsed.get("type")
+            error_type = str(structured_error_type or {
                 429: "RATE_LIMITED",
                 401: "AUTHENTICATION_FAILED",
                 403: "CREDITS_EXHAUSTED",
                 404: "MODEL_UNAVAILABLE",
-            }.get(error.code, "PROVIDER_UNAVAILABLE" if error.code >= 500 else "TRANSPORT_FAILURE"))
+            }.get(error.code, "TRANSPORT_FAILURE"))
             fallback_eligible = error_type in FALLBACK_ELIGIBLE_TARGET_FAILURES
             raise OmniRouteAttemptError(
                 f"OmniRoute provider failure: HTTP {error.code}: {detail}",

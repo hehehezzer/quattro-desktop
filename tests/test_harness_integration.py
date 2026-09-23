@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import pathlib
 import signal
@@ -13,12 +14,15 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 from unittest import mock
 
 SRC = pathlib.Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SRC))
 
-from quattro_harness import HarnessRuntime, OmniRouteAttemptError
+from quattro_harness import (
+    FALLBACK_ELIGIBLE_TARGET_FAILURES, HarnessRuntime, OmniRouteAttemptError,
+)
 from quattro_agent.policy import PolicyProfile
 from quattro_agent.models import RunState, TaskState
 from quattro_agent.errors import ConfigError
@@ -325,6 +329,46 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(receipt["plan_id"], "plan-1")
         self.assertEqual(open_request.call_count, 2)
+
+    def test_unstructured_http_5xx_is_transport_failure_not_target_fallback(self):
+        error = urllib.error.HTTPError(
+            "http://localhost/api/v1/responses", 503, "unavailable", {},
+            io.BytesIO(b"upstream proxy failure"),
+        )
+        self.addCleanup(error.close)
+        with mock.patch("quattro_harness.urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(OmniRouteAttemptError) as raised:
+                self.runtime._send_omniroute_response({}, timeout_seconds=1)
+        self.assertEqual(raised.exception.error_type, "TRANSPORT_FAILURE")
+        self.assertTrue(raised.exception.transport_retryable)
+        self.assertNotIn(raised.exception.error_type, FALLBACK_ELIGIBLE_TARGET_FAILURES)
+
+    def test_structured_http_5xx_can_preserve_target_failure_evidence(self):
+        error = urllib.error.HTTPError(
+            "http://localhost/api/v1/responses", 503, "unavailable", {},
+            io.BytesIO(b'{"error":{"type":"PROVIDER_UNAVAILABLE","provider":"cx"}}'),
+        )
+        self.addCleanup(error.close)
+        with mock.patch("quattro_harness.urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(OmniRouteAttemptError) as raised:
+                self.runtime._send_omniroute_response({}, timeout_seconds=1)
+        self.assertEqual(raised.exception.error_type, "PROVIDER_UNAVAILABLE")
+        self.assertTrue(raised.exception.retryable)
+        self.assertFalse(raised.exception.transport_retryable)
+
+    def test_default_codex_preflight_requires_runtime_handshake_only_for_passthrough(self):
+        with (
+            mock.patch("quattro_harness.validate_omniroute_contract"),
+            mock.patch("quattro_harness.validate_catalog_parity"),
+            mock.patch("quattro_harness.prepare_shared_session_namespace"),
+            mock.patch("quattro_harness.validate_omniroute_runtime_capabilities") as handshake,
+        ):
+            self.runtime._default_codex_preflight(pathlib.Path("/tmp/account"))
+            handshake.assert_called_once_with()
+            handshake.reset_mock()
+            with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "legacy"}):
+                self.runtime._default_codex_preflight(pathlib.Path("/tmp/account"))
+            handshake.assert_not_called()
 
     def test_direct_hello_skips_optional_retrieval_and_stays_fast(self):
         class Response:
