@@ -857,7 +857,10 @@ class HarnessRuntime:
                             f"Agent: {agent}.",
                             f"Execution mode: {mode}.",
                             f"Policy profile: {profile.name}.",
-                            "Use the requested shared working directory. Never reset, clean, stash, switch branches, or overwrite unknown changes.",
+                            "Use the requested shared working directory. Inspect and classify dirty "
+                            "paths before writing; recover only provenance-matched interrupted Quattro "
+                            "work, and preserve unrelated or unknown changes reversibly. Never reset, "
+                            "clean, discard, or overwrite unverified changes.",
                             "Before editing, claim non-overlapping repository-relative write scopes; serialize conflicts.",
                         ),
                         repository_path=str(canonical_repository),
@@ -1990,14 +1993,30 @@ class HarnessRuntime:
         plan = adapter.build_launch(self._resolved_agent_binary(str(task["agent"])), spec)
         argv = list(plan.argv)
         enabled, vault, projects, instructions = self._memory(config)
+        coordination_id = private.get("coordinationSessionId")
+        coordination_record = (
+            self.coordinator.get(str(coordination_id)) if coordination_id else None
+        )
+        recovered_paths: tuple[str, ...] = ()
+        if (
+            coordination_record
+            and coordination_record.get("status") in {"stale_recoverable", "completed_recoverable"}
+        ):
+            recovered_paths = tuple(
+                path for path in coordination_record.get("changedFiles", []) if isinstance(path, str)
+            )
+        current_paths = tuple(
+            path for path in private.get("writeScopes", []) if isinstance(path, str)
+        )
         mandatory = build_mandatory_context(
             config,
             request=str(private.get("prompt", "")),
             cwd=pathlib.Path(task["project_path"]),
             delegated=private.get("delegatedWorker") is True,
+            current_task_paths=current_paths,
+            recovered_interrupted_paths=recovered_paths,
         )
         instruction_parts = [part for part in (instructions, mandatory.text) if part]
-        coordination_id = private.get("coordinationSessionId")
         coordination_text = ""
         if coordination_id and (load_plan is None or load_plan.load_coordination):
             coordination_text = self.coordinator.context(str(coordination_id))

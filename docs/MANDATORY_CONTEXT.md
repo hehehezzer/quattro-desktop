@@ -25,10 +25,27 @@ all required checks and reviews pass; failing CI is never merged. An explicit
 user override for a specific task may replace this workflow. Tasks that do not
 change repository files do not require a branch or PR.
 
-The Quattro Desktop repository has an additional hard gate. Its worktree must
-be clean before any modification. A dirty tree must be preserved exactly; the
-agent reports `BLOCKED — QUATTRO DESKTOP WORKTREE NOT CLEAN` with dirty paths
-instead of stashing, resetting, cleaning, committing, merging, or overwriting.
+The Quattro Desktop repository has an additional dirty-worktree recovery
+policy. Before a write, Quattro performs a non-mutating Git preflight and
+classifies every changed path as `CURRENT_TASK`,
+`RECOVERED_INTERRUPTED_WORK`, `UNRELATED_USER_WORK`, or `UNKNOWN`. A dirty
+worktree is therefore not an automatic blocker.
+
+`CURRENT_TASK` and provenance-verified `RECOVERED_INTERRUPTED_WORK` are
+inspected, validated, completed as needed, committed only on a non-`main`
+feature branch, pushed, and checked clean before the task resumes. Stale
+Quattro session provenance authorizes recovery of only the matching paths.
+`UNRELATED_USER_WORK` and `UNKNOWN` are never reset, cleaned, discarded, or
+mixed into the task: Quattro records the paths, original branch and HEAD, then
+uses a reversible preservation strategy (prefer an isolated clean worktree,
+then a preservation branch, then a descriptive safe stash). A dirty `main`
+must be moved to a feature branch or isolated before a task commit.
+
+Unresolved merge/rebase/cherry-pick conflicts, repository corruption, secrets
+risk, ambiguous destructive actions, and remote divergence that would require
+a force push remain hard blocks. This policy does not authorize `git reset
+--hard`, `git clean -fd`, destructive checkout, or force push against
+unverified work.
 
 `quattro_agent.mandatory_context` builds the compact trusted prompt section and
 resolves clone/create destinations independently of RAG. Agents can run the

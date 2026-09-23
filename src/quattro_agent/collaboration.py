@@ -803,8 +803,17 @@ class RepositoryCoordinator:
             lines.append(f"Isolation: {record.get('isolationReason') or 'shared_working_tree'}")
             if record.get("originalDirty"):
                 lines.append(
-                    "Uncommitted changes existed at startup. They remain shared state: preserve them, "
-                    "never reset, clean, stash, discard, or overwrite unknown modifications."
+                    "Uncommitted changes existed at startup. Inspect and classify every path before "
+                    "writing: recover only provenance-matched interrupted Quattro work; preserve "
+                    "unrelated or unknown modifications reversibly. Never reset, clean, discard, "
+                    "or overwrite unverified changes."
+                )
+            if record.get("status") in {"stale_recoverable", "completed_recoverable"}:
+                changed = ", ".join(record.get("changedFiles") or []) or "none recorded"
+                lines.append(
+                    "This is a recoverable interrupted Quattro session. Its recorded changed paths "
+                    f"are: {changed}. Inspect the diff, validate it, then commit/push only those "
+                    "provenance-matched task files before continuing."
                 )
             lines.append("Other active same-repository sessions:")
             if not peers:

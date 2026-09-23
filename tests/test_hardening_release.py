@@ -288,8 +288,9 @@ class CrossAccountSessionTests(unittest.TestCase):
                         native_session_ref=None,
                     ))
 
-            self.assertEqual(len(calls), 2)
-            codex_command, pi_command = calls
+            agent_commands = [command for command in calls if command and command[0] in {"codex", "pi"}]
+            self.assertEqual(len(agent_commands), 2)
+            codex_command, pi_command = agent_commands
             codex_policy = next(
                 value for value in codex_command
                 if value.startswith("developer_instructions=")
