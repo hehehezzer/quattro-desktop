@@ -246,6 +246,22 @@ class DelegationPolicyTests(unittest.TestCase):
         self.assertEqual(usage["provider"], "omniroute")
         self.assertEqual(usage["totalTokens"], 29)
 
+    def test_pi_review_compaction_preserves_final_verdict(self):
+        payload = json.dumps({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{
+                    "type": "text",
+                    "text": "Reviewed the implementation.\nHARNESS_VERDICT: PASS",
+                }],
+                "usage": {},
+            },
+        })
+        result, _usage = compact_pi_json_output(payload, enforce_worker_contract=False)
+        self.assertEqual(result.strip().splitlines()[-1], "HARNESS_VERDICT: PASS")
+        self.assertNotIn("NEXT_ACTION", result)
+
     def test_unknown_fields_and_non_boolean_flags_are_rejected(self):
         unknown = copy.deepcopy(self.config)
         unknown["apiToken"] = "do-not-store"

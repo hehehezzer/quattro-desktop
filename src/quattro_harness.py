@@ -3396,7 +3396,15 @@ class HarnessRuntime:
                             wait_deadline = time.monotonic() + retry_seconds
                             while time.monotonic() < wait_deadline:
                                 current = TaskState(self.store.get_task(task_id)["state"])
-                                if current in TERMINAL_TASK_STATES or current is TaskState.CANCELLING:
+                                if current is TaskState.CANCELLING:
+                                    self.store.transition_task(
+                                        task_id,
+                                        TaskState.CANCELLED,
+                                        terminal_code="cancelled",
+                                        terminal_summary="Task cancelled during gateway pressure retry.",
+                                    )
+                                    return 130
+                                if current in TERMINAL_TASK_STATES:
                                     return 130
                                 time.sleep(min(0.25, wait_deadline - time.monotonic()))
                             attempt_plans.insert(target_index + 1, attempt_plan)
@@ -3459,7 +3467,10 @@ class HarnessRuntime:
                 and output_path.is_file() and output_path.stat().st_size
             ):
                 raw_output = output_path.read_text(encoding="utf-8", errors="replace")
-                compact_output, delegation_telemetry = compact_pi_json_output(raw_output)
+                compact_output, delegation_telemetry = compact_pi_json_output(
+                    raw_output,
+                    enforce_worker_contract=task.get("workflow") == "codex-pi-delegation",
+                )
                 output_path.write_text(compact_output, encoding="utf-8")
                 os.chmod(output_path, 0o600)
                 delegation_telemetry["durationMs"] = duration_ms

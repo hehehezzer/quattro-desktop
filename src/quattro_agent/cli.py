@@ -2473,6 +2473,8 @@ def routing_command(args: argparse.Namespace) -> int:
                     raise ValueError("routing snapshot must be an object")
                 return loaded
         private = task.get("private_payload")
+        persisted_target = private.get("executionTarget") if isinstance(private, Mapping) else None
+        execution_target = dict(persisted_target) if isinstance(persisted_target, Mapping) else None
         snapshot = private.get("routingSnapshot") if isinstance(private, Mapping) else None
         if not isinstance(snapshot, Mapping):
             routing = private.get("routing") if isinstance(private, Mapping) else None
@@ -2483,7 +2485,7 @@ def routing_command(args: argparse.Namespace) -> int:
             snapshot = routing_snapshot(
                 task_profile_from_dict(routing["task_profile"]),
                 route=route,
-                execution_target=execution_target.to_dict() if execution_target else None,
+                execution_target=execution_target,
                 configured_model=configured,
             )
         return snapshot
