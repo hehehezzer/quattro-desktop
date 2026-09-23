@@ -1034,6 +1034,7 @@ class HarnessRuntime:
             "auto/coding": "STANDARD",
             "auto/reasoning": "REASONING",
         }.get(configured_model)
+        execution_target = None
         if (
             routing_mode is OmniRouteRoutingMode.PASSTHROUGH
             and configured_catalog is not None
@@ -1341,6 +1342,34 @@ class HarnessRuntime:
                 f"OmniRoute target mismatch: requested {execution_target.route}, "
                 f"executed {response_metadata.get('provider')}/{actual_model}"
             )
+        if selected_plan is not None:
+            receipt = self._locked_target_receipt(selected_plan.plan_id, attempts=4)
+            if not isinstance(receipt, Mapping):
+                raise LockedReceiptError(
+                    "locked receipt is unavailable, pending, or incomplete",
+                    terminal_code="locked_receipt_unavailable",
+                )
+            if receipt.get("plan_id") != selected_plan.plan_id:
+                raise LockedReceiptError(
+                    "locked target receipt does not match the active execution plan",
+                    terminal_code="locked_receipt_mismatch",
+                )
+            if receipt.get("success") is not True:
+                raise LockedReceiptError(
+                    "locked target receipt does not prove successful execution",
+                    terminal_code="locked_receipt_failed",
+                )
+            if not target_matches_actual(
+                selected_plan.target,
+                actual_provider=receipt.get("actual_provider"),
+                actual_account=receipt.get("actual_account"),
+                actual_model=receipt.get("actual_model"),
+                actual_route=receipt.get("actual_route"),
+            ):
+                raise LockedReceiptError(
+                    "locked target receipt failed provider/account/model/route fidelity",
+                    terminal_code="locked_target_mismatch",
+                )
         update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
             "context_tokens": profile_snapshot.final_request_tokens,
             "retrieval_used": int(diagnostics.get("selectedChunks", 0) or 0) > 0,
@@ -4521,13 +4550,12 @@ class HarnessRuntime:
             payload = self.store.get_task(identifiers[name], include_private=True)["private_payload"]
             child_id = identifiers[name]
             child_task = self.store.get_task(child_id, include_private=True)
-            child_configured_model = None
-            child_catalog = None
-            if child_task["agent"] == "codex":
-                child_account = str(payload.get("accountId") or config["defaultCodexAccount"])
-                child_home = pathlib.Path(str(self.account(config, child_account)["codexHome"])).expanduser().resolve()
-                child_configured_model = self._configured_codex_model(child_home) or "auto"
-                child_catalog = self._configured_codex_catalog(child_home)
+            child_account = str(payload.get("accountId") or config["defaultCodexAccount"])
+            child_home = pathlib.Path(
+                str(self.account(config, child_account)["codexHome"])
+            ).expanduser().resolve()
+            child_configured_model = self._configured_codex_model(child_home) or "auto"
+            child_catalog = self._configured_codex_catalog(child_home)
             child_routing, child_adaptive, child_boundary = self._pre_route(
                 config=config,
                 request=prompt,
@@ -4547,8 +4575,7 @@ class HarnessRuntime:
             child_plan = None
             routing_mode = omniroute_routing_mode()
             if (
-                child_task["agent"] == "codex"
-                and routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+                routing_mode is OmniRouteRoutingMode.PASSTHROUGH
                 and child_catalog is not None
             ):
                 child_registry = load_model_registry(default_policy_path(), child_catalog)
@@ -4561,7 +4588,7 @@ class HarnessRuntime:
                     child_execution_target = select_execution_target(
                         child_profile,
                         child_registry,
-                        preferred_account=str(payload.get("accountId") or config["defaultCodexAccount"]),
+                        preferred_account=child_account,
                         available_accounts=self._enabled_account_ids(config),
                         selection_tier=alias_tier,
                     )
@@ -4577,7 +4604,7 @@ class HarnessRuntime:
                         config,
                         child_routing.display(),
                         child_execution_target.route,
-                        child_home if child_task["agent"] == "codex" else None,
+                        child_home,
                     )
                     child_plan = build_execution_plan(
                         child_profile,
@@ -4587,8 +4614,7 @@ class HarnessRuntime:
                         plan_id=f"{child_id}.plan-0",
                     )
             if (
-                child_task["agent"] == "codex"
-                and routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+                routing_mode is OmniRouteRoutingMode.PASSTHROUGH
                 and child_plan is None
             ):
                 raise ConfigError(

@@ -2555,7 +2555,11 @@ def routing_command(args: argparse.Namespace) -> int:
                         str(row["id"]) for row in config["accounts"] if row.get("enabled") is True
                     ),
                 )
-                route = execution_target.route if execution_target is not None else configured
+                if execution_target is None:
+                    raise ConfigError(
+                        "passthrough mode requires a validated Quattro execution target"
+                    )
+                route = execution_target.route
             else:
                 route = automatic_model_override(config, decision.tier, configured) or configured
             preference = PreferenceMode(str(config["routing"].get("preferenceMode", "balanced")))

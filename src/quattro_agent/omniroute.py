@@ -111,11 +111,14 @@ def validate_omniroute_runtime_capabilities(
         raise ConfigError("OmniRoute passthrough capability handshake failed") from error
     if not isinstance(payload, dict) or len(json.dumps(payload)) > MAX_CAPABILITY_BYTES:
         raise ConfigError("OmniRoute passthrough capability response is invalid")
+    target_rerouting = payload.get("target_rerouting")
+    if not isinstance(target_rerouting, bool):
+        raise ConfigError("OmniRoute passthrough capability response is invalid")
     capabilities = OmniRouteRuntimeCapabilities(
         routing_mode=str(payload.get("routing_mode", "")),
         locked_target_supported=payload.get("locked_target_supported") is True,
         receipt_supported=payload.get("receipt_supported") is True,
-        target_rerouting=payload.get("target_rerouting") is True,
+        target_rerouting=target_rerouting,
     )
     if capabilities != OmniRouteRuntimeCapabilities(
         routing_mode="passthrough",

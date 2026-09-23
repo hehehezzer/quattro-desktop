@@ -5,7 +5,7 @@
 ### Locked-receipt rollout order
 
 Mandatory receipt verification must be activated in dependency order. Deploy
-OmniRoute's passthrough envelope, `/routing/capabilities`, and
+OmniRoute's passthrough envelope, `/routing/status`, and
 `/routing/locked-receipts` support first. Before any passthrough execution,
 Quattro requires the running gateway to report `routing_mode=passthrough`,
 `locked_target_supported=true`, `receipt_supported=true`, and
@@ -405,11 +405,12 @@ non-idempotent edits or commands.
 
 ## Manual `/model` behavior and precedence
 
-A concrete `/model` choice is always respected. Only the model/route portion is
-preserved; native reasoning effort is still replaced for other models. If Codex's selected model is
-anything other than exactly `auto` (for example an account-pinned GPT-5.6
-route or `auto/coding` explicitly chosen by the user), Quattro does not
-replace it. It sends the automatically selected reasoning effort except for the Astra policy above.
+In explicit legacy mode, a concrete `/model` choice is always respected. Only
+the model/route portion is preserved; native reasoning effort is still replaced
+for other models. In passthrough mode, account-qualified concrete routes are
+preserved, while `auto` and the `auto/...` compatibility aliases are resolved
+by Quattro to an exact target. Quattro sends the automatically selected
+reasoning effort except for the Astra policy above.
 
 The shared Codex model catalog is the single picker/direct-selection registry.
 It publishes these Quattro route modes first, followed by the eight account-pinned

@@ -86,7 +86,20 @@ class AstraEffortTests(unittest.TestCase):
                         "X-OmniRoute-Model": "gpt-6-astra",
                         "X-OmniRoute-Route": model,
                     }
-                    with mock.patch("quattro_harness.urllib.request.urlopen", return_value=response) as request:
+                    receipt = {
+                        "success": True,
+                        "actual_provider": "cx",
+                        "actual_account": account,
+                        "actual_model": "gpt-6-astra",
+                        "actual_route": model,
+                    }
+                    with (
+                        mock.patch("quattro_harness.urllib.request.urlopen", return_value=response) as request,
+                        mock.patch.object(
+                            self.runtime, "_locked_target_receipt",
+                            side_effect=lambda plan_id, **_kwargs: receipt | {"plan_id": plan_id},
+                        ),
+                    ):
                         result = self.runtime.direct_response(project=self.project, prompt="reply with hello")
                     body = json.loads(request.call_args.args[0].data)
                     self.assertEqual(body["model"], model)

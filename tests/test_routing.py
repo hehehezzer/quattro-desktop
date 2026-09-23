@@ -157,6 +157,17 @@ class RoutingTests(unittest.TestCase):
         with mock.patch("quattro_agent.omniroute.urllib.request.urlopen", return_value=Response()):
             with self.assertRaisesRegex(ConfigError, "incompatible with locked passthrough"):
                 validate_omniroute_runtime_capabilities()
+
+        class MissingReroutingResponse(Response):
+            def read(self, _limit):
+                return b'{"routing_mode":"passthrough","locked_target_supported":true,"receipt_supported":true}'
+
+        with mock.patch(
+            "quattro_agent.omniroute.urllib.request.urlopen",
+            return_value=MissingReroutingResponse(),
+        ):
+            with self.assertRaisesRegex(ConfigError, "capability response is invalid"):
+                validate_omniroute_runtime_capabilities()
         with mock.patch(
             "quattro_agent.omniroute.urllib.request.urlopen",
             side_effect=urllib.error.URLError("offline"),

@@ -21,7 +21,8 @@ SRC = pathlib.Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SRC))
 
 from quattro_harness import (
-    FALLBACK_ELIGIBLE_TARGET_FAILURES, HarnessRuntime, OmniRouteAttemptError,
+    FALLBACK_ELIGIBLE_TARGET_FAILURES, HarnessRuntime, LockedReceiptError,
+    OmniRouteAttemptError,
 )
 from quattro_agent.policy import PolicyProfile
 from quattro_agent.models import RunState, TaskState
@@ -169,6 +170,20 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             "failure": None,
         }
 
+    @staticmethod
+    def _direct_locked_receipt(route: str):
+        account, model = route.split("/", 1)
+        return lambda plan_id, **_kwargs: {
+            "plan_id": plan_id,
+            "success": True,
+            "actual_provider": "cx",
+            "actual_account": account,
+            "actual_model": model,
+            "actual_route": route,
+            "connection_id": f"connection-{account}",
+            "failure": None,
+        }
+
     def test_prompt_task_retains_terminal_outcome_and_private_boundary(self):
         task_id, result = self.runtime.submit(
             agent="codex",
@@ -245,6 +260,10 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         with (
             mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
             mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime, "_locked_target_receipt",
+                side_effect=self._direct_locked_receipt("account-1/gpt-5.6-luna"),
+            ),
             mock.patch("quattro_harness.urllib.request.urlopen", return_value=Response()) as open_request,
         ):
             result = self.runtime.direct_response(
@@ -290,6 +309,10 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         with (
             mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
             mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime, "_locked_target_receipt",
+                side_effect=self._direct_locked_receipt("account-1/gpt-5.6-luna"),
+            ),
             mock.patch("quattro_harness.urllib.request.urlopen", return_value=Response()),
         ):
             result = self.runtime.direct_response(project=self.project, prompt="hello")
@@ -297,6 +320,23 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertIsNone(result["tokenTelemetry"]["uncachedInputTokens"])
         self.assertIsNone(result["tokenTelemetry"]["cacheHitRate"])
         self.assertEqual(result["tokenTelemetry"]["cacheMetricSource"], "unavailable")
+
+    def test_direct_response_requires_matching_locked_receipt(self):
+        catalog = pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json"
+        successful = (
+            {"output_text": "hello", "usage": {"input_tokens": 5, "output_tokens": 1}},
+            {"provider": "cx", "account": "account-1", "model": "gpt-5.6-luna",
+             "route": "account-1/gpt-5.6-luna", "cost": None},
+        )
+        with (
+            mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
+            mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(self.runtime, "_send_omniroute_response", return_value=successful),
+            mock.patch.object(self.runtime, "_locked_target_receipt", return_value=None),
+        ):
+            with self.assertRaises(LockedReceiptError) as raised:
+                self.runtime.direct_response(project=self.project, prompt="hello")
+        self.assertEqual(raised.exception.terminal_code, "locked_receipt_unavailable")
 
     def test_locked_receipt_polling_accepts_delayed_exact_receipt(self):
         class PendingResponse:
@@ -363,7 +403,8 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             mock.patch("quattro_harness.prepare_shared_session_namespace"),
             mock.patch("quattro_harness.validate_omniroute_runtime_capabilities") as handshake,
         ):
-            self.runtime._default_codex_preflight(pathlib.Path("/tmp/account"))
+            with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "passthrough"}):
+                self.runtime._default_codex_preflight(pathlib.Path("/tmp/account"))
             handshake.assert_called_once_with()
             handshake.reset_mock()
             with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "legacy"}):
@@ -395,6 +436,10 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
                 return_value=pathlib.Path(__file__).parents[1] / "src/quattro/omniroute-model-catalog.json",
             ),
             mock.patch.object(self.runtime, "_retrieval_context", return_value="SHOULD_NOT_LOAD") as retrieval,
+            mock.patch.object(
+                self.runtime, "_locked_target_receipt",
+                side_effect=self._direct_locked_receipt("account-1/gpt-5.6-luna"),
+            ),
             mock.patch("quattro_harness.urllib.request.urlopen", return_value=Response()) as open_request,
         ):
             result = self.runtime.direct_response(project=self.project, prompt="reply with hello")
@@ -415,6 +460,10 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         with (
             mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
             mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime, "_locked_target_receipt",
+                side_effect=self._direct_locked_receipt("account-2/gpt-5.6-luna"),
+            ),
             mock.patch.object(
                 self.runtime, "_send_omniroute_response",
                 side_effect=[
@@ -445,6 +494,10 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         with (
             mock.patch.object(self.runtime, "_configured_codex_model", return_value="auto"),
             mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime, "_locked_target_receipt",
+                side_effect=self._direct_locked_receipt("account-1/gpt-5.6-luna"),
+            ),
             mock.patch.object(
                 self.runtime, "_send_omniroute_response",
                 side_effect=[
@@ -563,6 +616,10 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
                 return_value="account-1/gpt-5.6-sol",
             ),
             mock.patch.object(self.runtime, "_configured_codex_catalog", return_value=catalog),
+            mock.patch.object(
+                self.runtime, "_locked_target_receipt",
+                side_effect=self._direct_locked_receipt("account-1/gpt-5.6-sol"),
+            ),
             mock.patch.object(
                 self.runtime, "_send_omniroute_response", return_value=successful,
             ) as send,
@@ -1216,6 +1273,19 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         implementation = next(child for child in self.runtime.store.children(parent)
                               if child["metadata"]["role"] == "implementation")
         self.assertEqual(implementation["metadata"]["writeOwnership"], ["src/auth", "tests/auth"])
+
+    def test_passthrough_workflow_gives_every_child_a_locked_plan(self):
+        parent = self.runtime.create_workflow(
+            count=4, project=self.project, objective="audit and implement routing",
+        )
+        children = self.runtime.store.children(parent)
+        self.assertEqual(len(children), 4)
+        for child in children:
+            private = self.runtime.store.get_task(
+                child["taskId"], include_private=True,
+            )["private_payload"]
+            self.assertTrue(private["executionPlan"]["routingLocked"])
+            self.assertEqual(private["executionPlan"]["target"], private["executionTarget"])
 
     def test_multi_agent_workflow_coordinates_dependencies_and_join(self):
         parent = self.runtime.create_workflow(
