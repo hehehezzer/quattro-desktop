@@ -24,6 +24,7 @@ import tomllib
 from typing import Any, Callable, Mapping
 
 from quattro_agent.errors import ConfigError
+from quattro_agent.adaptive_routing import encode_routing_header
 from quattro_agent.containment import ContainmentError, build_bwrap_command
 from quattro_agent.omniroute import validate_omniroute_contract
 from quattro.platform.locking import lock_stream as acquire_file_lock
@@ -107,6 +108,8 @@ class ReviewOptions:
     cancellation_check: Callable[[], None] | None = None
     heartbeat: Callable[[], None] | None = None
     require_containment: bool = True
+    locked_envelope: Mapping[str, Any] | None = None
+    after_model_execution: Callable[[], None] | None = None
 
 
 def parse_target(value: str, pr_number: int | None = None) -> Target:
@@ -509,6 +512,7 @@ def prepare_sanitized_codex_home(source_home: pathlib.Path | None,
             raise ReviewError(f"Codex review provider has invalid {key}")
         lines.append(f"{key} = {_toml_string(value)}")
     lines.append("requires_openai_auth = false")
+    lines.append('env_http_headers = {"X-Quattro-Routing" = "QUATTRO_ROUTING_ENVELOPE"}')
     for key in ("request_max_retries", "stream_max_retries", "stream_idle_timeout_ms"):
         value = provider.get(key)
         if value is not None:
@@ -584,13 +588,30 @@ def run_codex(repo: pathlib.Path, prompt: str, output_path: pathlib.Path, option
     # --approve-for-me already selects the workspace-write sandbox. Codex 0.149.1
     # rejects combining it with an explicit --sandbox option.
     argv = [codex_binary, *memory_args, "exec", "--approve-for-me", "-C", str(repo), "-"]
-    if options.model:
-        argv[1:1] = ["--model", options.model]
+    locked_target = (
+        options.locked_envelope.get("target")
+        if isinstance(options.locked_envelope, Mapping) else None
+    )
+    locked_route = locked_target.get("route") if isinstance(locked_target, Mapping) else None
+    selected_model = locked_route or options.model
+    if selected_model:
+        argv[1:1] = ["--model", str(selected_model)]
+    locked_reasoning = (
+        options.locked_envelope.get("reasoning")
+        if isinstance(options.locked_envelope, Mapping) else None
+    )
+    if isinstance(locked_reasoning, Mapping) and locked_reasoning.get("effort"):
+        argv[1:1] = [
+            "-c", f"model_reasoning_effort={json.dumps(str(locked_reasoning['effort']))}",
+        ]
     with tempfile.TemporaryDirectory(prefix="codex-runtime-", dir=output_path.parent) as runtime_name:
         runtime_root = pathlib.Path(runtime_name)
         runtime_codex_home = runtime_root / "codex"
         prepare_sanitized_codex_home(codex_home, runtime_codex_home)
         env = child_environment(runtime_root, runtime_codex_home)
+        if options.locked_envelope is not None:
+            env["QUATTRO_ROUTING_ENVELOPE"] = encode_routing_header(options.locked_envelope)
+            env["OMNIROUTE_ROUTING_MODE"] = "passthrough"
         visible_output = pathlib.Path("/quattro-report") / output_path.name
         visible_repo = pathlib.Path("/workspace")
         contained_prompt = prompt.replace(str(repo), str(visible_repo)).replace(str(output_path), str(visible_output))
@@ -899,6 +920,8 @@ def execute_review(target: Target, options: ReviewOptions, github: GitHubClient,
         if options.cancellation_check:
             options.cancellation_check()
         reviewer(repo, prompt, output, options, codex_binary, codex_home)
+        if options.after_model_execution:
+            options.after_model_execution()
         if options.cancellation_check:
             options.cancellation_check()
         ensure_clean_checkout(repo)

@@ -3666,11 +3666,6 @@ def main() -> int:
             die("No crash is available to diagnose")
         return diagnose_crash(pid)
     if command == "pr-review":
-        if omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH:
-            die(
-                "the standalone PR-review worker is not gateway-lock complete; "
-                "set OMNIROUTE_ROUTING_MODE=legacy or use a managed locked task"
-            )
         review_config = config.get("prReview", {})
         if not isinstance(review_config, dict):
             review_config = {}
@@ -3708,15 +3703,36 @@ def main() -> int:
         review_task_id = harness().create_task(
             agent="codex",
             project=safe_directory(None),
-            prompt=f"Review {target.slug}#{target.number}",
+            prompt=(
+                f"Perform a full security-conscious pull-request review of "
+                f"{target.slug}#{target.number}; inspect the diff and repository, run relevant "
+                "validation, and produce an evidence-gated structured report."
+            ),
             mode="prompt",
             profile_name="publication-capable" if options.publish else "review-untrusted",
             account_id=selected_account,
             workflow="pr-review",
             title=f"PR review · {target.slug}#{target.number}",
         )
+        review_task = harness().store.get_task(review_task_id, include_private=True)
+        review_plan = review_task["private_payload"].get("executionPlan")
+        if not isinstance(review_plan, Mapping) or review_plan.get("routingLocked") is not True:
+            die("PR review requires an immutable locked ExecutionPlan")
+        review_target = review_plan.get("target")
+        if not isinstance(review_target, Mapping):
+            die("PR review ExecutionPlan target is unavailable")
+        execution_account = str(review_target.get("account"))
         review_run_id = harness().store.claim_task_for_run(
-            review_task_id, agent="codex", account_id=selected_account
+            review_task_id, agent="codex", account_id=execution_account
+        )
+        review_lease = harness().scheduler.try_acquire(
+            task_id=review_task_id,
+            run_id=review_run_id,
+            agent="codex",
+            account_id=execution_account,
+            provider_id=str(review_target.get("provider")),
+            project_path=review_task["project_path"],
+            quattro_session_id=review_task["private_payload"].get("logicalSessionId"),
         )
         harness().store.transition_task(
             review_task_id, TaskState.RUNNING, expected=TaskState.READY
@@ -3745,10 +3761,10 @@ def main() -> int:
             harness().store.heartbeat_run(review_run_id)
 
         def review_process_completed(exit_code: int) -> None:
-            if RunState(harness().store.get_run(review_run_id)["state"]) is RunState.RUNNING:
-                harness().store.transition_run(
-                    review_run_id, RunState.SUCCEEDED, exit_code=exit_code
-                )
+            # A zero child exit is not completion evidence. The run remains
+            # active until the plan-scoped locked receipt is verified below.
+            if exit_code != 0:
+                raise ReviewError(f"PR review model exited with code {exit_code}")
 
         def review_before_publish(key: str, mode: str, reviewed_sha: str) -> None:
             review_cancel_check()
@@ -3784,11 +3800,30 @@ def main() -> int:
         options.heartbeat = review_heartbeat
         options.before_publish = review_before_publish
         options.after_publish = review_after_publish
+        options.locked_envelope = {
+            "schema_version": 1,
+            "preference_mode": "passthrough",
+            "routing_policy_version": "quattro-routing-v2",
+            "task_profile_id": review_task_id,
+            "plan_id": review_plan["planId"],
+            "routing_locked": True,
+            "target": review_target,
+            "reasoning": review_plan.get("reasoning"),
+        }
+
+        def require_review_receipt() -> None:
+            try:
+                harness()._refresh_locked_receipt(review_task_id, required=True)
+            except RuntimeError as error:
+                raise ReviewError(f"PR review locked receipt failed: {error}") from None
+
+        options.after_model_execution = require_review_receipt
         try:
             result = execute_review(target, options, GitHubClient(gh, expected_account=expected_github_account), require("codex"),
-                                    codex_home(config, selected_account))
+                                    codex_home(config, execution_account))
             review_cancel_check()
         except ReviewError as error:
+            harness().scheduler.release(review_lease)
             if pending_effect.get("key"):
                 try:
                     harness().store.complete_external_effect(pending_effect["key"], failed=True)
@@ -3807,6 +3842,7 @@ def main() -> int:
                 )
             harness().write_projection()
             die(str(error))
+        harness().scheduler.release(review_lease)
         run_state = RunState(harness().store.get_run(review_run_id)["state"])
         if run_state is RunState.RUNNING:
             harness().store.transition_run(review_run_id, RunState.SUCCEEDED, exit_code=0)

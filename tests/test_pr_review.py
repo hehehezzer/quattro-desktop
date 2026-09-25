@@ -479,8 +479,68 @@ class EndToEndTests(unittest.TestCase):
             )
         github.preflight.assert_not_called()
 
+    def test_locked_receipt_is_required_before_report_parsing_or_publication(self):
+        github = FakeGitHub(self.fixture)
+        options = review.ReviewOptions(
+            publish=True,
+            after_model_execution=lambda: (_ for _ in ()).throw(
+                review.ReviewError("locked receipt unavailable")
+            ),
+        )
+        with self.assertRaisesRegex(review.ReviewError, "locked receipt unavailable"):
+            review.execute_review(
+                review.Target("acme", "widget", 7), options, github, "codex",
+                work_root=self.root, reviewer=self.reviewer,
+            )
+        self.assertEqual(github.published, [])
+
 
 class CodexInvocationTests(unittest.TestCase):
+    def test_locked_review_forces_exact_route_and_transports_plan(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            output = root / "report.json"
+            envelope = {
+                "preference_mode": "passthrough",
+                "routing_locked": True,
+                "plan_id": "task.plan-123e4567-e89b-42d3-a456-426614174000",
+                "target": {
+                    "provider": "codex", "account": "account-1",
+                    "model": "gpt-5.6-terra", "route": "account-1/gpt-5.6-terra",
+                },
+                "reasoning": {"effort": "high"},
+            }
+
+            class CompletingProcess:
+                pid = 1234
+                returncode = 0
+
+                def __init__(self, argv, **kwargs):
+                    calls.append((argv, kwargs))
+
+                def communicate(self, input=None, timeout=None):
+                    output.write_text("{}", encoding="utf-8")
+                    return ("", "")
+
+            with mock.patch.object(review.subprocess, "Popen", CompletingProcess):
+                review.run_codex(
+                    root, "review", output,
+                    review.ReviewOptions(
+                        model="untrusted/override", require_containment=False,
+                        locked_envelope=envelope,
+                    ),
+                    "codex", None,
+                )
+            argv, kwargs = calls[0]
+            self.assertEqual(argv[argv.index("--model") + 1], "account-1/gpt-5.6-terra")
+            self.assertIn('model_reasoning_effort="high"', argv)
+            self.assertEqual(kwargs["env"]["OMNIROUTE_ROUTING_MODE"], "passthrough")
+            self.assertEqual(
+                kwargs["env"]["QUATTRO_ROUTING_ENVELOPE"],
+                review.encode_routing_header(envelope),
+            )
+
     def test_start_callback_failure_terminates_new_reviewer_group(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
