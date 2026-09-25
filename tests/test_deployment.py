@@ -325,14 +325,6 @@ class RuntimeDeploymentStatusTests(unittest.TestCase):
     MANIFEST_REVISION = "a" * 40
 
     def _git_checkout(self, root: pathlib.Path, *, commit: bool = True) -> str | None:
-        root.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "init", "--quiet", str(root)], check=True)
-        source_file = root / "src" / "tool.py"
-        source_file.parent.mkdir(parents=True, exist_ok=True)
-        source_file.write_text("source", encoding="utf-8")
-        if not commit:
-            return None
-        subprocess.run(["git", "-C", str(root), "add", "src/tool.py"], check=True)
         git_env = {
             "PATH": os.defpath,
             "LC_ALL": "C",
@@ -342,6 +334,17 @@ class RuntimeDeploymentStatusTests(unittest.TestCase):
             "GIT_COMMITTER_NAME": "Quattro Test",
             "GIT_COMMITTER_EMAIL": "quattro-test@example.invalid",
         }
+        root.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "--quiet", str(root)], check=True, env=git_env)
+        source_file = root / "src" / "tool.py"
+        source_file.parent.mkdir(parents=True, exist_ok=True)
+        source_file.write_text("source", encoding="utf-8")
+        if not commit:
+            return None
+        subprocess.run(
+            ["git", "-C", str(root), "add", "src/tool.py"],
+            check=True, env=git_env,
+        )
         subprocess.run(
             ["git", "-C", str(root), "commit", "--quiet", "-m", "fixture"],
             check=True, env=git_env,
@@ -444,6 +447,23 @@ class RuntimeDeploymentStatusTests(unittest.TestCase):
         self.assertEqual(result["sourceCheckoutComparison"], "unavailable")
         self.assertIsNone(result["sourceRevision"])
         self.assertEqual(result["deployedSourceRevision"], self.MANIFEST_REVISION)
+
+    def test_missing_source_file_does_not_look_like_installed_file_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"
+            source_revision = self._git_checkout(source)
+            deployed = root / "deployed"
+            manifest_path = root / "state/manifest.json"
+            self._manifest(source, deployed, manifest_path, str(source_revision))
+            (source / "src/tool.py").unlink()
+
+            result = cli._deployment_runtime_status(source, manifest_path, deployed)
+
+        self.assertEqual(result["sourceRevision"], source_revision)
+        self.assertEqual(result["sourceCheckoutComparison"], "drift")
+        self.assertFalse(result["manifestParity"])
+        self.assertTrue(result["deployedParity"])
 
     def test_missing_manifest_revision_is_not_fabricated(self):
         with tempfile.TemporaryDirectory() as directory:

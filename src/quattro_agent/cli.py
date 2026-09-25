@@ -226,21 +226,17 @@ def _deployment_runtime_status(
     if manifest is not None:
         if source_revision is not None:
             try:
-                parity = verify_manifest_files(manifest, source_root, deployed_root)
-                manifest_parity = parity["allMatch"]
-                deployed_parity = not any(
-                    row.get("deployedMatchesManifest") is False
-                    for row in parity["drift"]
-                )
+                manifest_parity = verify_manifest_files(
+                    manifest, source_root, deployed_root,
+                )["allMatch"]
             except (OSError, ValueError):
                 manifest_parity = False
             if manifest_parity is False and comparison == "match":
                 comparison = "drift"
-        if deployed_parity is None:
-            try:
-                deployed_parity = verify_manifest_deployed_files(manifest, deployed_root)["allMatch"]
-            except (OSError, ValueError):
-                deployed_parity = False
+        try:
+            deployed_parity = verify_manifest_deployed_files(manifest, deployed_root)["allMatch"]
+        except (OSError, ValueError):
+            deployed_parity = False
 
     return {
         "sourceRevision": source_revision,
