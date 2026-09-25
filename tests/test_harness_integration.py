@@ -864,6 +864,9 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             ["executionPlan"]["planId"]
         })
         self.assertFalse(any(event["type"] == "routing.fallback" for event in events))
+        persisted = self.runtime.store.get_task(task_id, include_private=True)["private_payload"]
+        self.assertEqual(persisted["samePlanDispatchAttempt"], 2)
+        self.assertEqual(len(self.runtime.store.runs_for_task(task_id)), 3)
 
     def test_delegated_writable_failure_never_replays_from_output_text(self):
         unsafe_agent = self.root / "unsafe-fallback-agent"

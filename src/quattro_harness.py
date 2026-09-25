@@ -2461,6 +2461,9 @@ class HarnessRuntime:
                 exact_envelope["routing_locked"] = active_plan_payload.get("routingLocked") is True
                 exact_envelope["target"] = active_plan_payload.get("target")
                 exact_envelope["preference_mode"] = "passthrough"
+                exact_envelope["same_plan_dispatch_attempt"] = int(
+                    private.get("samePlanDispatchAttempt", 0) or 0
+                )
             dispatch_envelope = exact_envelope
             if adaptive is not None:
                 adaptive = dataclasses.replace(adaptive, envelope=exact_envelope)
@@ -3346,6 +3349,9 @@ class HarnessRuntime:
                 if attempt_plan is not None:
                     attempt_private = dict(task["private_payload"])
                     attempt_private["activeExecutionPlan"] = attempt_plan.to_dict()
+                    attempt_private["samePlanDispatchAttempt"] = (
+                        pressure_retries_by_plan.get(attempt_plan.plan_id, 0)
+                    )
                     recorded_plan_attempts.append(attempt_plan.to_dict())
                     attempt_private["executionPlanAttempts"] = list(recorded_plan_attempts)
                     self.store.update_private_payload(task_id, attempt_private)
@@ -3411,6 +3417,12 @@ class HarnessRuntime:
                     capture_thread.join(timeout=5)
                     if capture_thread.is_alive():
                         raise RuntimeError("agent output collector did not stop")
+                # A completed child no longer owns execution capacity. Release
+                # before receipt classification so a same-plan pressure retry
+                # or Quattro fallback can reacquire against its exact target.
+                if lease is not None:
+                    self.scheduler.release(lease)
+                    lease = None
                 if (
                     result.state is RunState.SUCCEEDED
                     and task["agent"] == "codex"
