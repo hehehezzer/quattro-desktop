@@ -28,6 +28,50 @@ python -m py_compile src/quattro_agent/*.py
 git diff --check
 ```
 
+## Branch and worktree policy
+
+Keep two persistent branches: `main`, which tracks the authoritative production
+state on `origin/main`, and `dev`, which is the clean baseline for new work and
+tracks `origin/dev`. Keep `dev` at the latest intended `main` baseline. Preserve
+unfinished work before removing its branch or worktree; do not clean a checkout
+just to make its status look empty.
+
+Start each feature from `dev`:
+
+```bash
+git switch dev
+git pull --ff-only
+git switch -c feature/<name>
+```
+
+For isolated work, create one clean worktree per task:
+
+```bash
+git worktree add ../quattro-<name> -b feature/<name> dev
+git -C ../quattro-<name> status --short
+```
+
+The status command must print nothing before work begins. Each task owns one
+branch and, when isolation is needed, one worktree. Do not let a task inherit
+another task's uncommitted changes.
+
+Push the feature branch and open a pull request targeting `main`. After the
+pull request is validated and merged, remove the completed feature branch and
+task worktree, then prune stale worktree metadata. Synchronize the persistent
+branches with fast-forward updates:
+
+```bash
+git switch main
+git pull --ff-only
+git switch dev
+git merge --ff-only main
+git push origin dev
+```
+
+Delete completed feature branches after merge. Keep only `main` and `dev` as
+persistent local branches; retain other branches only for active work or an
+explicitly documented archival reason.
+
 ## Release procedure
 
 1. Ensure the intended source changes are reviewed and committed.
