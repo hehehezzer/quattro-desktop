@@ -235,7 +235,7 @@ def compact_pi_json_output(
     final_text = ""
     telemetry: dict[str, Any] = {
         "provider": None, "model": None, "inputTokens": 0,
-        "outputTokens": 0, "totalTokens": 0,
+        "outputTokens": 0, "totalTokens": 0, "finalResult": False,
     }
     for raw in payload.splitlines():
         try:
@@ -264,6 +264,7 @@ def compact_pi_json_output(
             "inputTokens": int(usage.get("input", 0) or 0),
             "outputTokens": int(usage.get("output", 0) or 0),
             "totalTokens": int(usage.get("totalTokens", 0) or 0),
+            "finalResult": bool(candidate) or bool(telemetry.get("finalResult")),
         }
     if not final_text:
         final_text = "STATUS\nFAILED\nFINDINGS\nPi returned no final answer.\nFILES_CHANGED\nNone\nVALIDATION\nNot Run\nRISKS\nWorker output was unavailable.\nNEXT_ACTION\nCodex should handle the task directly."

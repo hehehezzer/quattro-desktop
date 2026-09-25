@@ -245,6 +245,12 @@ class DelegationPolicyTests(unittest.TestCase):
         self.assertIn("focused finding", result)
         self.assertEqual(usage["provider"], "omniroute")
         self.assertEqual(usage["totalTokens"], 29)
+        self.assertTrue(usage["finalResult"])
+
+    def test_pi_json_without_final_answer_is_explicitly_unusable(self):
+        result, usage = compact_pi_json_output(json.dumps({"type": "agent_end", "messages": []}))
+        self.assertIn("Pi returned no final answer", result)
+        self.assertFalse(usage["finalResult"])
 
     def test_pi_review_compaction_preserves_final_verdict(self):
         payload = json.dumps({

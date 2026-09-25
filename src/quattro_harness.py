@@ -3601,6 +3601,28 @@ class HarnessRuntime:
                 )
                 return int(result.exit_code or 1)
 
+            if (
+                task["private_payload"].get("delegatedWorker") is True
+                and delegation_telemetry is not None
+                and delegation_telemetry.get("finalResult") is not True
+            ):
+                self.store.transition_task(
+                    task_id, TaskState.FAILED,
+                    terminal_code="WORKER_NO_FINAL_RESULT",
+                    terminal_summary="Pi exited successfully without a usable final result.",
+                )
+                self.store.append_event(
+                    task_id, "delegation.worker_no_final_result", run_id=run_id,
+                    display={"code": "WORKER_NO_FINAL_RESULT"},
+                )
+                self._record_routing_outcome(
+                    self.store.get_task(task_id, include_private=True),
+                    execution_success=False,
+                    validated_success=False,
+                    latency_ms=duration_ms,
+                )
+                return 1
+
             if physical_session_id:
                 self.store.mark_physical_session_healthy(physical_session_id)
 
@@ -4126,15 +4148,16 @@ class HarnessRuntime:
         if parent is not None:
             PolicyProfile.from_dict(parent["policy"]).assert_child(worker_policy)
         pi_plan = None
-        child_profile = None
-        if parent is not None:
-            child_profile = profile_task(
-                objective, agent="pi", workflow="codex-pi-delegation",
-                policy_name="audit-read-only",
-            )
-            parent_plan = parent["private_payload"].get(
-                "activeExecutionPlan", parent["private_payload"].get("executionPlan")
-            )
+        child_profile = profile_task(
+            objective, agent="pi", workflow="codex-pi-delegation",
+            policy_name="audit-read-only",
+        )
+        if omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH:
+            parent_plan = None
+            if parent is not None:
+                parent_plan = parent["private_payload"].get(
+                    "activeExecutionPlan", parent["private_payload"].get("executionPlan")
+                )
             if isinstance(parent_plan, Mapping):
                 inherited = _execution_plan_from_dict(parent_plan)
                 account_home = pathlib.Path(str(
@@ -4158,12 +4181,12 @@ class HarnessRuntime:
                     fallback_allowed=False,
                     fallback_targets=(),
                 )
-            elif omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH:
+            else:
                 # Interactive/resumed parents intentionally do not carry a
                 # per-turn plan, but a delegated child is single-shot and can
                 # still receive a fresh exact Quattro target.
                 child_account = str(
-                    parent["private_payload"].get("accountId")
+                    (parent["private_payload"].get("accountId") if parent is not None else None)
                     or config["defaultCodexAccount"]
                 )
                 account_home = pathlib.Path(
