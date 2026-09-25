@@ -18,12 +18,11 @@ confirm that the persisted receipt matches the selected target. Reversing this
 order intentionally causes delegated workers to terminate with
 `locked_receipt_unavailable`; Quattro never falls back to parsing model output.
 
-Interactive and resumed sessions now receive the same locked target envelope
-for the session's selected route. Per-turn receipt aggregation is still not
-available, so Quattro reports interactive/resume target evidence as
-session-scoped rather than claiming that every turn has independently
-validated receipt coverage. Single-shot direct and delegated executions remain
-fail-closed on a missing or mismatched terminal receipt.
+Interactive and resumed sessions create a fresh locked plan for each bounded
+turn, including native `codex exec resume` turns. Each turn requires its own
+matching terminal receipt; a prior turn's plan or receipt cannot authorize a
+resumed request. Direct, delegated, PR-review, interactive, and resumed
+executions all fail closed on a missing or mismatched terminal receipt.
 
 Normal automatic execution produces a Quattro-owned `ExecutionPlan` with the
 classified task, exact provider/account/model target, reasoning effort, context
@@ -59,9 +58,19 @@ Only routes present in that validated Quattro policy can enter authoritative
 passthrough. Catalog-only provider aliases without a Quattro account contract
 fail closed rather than handing target selection back to OmniRoute; callers
 that still need those routes must opt into `OMNIROUTE_ROUTING_MODE=legacy`.
-The older `_session` launcher and standalone PR-review worker also fail closed
-in passthrough until they are migrated to carry a plan and receipt; this keeps
-those compatibility entrypoints from silently reintroducing gateway routing.
+The older persistent `_session` launcher fails closed in passthrough. The
+standalone PR-review worker is migrated: it persists a locked plan, carries the
+same exact envelope through the supported header transport, holds target-scoped
+capacity, and requires a matching receipt before parsing or publishing a
+review.
+
+Account-local target failures are retained in private, credential-free health
+state. Authentication failure, rate limiting, quota exhaustion, credit
+exhaustion, and temporary account/provider unavailability exclude only the
+exact route for a bounded lifetime. A successful locked receipt clears the
+entry immediately; expiry allows recovery after manual reauthentication even
+without restarting Quattro. Gateway resource pressure is deliberately not an
+account-health failure and remains a bounded same-plan retry.
 
 ## Live path and ownership
 
