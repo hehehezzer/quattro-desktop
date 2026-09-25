@@ -468,8 +468,12 @@ def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def prepare_sanitized_codex_home(source_home: pathlib.Path | None,
-                                 destination: pathlib.Path) -> None:
+def prepare_sanitized_codex_home(
+    source_home: pathlib.Path | None,
+    destination: pathlib.Path,
+    *,
+    visible_destination: pathlib.Path | None = None,
+) -> None:
     """Copy only non-secret inference routing into a credential-free temporary home."""
     destination.mkdir(mode=0o700, parents=True, exist_ok=True)
     if source_home is None:
@@ -503,7 +507,7 @@ def prepare_sanitized_codex_home(source_home: pathlib.Path | None,
             if not isinstance(value, str) or not value:
                 raise ReviewError(f"Codex review routing configuration has invalid {key}")
             if key == "model_catalog_json" and catalog_copy is not None:
-                value = str(catalog_copy)
+                value = str((visible_destination or destination) / catalog_copy.name)
             lines.append(f"{key} = {_toml_string(value)}")
     lines.extend(["", f"[model_providers.{provider_id}]"])
     for key in ("name", "base_url", "wire_api"):
@@ -607,7 +611,14 @@ def run_codex(repo: pathlib.Path, prompt: str, output_path: pathlib.Path, option
     with tempfile.TemporaryDirectory(prefix="codex-runtime-", dir=output_path.parent) as runtime_name:
         runtime_root = pathlib.Path(runtime_name)
         runtime_codex_home = runtime_root / "codex"
-        prepare_sanitized_codex_home(codex_home, runtime_codex_home)
+        prepare_sanitized_codex_home(
+            codex_home,
+            runtime_codex_home,
+            visible_destination=(
+                pathlib.Path("/quattro-runtime/codex")
+                if options.require_containment else None
+            ),
+        )
         env = child_environment(runtime_root, runtime_codex_home)
         if options.locked_envelope is not None:
             env["QUATTRO_ROUTING_ENVELOPE"] = encode_routing_header(options.locked_envelope)

@@ -575,6 +575,35 @@ wire_api = "responses"
             with self.assertRaisesRegex(review.ReviewError, "approved provider"):
                 review.prepare_sanitized_codex_home(source, destination)
 
+    def test_sanitized_catalog_path_uses_namespace_visible_home(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            catalog = source / "catalog.json"
+            catalog.write_text("{}", encoding="utf-8")
+            (source / "config.toml").write_text(
+                f'''model_provider = "omniroute"
+model_catalog_json = {json.dumps(str(catalog))}
+[model_providers.omniroute]
+name = "OmniRoute"
+base_url = "http://localhost:20128/api/v1"
+requires_openai_auth = false
+wire_api = "responses"
+''',
+                encoding="utf-8",
+            )
+            contract = mock.Mock(model_catalog=catalog)
+            with mock.patch.object(review, "validate_omniroute_contract", return_value=contract):
+                review.prepare_sanitized_codex_home(
+                    source, destination,
+                    visible_destination=pathlib.Path("/quattro-runtime/codex"),
+                )
+            config = (destination / "config.toml").read_text(encoding="utf-8")
+            self.assertIn('/quattro-runtime/codex/catalog.json', config)
+            self.assertNotIn(str(destination), config)
+
     def test_child_environment_is_allowlisted_and_memory_vaults_are_not_writable(self):
         calls = []
         sanitized_snapshots = []
