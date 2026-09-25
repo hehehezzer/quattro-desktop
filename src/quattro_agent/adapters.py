@@ -197,13 +197,16 @@ class PiAdapter(AgentAdapter):
 
     def build_launch(self, binary: str, spec: RunSpec) -> LaunchPlan:
         self.assert_policy_supported(spec)
+        routed_args = (
+            ("--provider", "omniroute", "--model", spec.model_override)
+            if spec.model_override else ()
+        )
         worker_args = (
             (
-                "--provider", "omniroute", "--model", spec.model_override or "auto", "--mode", "json",
-                "--no-session", "--no-context-files", "--no-skills",
-                "--no-prompt-templates",
+                *routed_args, "--mode", "json", "--no-session", "--no-context-files",
+                "--no-skills", "--no-prompt-templates",
             )
-            if spec.delegated_worker else ()
+            if spec.delegated_worker else routed_args
         )
         if spec.delegated_worker:
             tool_args = (

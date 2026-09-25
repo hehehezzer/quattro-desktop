@@ -620,7 +620,10 @@ class HarnessRuntime:
         routing_mode = omniroute_routing_mode()
         delegation = classify_task_request(prompt, preferred_agent=agent).to_dict()
         selected_account = None
-        if agent == "codex":
+        # Pi still executes model work through OmniRoute.  In passthrough mode
+        # it therefore needs the same exact Quattro-owned target material as
+        # Codex; only the local worker adapter differs.
+        if agent in {"codex", "pi"}:
             selected_account = str(self.account(config, account_id)["id"])
         default_title = f"{agent.title()} {workflow.replace('-', ' ')}"
         display_title = title or summarize_display_title(
@@ -704,7 +707,7 @@ class HarnessRuntime:
             )
         configured_model = None
         configured_catalog = None
-        if agent == "codex":
+        if agent in {"codex", "pi"}:
             account_home = pathlib.Path(str(self.account(config, selected_account)["codexHome"])).expanduser().resolve()
             configured_model = self._configured_codex_model(account_home) or "auto"
             configured_catalog = self._configured_codex_catalog(account_home)
@@ -723,7 +726,7 @@ class HarnessRuntime:
         pre_profile = task_profile_from_dict(routing.task_profile)
         execution_target = None
         if (
-            agent == "codex"
+            agent in {"codex", "pi"}
             and routing_mode is OmniRouteRoutingMode.PASSTHROUGH
             and configured_catalog is not None
             and configured_model in {"auto", "auto/coding:cheap", "auto/coding", "auto/reasoning"}
@@ -744,7 +747,7 @@ class HarnessRuntime:
                     selection_tier=selection_tier,
                 )
         elif (
-            agent == "codex"
+            agent in {"codex", "pi"}
             and routing_mode is OmniRouteRoutingMode.PASSTHROUGH
             and configured_model
             and configured_catalog is not None
@@ -780,7 +783,7 @@ class HarnessRuntime:
                 plan_id=f"{task_id}.plan-{uuid.uuid4()}",
             )
         if (
-            agent == "codex"
+            agent in {"codex", "pi"}
             and routing_mode is OmniRouteRoutingMode.PASSTHROUGH
             and execution_plan is None
         ):
@@ -2231,7 +2234,7 @@ class HarnessRuntime:
                 )
                 model_override = execution_target.route
         if (
-            task["agent"] == "codex"
+            task["agent"] in {"codex", "pi"}
             and routing_mode is OmniRouteRoutingMode.PASSTHROUGH
             and mode not in {AgentMode.INTERACTIVE, AgentMode.RESUME}
             and persisted_plan is None
