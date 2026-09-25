@@ -1489,6 +1489,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             argv[argv.index("--model") + 1], private["executionPlan"]["target"]["route"],
         )
         self.assertIn("QUATTRO_ROUTING_ENVELOPE", env)
+        self.assertIn("PI_CODING_AGENT_DIR", env)
 
     def test_workflow_uses_supplied_narrow_write_scopes(self):
         parent = self.runtime.create_workflow(

@@ -172,9 +172,9 @@ Codex can provide materially better context. If the policy declines delegation, 
 def ensure_pi_worker_home(path: Path, *, model: str = PI_WORKER_MODEL) -> Path:
     """Create a credential-free Pi runtime pinned to one Quattro-selected route.
 
-    Delegated workers pass the locked routing envelope through a request header.
-    ``auto`` remains available only for legacy/direct Pi callers that do not
-    carry an ExecutionPlan; new delegated workers always provide an exact route.
+    Locked Pi runs pass the routing envelope through a request header. ``auto``
+    remains available only for legacy callers that do not carry an
+    ExecutionPlan; authoritative runs always provide an exact route.
     """
     path = path.expanduser().resolve(strict=False)
     if path.exists() and path.is_symlink():

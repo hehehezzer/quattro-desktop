@@ -2640,7 +2640,9 @@ class HarnessRuntime:
         overrides["QUATTRO_ROUTING_TIER"] = routing_tier
         if dispatch_envelope is not None:
             overrides["QUATTRO_ROUTING_ENVELOPE"] = encode_routing_header(dispatch_envelope)
-        if private.get("delegatedWorker") is True:
+        if private.get("delegatedWorker") is True or (
+            task["agent"] == "pi" and persisted_plan is not None
+        ):
             worker_key = hashlib.sha256(str(task["task_id"]).encode("utf-8")).hexdigest()[:24]
             worker_home = ensure_pi_worker_home(
                 self.private_root / "pi-worker" / worker_key, model=str(model_route)
