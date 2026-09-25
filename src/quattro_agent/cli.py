@@ -3761,10 +3761,10 @@ def main() -> int:
             harness().store.heartbeat_run(review_run_id)
 
         def review_process_completed(exit_code: int) -> None:
-            if RunState(harness().store.get_run(review_run_id)["state"]) is RunState.RUNNING:
-                harness().store.transition_run(
-                    review_run_id, RunState.SUCCEEDED, exit_code=exit_code
-                )
+            # A zero child exit is not completion evidence. The run remains
+            # active until the plan-scoped locked receipt is verified below.
+            if exit_code != 0:
+                raise ReviewError(f"PR review model exited with code {exit_code}")
 
         def review_before_publish(key: str, mode: str, reviewed_sha: str) -> None:
             review_cancel_check()
