@@ -661,8 +661,17 @@ def run_codex(repo: pathlib.Path, prompt: str, output_path: pathlib.Path, option
                     daemon=True,
                 )
                 stderr_thread.start()
-                process.stdin.write(contained_prompt)
-                process.stdin.close()
+                try:
+                    process.stdin.write(contained_prompt)
+                    process.stdin.close()
+                except BrokenPipeError:
+                    process.wait(timeout=5)
+                    stderr_thread.join(timeout=5)
+                    stderr = stderr_parts[0] if stderr_parts else ""
+                    raise ReviewError(
+                        f"Reviewer exited before accepting its prompt: "
+                        f"{redact(stderr.strip() or f'exit {process.returncode}') }"
+                    ) from None
                 deadline = time.monotonic() + options.timeout_seconds
                 while process.returncode is None:
                     remaining = deadline - time.monotonic()
