@@ -34,9 +34,10 @@ class AstraEffortTests(unittest.TestCase):
 
     def test_dispatch_limits_both_accounts_across_tiers_and_escalation(self):
         task_id = self.runtime.create_task(
-            agent="codex", project=self.project, prompt="", mode="interactive",
+            agent="codex", project=self.project, prompt="Inspect effort", mode="prompt",
         )
         task = self.runtime.store.get_task(task_id, include_private=True)
+        task["private_payload"]["routingMode"] = "legacy"
         run_id = self.runtime.store.create_run(task_id)
         for account in ("account-1", "account-2"):
             model = f"{account}/gpt-6-astra"
@@ -48,7 +49,7 @@ class AstraEffortTests(unittest.TestCase):
                             "tier": tier, "exceptional_escalations": exceptional,
                         }
                         # This matrix exercises native Astra effort mapping on
-                        # a fresh interactive selection. The production path
+                        # a fresh bounded selection. The production path
                         # persists a plan for the real session; clearing the
                         # fixture plan here avoids reusing the first task's
                         # initial auto target across the matrix.
@@ -120,7 +121,7 @@ class AstraEffortTests(unittest.TestCase):
     def test_other_model_plan_mode_is_not_overridden(self):
         self.select("account-2/gpt-5.6-sol", "low")
         task_id = self.runtime.create_task(
-            agent="codex", project=self.project, prompt="", mode="interactive",
+            agent="codex", project=self.project, prompt="Inspect effort", mode="prompt",
         )
         task = self.runtime.store.get_task(task_id, include_private=True)
         argv, _, _ = self.runtime._agent_plan(

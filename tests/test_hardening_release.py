@@ -302,6 +302,17 @@ class CrossAccountSessionTests(unittest.TestCase):
                 self.assertIn("repository.quattro_desktop.clean_worktree", policy)
             self.assertNotIn("--add-dir", codex_command)
 
+    def test_legacy_session_worker_blocks_codex_and_pi_in_passthrough(self):
+        with mock.patch.object(launcher, "ensure_state_dirs"), \
+                mock.patch.object(launcher, "load_config", return_value={}), \
+                mock.patch.object(launcher, "require") as require:
+            for agent in ("codex", "pi"):
+                with self.subTest(agent=agent), mock.patch.dict(
+                    os.environ, {"OMNIROUTE_ROUTING_MODE": "passthrough"},
+                ), self.assertRaises(SystemExit):
+                    launcher.session_worker(types.SimpleNamespace(agent=agent))
+        require.assert_not_called()
+
     def test_one_writer_lease_per_native_session(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

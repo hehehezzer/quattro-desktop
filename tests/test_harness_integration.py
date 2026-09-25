@@ -1330,33 +1330,28 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertFalse(marker.exists())
         self.assertEqual(self.runtime.task_projection(task_id)["state"], "failed")
 
-    def test_interactive_and_resume_sessions_have_no_automatic_deadline(self):
-        original_start = self.runtime.supervisor.start
-        observed: list[float | None] = []
-        def capture_start(**kwargs):
-            observed.append(kwargs.get("deadline_seconds"))
-            return original_start(**kwargs)
-        self.runtime.supervisor.start = capture_start  # type: ignore[method-assign]
+    def test_persistent_interactive_and_resume_fail_closed_in_passthrough(self):
         for mode in ("interactive", "resume"):
             task_id = self.runtime.create_task(
                 agent="codex", project=self.project, prompt="", mode=mode,
                 account_id="account-1", native_session_ref="native" if mode == "resume" else None,
             )
-            self.assertEqual(self.runtime.run_task(task_id), 0)
-        self.assertEqual(observed, [None, None])
+            self.assertEqual(self.runtime.run_task(task_id), 1)
+            self.assertNotEqual(self.runtime.store.latest_run(task_id)["state"], "succeeded")
 
     def test_two_interactive_sessions_can_share_one_non_git_project(self):
         self.fake.write_text(
             "#!/usr/bin/env python3\nimport time\ntime.sleep(0.15)\n",
             encoding="utf-8",
         )
-        task_ids = [
-            self.runtime.create_task(
-                agent="codex", project=self.project, prompt="", mode="interactive",
-                account_id="account-1",
-            )
-            for _ in range(2)
-        ]
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "legacy"}):
+            task_ids = [
+                self.runtime.create_task(
+                    agent="codex", project=self.project, prompt="", mode="interactive",
+                    account_id="account-1",
+                )
+                for _ in range(2)
+            ]
         barrier = threading.Barrier(2)
         results: list[int] = []
         def worker(task_id: str) -> None:
@@ -1434,19 +1429,65 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(pathlib.Path(child["project_path"]), self.project)
         self.assertEqual(child["private_payload"]["coordinationSessionId"], first_coord["sessionId"])
 
-    def test_resume_session_closes_cleanly_without_output_validation(self):
-        task_id, result = self.runtime.submit(
-            agent="codex", project=self.project, prompt="", mode="resume",
-            account_id="account-1", native_session_ref="native-session-1",
+    def test_resume_turn_is_bounded_and_receipt_validated(self):
+        task_id = self.runtime.create_task(
+            agent="codex", project=self.project, prompt="Continue safely",
+            mode="resume-prompt", account_id="account-1",
+            native_session_ref="native-session-1",
         )
+        with mock.patch.object(
+            self.runtime, "_locked_target_receipt", side_effect=self._matching_locked_receipt,
+        ):
+            result = self.runtime.run_task(task_id)
         self.assertEqual(result, 0)
         projection = self.runtime.task_projection(task_id)
         self.assertEqual(projection["state"], "succeeded")
-        self.assertEqual(projection["validation"]["status"], "Not Run")
+        self.assertEqual(projection["validation"]["status"], "Passed")
         self.assertEqual(
             self.runtime.store.latest_run(task_id)["native_session_ref"],
             "native-session-1",
         )
+
+    def test_resumed_session_turns_receive_fresh_locked_plans(self):
+        self.fake.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' '{\"type\":\"thread.started\","
+            "\"thread_id\":\"native-session-live\"}'\n"
+            "printf 'HARNESS_VERDICT: PASS\\n'\n",
+            encoding="utf-8",
+        )
+        first = self.runtime.create_task(
+            agent="codex", project=self.project, prompt="First session turn",
+            mode="prompt", account_id="account-1", profile_name="audit-read-only",
+        )
+        self.assertEqual(self.runtime.run_task(first), 0)
+        logical = self.runtime.store.logical_session_for_task(first)
+        self.assertIsNotNone(logical)
+        logical_id = logical["quattro_session_id"]
+        self.assertEqual(
+            self.runtime.store.get_logical_session(logical_id)["current_codex_session_id"],
+            "native-session-live",
+        )
+
+        tasks = [first]
+        for prompt in ("Second session turn", "Third session turn"):
+            turn, path = self.runtime.prepare_resume_task(
+                logical_id, native_session_available=True, prompt=prompt,
+            )
+            self.assertEqual(path, "native-resume-turn")
+            self.assertEqual(self.runtime.run_task(turn), 0)
+            tasks.append(turn)
+
+        plans = []
+        for turn in tasks:
+            task = self.runtime.store.get_task(turn, include_private=True)
+            self.assertEqual(task["private_payload"]["logicalSessionId"], logical_id)
+            plan = task["private_payload"]["executionPlan"]
+            self.assertTrue(plan["routingLocked"])
+            plans.append(plan["planId"])
+            display = self.runtime.store.display_task(turn)
+            self.assertTrue(display["metadata"]["targetHonored"])
+        self.assertEqual(len(set(plans)), 3)
 
     def test_full_access_requires_run_scoped_confirmation(self):
         with self.assertRaises(PermissionError):
@@ -1794,9 +1835,10 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             "#!/usr/bin/env python3\nimport signal,time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(30)\n",
             encoding="utf-8",
         )
-        task_id = self.runtime.create_task(
-            agent="codex", project=self.project, prompt="", mode="interactive",
-        )
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "legacy"}):
+            task_id = self.runtime.create_task(
+                agent="codex", project=self.project, prompt="", mode="interactive",
+            )
         thread = threading.Thread(target=lambda: self.runtime.run_task(task_id))
         thread.start()
         deadline = time.monotonic() + 5

@@ -15,6 +15,7 @@ class AgentMode(StrEnum):
     INTERACTIVE = "interactive"
     PROMPT = "prompt"
     RESUME = "resume"
+    RESUME_PROMPT = "resume-prompt"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,11 @@ class RunSpec:
             raise ValueError("private agent input exceeds 1 MiB")
         if self.model_override is not None and (not self.model_override or len(self.model_override) > 200 or "\x00" in self.model_override):
             raise ValueError("model override is invalid")
+        if self.mode is AgentMode.RESUME_PROMPT:
+            if not self.native_session_ref:
+                raise ValueError("resume-prompt requires an exact native session")
+            if not self.private_input or not self.private_input.strip():
+                raise ValueError("resume-prompt requires a non-empty turn prompt")
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,15 +161,21 @@ class CodexAdapter(AgentAdapter):
             else ()
         )
         model_args = ("-m", spec.model_override) if spec.model_override else ()
-        if spec.mode is AgentMode.RESUME:
+        if spec.mode is AgentMode.RESUME_PROMPT:
+            argv = (
+                binary, *network_args, *permissions, "exec", "resume", *model_args,
+                "--skip-git-repo-check", spec.native_session_ref, "-",
+            )
+            stdin = spec.private_input + "\n"
+        elif spec.mode is AgentMode.RESUME:
             # A resume preserves the model recorded by the native Codex session.
             resume_target = (spec.native_session_ref,) if spec.native_session_ref else ("--all",)
             argv = (binary, *network_args, *permissions, "resume", *resume_target, "-C", str(spec.project_path))
             stdin = None
         elif spec.mode is AgentMode.PROMPT:
             argv = (
-                binary, *network_args, *permissions, *model_args, "exec", "-C", str(spec.project_path),
-                "--skip-git-repo-check", "-",
+                binary, *network_args, *permissions, *model_args, "exec", "--json",
+                "-C", str(spec.project_path), "--skip-git-repo-check", "-",
             )
             stdin = (spec.private_input or "") + "\n"
         else:

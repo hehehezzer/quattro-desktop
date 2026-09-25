@@ -736,10 +736,7 @@ def resolve_codex_resume_target(
 def session_worker(args: argparse.Namespace) -> int:
     ensure_state_dirs()
     config = load_config()
-    if (
-        args.agent == "codex"
-        and omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH
-    ):
+    if omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH:
         die(
             "the legacy session worker has no locked ExecutionPlan/receipt path; "
             "use a managed Quattro task or set OMNIROUTE_ROUTING_MODE=legacy"
@@ -2418,6 +2415,11 @@ def multi_launch(count: int, directory_value: str | None) -> int:
         die("Multi-agent count must be 2, 3, or 4")
     directory = safe_directory(directory_value)
     agents = ["codex", "pi"] + ["codex"] * (count - 2)
+    if omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH:
+        for agent in agents:
+            launch_terminal(agent, str(directory))
+        notify("AI workspace", f"Opened {count} managed locked agent windows")
+        return 0
     tmux = command_path("tmux")
     if not tmux:
         for agent in agents:
@@ -2736,6 +2738,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume = sub.add_parser("resume")
     resume.add_argument("target", nargs="?", help="logical Quattro session id or legacy project path")
     resume.add_argument("--session")
+    resume.add_argument("--prompt", help="execute one locked turn in the logical session")
     resume.add_argument("--account")
     resume.add_argument("--policy")
     resume.add_argument("--confirm-full-access", action="store_true")
@@ -3301,8 +3304,13 @@ def main() -> int:
             row.get("sessionId") == native_id and row.get("resumable") for row in native_rows
         ))
         task_id, path = harness().prepare_resume_task(
-            logical_id, native_session_available=native_available, account_id=args.account,
+            logical_id, native_session_available=native_available, prompt=args.prompt,
+            account_id=args.account,
         )
+        if path == "native-resume-turn":
+            result = harness().run_task(task_id)
+            print(json.dumps({"quattroSessionId": logical_id, "taskId": task_id, "path": path}))
+            return result
         harness().launch_terminal(task_id)
         print(json.dumps({"quattroSessionId": logical_id, "taskId": task_id, "path": path}))
         return 0

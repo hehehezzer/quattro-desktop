@@ -964,13 +964,30 @@ class ValidatorAndAdapterTests(StoreTestCase):
     def test_codex_resume_targets_exact_native_session(self):
         spec = RunSpec(
             task_id="task", run_id="run", project_path=self.project,
-            mode=AgentMode.RESUME, policy=self.policy,
+            mode=AgentMode.RESUME_PROMPT, policy=self.policy,
             account_id="account-2", account_home=self.root / "account",
             native_session_ref="00000000-0000-0000-0000-000000000002",
+            private_input="continue with exact routing",
+            model_override="account-2/gpt-5.6-sol",
         )
         plan = CodexAdapter().build_launch("/usr/bin/codex", spec)
         self.assertIn("00000000-0000-0000-0000-000000000002", plan.argv)
         self.assertNotIn("--all", plan.argv)
+        self.assertIn("exec", plan.argv)
+        self.assertIn("resume", plan.argv)
+        self.assertEqual(plan.argv[plan.argv.index("-m") + 1], "account-2/gpt-5.6-sol")
+        self.assertEqual(plan.argv[-1], "-")
+        self.assertEqual(plan.stdin_text, "continue with exact routing\n")
+
+    def test_codex_resume_prompt_requires_exact_session_and_prompt(self):
+        for native, prompt in ((None, "turn"), ("native", "")):
+            with self.subTest(native=native, prompt=prompt), self.assertRaises(ValueError):
+                RunSpec(
+                    task_id="task", run_id="run", project_path=self.project,
+                    mode=AgentMode.RESUME_PROMPT, policy=self.policy,
+                    account_home=self.root / "account", native_session_ref=native,
+                    private_input=prompt,
+                )
 
     def test_pi_declares_harness_containment_requirement(self):
         self.assertTrue(PiAdapter().capabilities.requires_harness_containment)
