@@ -109,6 +109,11 @@ def build_bwrap_command(
             visible_environment[name] = _map_path(visible_environment[name], tuple(mappings))
     visible_environment["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     if binary_target is not None and binary_root is not None:
-        visible_environment["PATH"] = str(binary_target) + ":" + visible_environment["PATH"]
+        try:
+            visible_binary_dir = binary_target / command_binary.parent.relative_to(binary_root)
+        except ValueError as error:
+            raise ContainmentError("child executable directory is outside its mounted root") from error
+        visible_environment["PATH"] = (
+            str(visible_binary_dir) + ":" + visible_environment["PATH"]
+        )
     return command, visible_environment, Path("/quattro-report")
-
