@@ -24,11 +24,16 @@ Environment values are for local deployment and CI; do not commit a local
 | Runtime state | `$XDG_STATE_HOME/quattro/agents` | `QUATTRO_STATE_DIR` |
 | Quattro data | `$XDG_DATA_HOME/quattro` | `QUATTRO_DATA_DIR` |
 | Codex data/catalog | `$XDG_DATA_HOME/quattro-ai/codex` | `QUATTRO_CODEX_DATA_DIR`, `QUATTRO_MODEL_CATALOG` |
-| Workspace default | current directory | `QUATTRO_WORKSPACE` or `workspace.projectRoot` |
+| Command workspace | current directory | `QUATTRO_WORKSPACE` |
 | OmniRoute endpoint | `http://localhost:20128/api/v1` | `QUATTRO_OMNIROUTE_BASE_URL` |
 
 `XDG_*` falls back to `~/.config`, `~/.local/state`, and `~/.local/share`.
 Quattro creates state directories mode 0700 and private files mode 0600.
+
+`QUATTRO_WORKSPACE` sets the command workspace used by status, prompt, and
+deployment commands; otherwise it is the process current directory. The separate
+`workspace.projectRoot` configuration sets the default project destination used
+by mandatory-context resolution.
 
 ## Configuration groups
 
