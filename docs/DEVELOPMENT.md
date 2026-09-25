@@ -41,8 +41,15 @@ Start each feature from `dev`:
 ```bash
 git switch dev
 git pull --ff-only
+git status --short
 git switch -c feature/<name>
 ```
+
+The `git status --short` output must be empty before creating a feature branch
+or worktree. If it prints anything, stop feature creation. Preserve unrelated
+work in its owning branch or worktree, or through another explicit recovery
+mechanism, before returning to a clean `dev`; never automatically stash it or
+silently carry it into a new task.
 
 For isolated work, create one clean worktree per task:
 
