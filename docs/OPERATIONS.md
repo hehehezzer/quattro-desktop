@@ -39,10 +39,14 @@ reviewed catalog through the normal release procedure, then retry.
 
 ## Runtime release checks
 
-The source dashboard exposes display-safe runtime fields: source revision,
-manifest revision, manifest parity, active catalog SHA-256, and active account.
-A false manifest-parity result means the installed runtime is not the current
-source release; do not make ad-hoc broad copies from a dirty worktree.
+The dashboard uses the deployment manifest's immutable `gitRevision` as the
+deployed source revision. It compares a live `git rev-parse HEAD` only when the
+configured workspace is itself a Git checkout root. If that checkout is
+missing, invalid, or the command runs from an ordinary directory, the status
+reports the source comparison as unavailable and still verifies installed
+files against their manifest hashes. A present checkout reports revision drift
+and source/deployed file parity independently; do not make ad-hoc broad copies
+from a dirty worktree.
 
 ## Known incidents and responses
 

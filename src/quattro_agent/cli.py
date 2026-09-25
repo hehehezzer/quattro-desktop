@@ -106,7 +106,7 @@ from quattro_agent.mandatory_context import (
 )
 from quattro_harness import HarnessRuntime
 from quattro_deployment import (
-    build_manifest, load_manifest, resolve_git_revision,
+    build_manifest, DeploymentManifestError, load_manifest, resolve_git_revision,
     validate_manifest, verify_manifest_deployed_files, verify_manifest_files,
     write_manifest_atomic,
 )
@@ -146,6 +146,110 @@ HARNESS: HarnessRuntime | None = None
 
 def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def _source_checkout_revision(source_root: str | os.PathLike[str]) -> tuple[str | None, str]:
+    """Return a live source revision only when ``source_root`` is a checkout root.
+
+    Status commands often run from an arbitrary working directory while the
+    installed Quattro package lives below ``~/.local/bin``. Probe Git metadata
+    first so those artifact/runtime paths never receive a HEAD lookup.
+    """
+    try:
+        root = pathlib.Path(source_root).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None, "missing_checkout"
+    if not root.is_dir():
+        return None, "not_a_directory"
+    git_metadata = root / ".git"
+    if not (git_metadata.exists() or git_metadata.is_symlink()):
+        return None, "not_a_git_checkout"
+    git = shutil.which("git")
+    if not git:
+        return None, "git_unavailable"
+    try:
+        top_level = subprocess.run(
+            [git, "-C", str(root), "rev-parse", "--show-toplevel"],
+            check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=5, env={"PATH": os.defpath, "LC_ALL": "C"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None, "invalid_git_checkout"
+    if top_level.returncode != 0:
+        return None, "invalid_git_checkout"
+    try:
+        git_root = pathlib.Path(top_level.stdout.strip()).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None, "invalid_git_checkout"
+    if git_root != root:
+        return None, "not_a_source_root"
+    try:
+        return resolve_git_revision(root), "available"
+    except DeploymentManifestError:
+        return None, "invalid_git_head"
+
+
+def _deployment_runtime_status(
+    source_root: str | os.PathLike[str],
+    manifest_path: str | os.PathLike[str],
+    deployed_root: str | os.PathLike[str],
+) -> dict[str, Any]:
+    """Describe deployment provenance while tolerating an unavailable checkout."""
+    source_revision, checkout_status = _source_checkout_revision(source_root)
+    path = pathlib.Path(manifest_path)
+    manifest = None
+    if not path.is_file():
+        manifest_status = "unavailable"
+    else:
+        try:
+            manifest = load_manifest(path)
+        except (OSError, ValueError):
+            manifest_status = "invalid"
+        else:
+            manifest_status = "available"
+
+    manifest_revision = str(manifest["gitRevision"]) if manifest is not None else None
+    revision_drift = (
+        source_revision != manifest_revision
+        if source_revision is not None and manifest_revision is not None
+        else None
+    )
+    if source_revision is None:
+        comparison = "unavailable"
+    elif manifest_revision is None:
+        comparison = "manifest_unavailable"
+    else:
+        comparison = "drift" if revision_drift else "match"
+
+    manifest_parity = None
+    deployed_parity = None
+    if manifest is not None:
+        if source_revision is not None:
+            try:
+                manifest_parity = verify_manifest_files(
+                    manifest, source_root, deployed_root,
+                )["allMatch"]
+            except (OSError, ValueError):
+                manifest_parity = False
+            if manifest_parity is False and comparison == "match":
+                comparison = "drift"
+        try:
+            deployed_parity = verify_manifest_deployed_files(manifest, deployed_root)["allMatch"]
+        except (OSError, ValueError):
+            deployed_parity = False
+
+    return {
+        "sourceRevision": source_revision,
+        "manifestRevision": manifest_revision,
+        "deployedSourceRevision": manifest_revision,
+        "sourceCheckoutAvailable": source_revision is not None,
+        "sourceCheckoutStatus": checkout_status,
+        "sourceCheckoutComparison": comparison,
+        "revisionDrift": revision_drift,
+        "manifestStatus": manifest_status,
+        "manifestParity": manifest_parity,
+        "deployedParity": deployed_parity,
+    }
 
 
 def deployment_profile(profile: str) -> tuple[Mapping[str, tuple[str, str]], pathlib.Path, pathlib.Path]:
@@ -1419,24 +1523,16 @@ def dashboard() -> dict[str, Any]:
         catalog_hash = hashlib.sha256(catalog.read_bytes()).hexdigest() if catalog.is_file() else None
     except OSError:
         catalog_hash = None
-    manifest_revision = None
-    manifest_parity = None
-    if DEPLOYMENT_MANIFEST.is_file():
-        try:
-            manifest = load_manifest(DEPLOYMENT_MANIFEST)
-            manifest_revision = manifest["gitRevision"]
-            manifest_parity = verify_manifest_files(manifest, DEFAULT_WORKSPACE, HOME)["allMatch"]
-        except (OSError, ValueError):
-            manifest_parity = False
+    deployment_status = _deployment_runtime_status(
+        DEFAULT_WORKSPACE, DEPLOYMENT_MANIFEST, HOME,
+    )
     return {
         "schemaVersion": SCHEMA_VERSION, "generatedAt": now_iso(),
         "defaultAgent": config["defaultAgent"],
         "activeAccount": config["defaultCodexAccount"],
         "defaultPolicyProfile": config["defaultPolicyProfile"],
         "runtime": {
-            "sourceRevision": resolve_git_revision(DEFAULT_WORKSPACE),
-            "manifestRevision": manifest_revision,
-            "manifestParity": manifest_parity,
+            **deployment_status,
             "catalogSha256": catalog_hash,
             "activeAccount": config["defaultCodexAccount"],
         },
@@ -1597,6 +1693,22 @@ def print_status(as_json: bool) -> None:
     print(f"Codex authentication: {active['status'] if active else 'Unavailable'}")
     print(f"Running sessions: {len(data['sessions'])}")
     print(f"Recent projects: {len(data['recent'])}")
+    runtime = data.get("runtime", {})
+    deployed_revision = runtime.get("deployedSourceRevision")
+    print(f"Deployed source revision: {deployed_revision or 'unavailable'}")
+    if runtime.get("manifestStatus") == "invalid":
+        print("Deployment manifest: invalid")
+    checkout_comparison = runtime.get("sourceCheckoutComparison")
+    if checkout_comparison == "unavailable":
+        reason = str(runtime.get("sourceCheckoutStatus") or "unavailable").replace("_", " ")
+        print(f"Source-checkout comparison: unavailable ({reason})")
+    elif checkout_comparison == "manifest_unavailable":
+        print("Source-checkout comparison: unavailable (deployment manifest revision unavailable)")
+    else:
+        source_revision = runtime.get("sourceRevision") or "unavailable"
+        print(f"Source-checkout comparison: {checkout_comparison or 'unavailable'} ({source_revision})")
+    if runtime.get("deployedParity") is False:
+        print("Installed deployment parity: drift")
     routing = data.get("routing", {})
     print("Routing tiers: " + ", ".join(f"{tier}={routing.get(tier, 0)}" for tier in ("FAST", "STANDARD", "REASONING")))
     cooperation = data["cooperation"]
@@ -1667,10 +1779,7 @@ def doctor(as_json: bool) -> int:
     if CORE_DEPLOYMENT_MANIFEST.is_file():
         try:
             manifest = load_manifest(CORE_DEPLOYMENT_MANIFEST)
-            try:
-                source_revision = resolve_git_revision(DEFAULT_WORKSPACE)
-            except Exception:
-                source_revision = None
+            source_revision, _checkout_status = _source_checkout_revision(DEFAULT_WORKSPACE)
             parity = (
                 verify_manifest_files(manifest, DEFAULT_WORKSPACE, HOME)
                 if source_revision == manifest["gitRevision"]
@@ -2951,10 +3060,7 @@ def _deployment_status(profile: str) -> dict[str, Any]:
             "manifestPath": str(manifest_path),
         }
     manifest = load_manifest(manifest_path)
-    try:
-        source_revision = resolve_git_revision(DEFAULT_WORKSPACE)
-    except Exception:
-        source_revision = None
+    source_revision, _checkout_status = _source_checkout_revision(DEFAULT_WORKSPACE)
     live = (
         verify_manifest_files(manifest, DEFAULT_WORKSPACE, HOME)
         if source_revision == manifest["gitRevision"]

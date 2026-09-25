@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
 import pathlib
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -315,6 +319,242 @@ class DeploymentManifestTests(unittest.TestCase):
                 revision=self.REVISION,
             )
         self.assertTrue(manifest["parity"]["allMatch"])
+
+
+class RuntimeDeploymentStatusTests(unittest.TestCase):
+    MANIFEST_REVISION = "a" * 40
+
+    def _git_checkout(self, root: pathlib.Path, *, commit: bool = True) -> str | None:
+        git_env = {
+            "PATH": os.defpath,
+            "LC_ALL": "C",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "Quattro Test",
+            "GIT_AUTHOR_EMAIL": "quattro-test@example.invalid",
+            "GIT_COMMITTER_NAME": "Quattro Test",
+            "GIT_COMMITTER_EMAIL": "quattro-test@example.invalid",
+        }
+        root.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "--quiet", str(root)], check=True, env=git_env)
+        source_file = root / "src" / "tool.py"
+        source_file.parent.mkdir(parents=True, exist_ok=True)
+        source_file.write_text("source", encoding="utf-8")
+        if not commit:
+            return None
+        subprocess.run(
+            ["git", "-C", str(root), "add", "src/tool.py"],
+            check=True, env=git_env,
+        )
+        subprocess.run(
+            ["git", "-C", str(root), "commit", "--quiet", "-m", "fixture"],
+            check=True, env=git_env,
+        )
+        return deployment.resolve_git_revision(root)
+
+    def _manifest(
+        self,
+        source_root: pathlib.Path,
+        deployed_root: pathlib.Path,
+        manifest_path: pathlib.Path,
+        revision: str,
+    ) -> dict:
+        source_file = source_root / "src" / "tool.py"
+        source_file.parent.mkdir(parents=True, exist_ok=True)
+        if not source_file.exists():
+            source_file.write_text("source", encoding="utf-8")
+        deployed_file = deployed_root / ".local/bin/tool.py"
+        deployed_file.parent.mkdir(parents=True, exist_ok=True)
+        deployed_file.write_text(source_file.read_text(encoding="utf-8"), encoding="utf-8")
+        manifest = deployment.build_manifest(
+            source_root,
+            deployed_root,
+            {"tool": ("src/tool.py", ".local/bin/tool.py")},
+            revision=revision,
+        )
+        deployment.write_manifest_atomic(manifest_path, manifest)
+        return manifest
+
+    def test_valid_git_checkout_compares_revision_and_file_parity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"
+            deployed = root / "deployed"
+            source_revision = self._git_checkout(source)
+            manifest_path = root / "state/manifest.json"
+            self._manifest(source, deployed, manifest_path, str(source_revision))
+
+            result = cli._deployment_runtime_status(source, manifest_path, deployed)
+
+        self.assertEqual(result["sourceCheckoutStatus"], "available")
+        self.assertEqual(result["sourceRevision"], source_revision)
+        self.assertEqual(result["deployedSourceRevision"], source_revision)
+        self.assertEqual(result["sourceCheckoutComparison"], "match")
+        self.assertFalse(result["revisionDrift"])
+        self.assertTrue(result["manifestParity"])
+        self.assertTrue(result["deployedParity"])
+
+    def test_installed_artifact_without_git_uses_manifest_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            artifact = root / "installed-artifact"
+            (artifact / "quattro_agent").mkdir(parents=True)
+            (artifact / "quattro_agent/cli.py").write_text("installed", encoding="utf-8")
+            source = root / "release-source"
+            deployed = root / "deployed"
+            manifest_path = root / "state/manifest.json"
+            self._manifest(source, deployed, manifest_path, self.MANIFEST_REVISION)
+
+            with mock.patch.object(
+                cli, "resolve_git_revision", side_effect=AssertionError("artifact is not a source checkout"),
+            ) as resolve_revision:
+                result = cli._deployment_runtime_status(artifact, manifest_path, deployed)
+                resolve_revision.assert_not_called()
+
+        self.assertEqual(result["sourceCheckoutStatus"], "not_a_git_checkout")
+        self.assertEqual(result["sourceCheckoutComparison"], "unavailable")
+        self.assertIsNone(result["sourceRevision"])
+        self.assertEqual(result["deployedSourceRevision"], self.MANIFEST_REVISION)
+        self.assertIsNone(result["manifestParity"])
+        self.assertTrue(result["deployedParity"])
+
+    def test_missing_source_checkout_keeps_status_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "release-source"
+            deployed = root / "deployed"
+            manifest_path = root / "state/manifest.json"
+            self._manifest(source, deployed, manifest_path, self.MANIFEST_REVISION)
+
+            result = cli._deployment_runtime_status(root / "missing-source", manifest_path, deployed)
+
+        self.assertEqual(result["sourceCheckoutStatus"], "missing_checkout")
+        self.assertEqual(result["sourceCheckoutComparison"], "unavailable")
+        self.assertEqual(result["deployedSourceRevision"], self.MANIFEST_REVISION)
+        self.assertTrue(result["deployedParity"])
+
+    def test_invalid_git_head_is_reported_without_raising(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"
+            self._git_checkout(source, commit=False)
+            deployed = root / "deployed"
+            manifest_path = root / "state/manifest.json"
+            self._manifest(root / "release-source", deployed, manifest_path, self.MANIFEST_REVISION)
+
+            result = cli._deployment_runtime_status(source, manifest_path, deployed)
+
+        self.assertEqual(result["sourceCheckoutStatus"], "invalid_git_head")
+        self.assertEqual(result["sourceCheckoutComparison"], "unavailable")
+        self.assertIsNone(result["sourceRevision"])
+        self.assertEqual(result["deployedSourceRevision"], self.MANIFEST_REVISION)
+
+    def test_missing_source_file_does_not_look_like_installed_file_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"
+            source_revision = self._git_checkout(source)
+            deployed = root / "deployed"
+            manifest_path = root / "state/manifest.json"
+            self._manifest(source, deployed, manifest_path, str(source_revision))
+            (source / "src/tool.py").unlink()
+
+            result = cli._deployment_runtime_status(source, manifest_path, deployed)
+
+        self.assertEqual(result["sourceRevision"], source_revision)
+        self.assertEqual(result["sourceCheckoutComparison"], "drift")
+        self.assertFalse(result["manifestParity"])
+        self.assertTrue(result["deployedParity"])
+
+    def test_missing_manifest_revision_is_not_fabricated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"
+            source_revision = self._git_checkout(source)
+            deployed = root / "deployed"
+
+            result = cli._deployment_runtime_status(source, root / "missing-manifest.json", deployed)
+
+        self.assertEqual(result["sourceCheckoutStatus"], "available")
+        self.assertEqual(result["sourceRevision"], source_revision)
+        self.assertEqual(result["manifestStatus"], "unavailable")
+        self.assertIsNone(result["manifestRevision"])
+        self.assertIsNone(result["deployedSourceRevision"])
+        self.assertEqual(result["sourceCheckoutComparison"], "manifest_unavailable")
+        self.assertIsNone(result["revisionDrift"])
+
+    def test_source_and_deployed_revision_drift_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"
+            source_revision = self._git_checkout(source)
+            deployed = root / "deployed"
+            manifest_path = root / "state/manifest.json"
+            self._manifest(source, deployed, manifest_path, self.MANIFEST_REVISION)
+
+            result = cli._deployment_runtime_status(source, manifest_path, deployed)
+
+        self.assertNotEqual(source_revision, self.MANIFEST_REVISION)
+        self.assertEqual(result["sourceCheckoutComparison"], "drift")
+        self.assertTrue(result["revisionDrift"])
+        self.assertEqual(result["sourceRevision"], source_revision)
+        self.assertEqual(result["deployedSourceRevision"], self.MANIFEST_REVISION)
+
+    def test_status_json_reports_unavailable_source_checkout_and_manifest_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            deployed = root / "deployed"
+            manifest_path = root / "state/manifest.json"
+            self._manifest(root / "release-source", deployed, manifest_path, self.MANIFEST_REVISION)
+            installed = root / "installed"
+            installed.mkdir()
+            harness = mock.Mock()
+            harness.list_logical_sessions.return_value = []
+            harness.store.list_display_approvals.return_value = []
+            harness.coordinator.status.return_value = {}
+            harness.routing_summary.return_value = {}
+            harness.list_tasks.return_value = []
+            knowledge_store = mock.Mock()
+            knowledge_store.stats.return_value = {}
+            knowledge_store.last_trace.return_value = None
+            output = io.StringIO()
+            with (
+                mock.patch.object(cli, "ensure_state_dirs"),
+                mock.patch.object(cli, "load_config", return_value={
+                    "defaultAgent": "codex",
+                    "defaultCodexAccount": "account-1",
+                    "defaultPolicyProfile": "workspace-write",
+                    "accounts": [],
+                }),
+                mock.patch.object(cli, "memory_settings", return_value=(False, None, False)),
+                mock.patch.object(cli, "project_memory_path", return_value=root / "project-memory"),
+                mock.patch.object(cli, "repository_state", side_effect=lambda path: {
+                    "repository": str(path), "commitSha": None,
+                }),
+                mock.patch.object(cli, "command_path", return_value=None),
+                mock.patch.object(cli, "retrieval_store", return_value=contextlib.nullcontext(knowledge_store)),
+                mock.patch.object(cli, "harness", return_value=harness),
+                mock.patch.object(cli, "model_catalog_path", return_value=root / "missing-catalog.json"),
+                mock.patch.object(cli, "read_json", side_effect=lambda _path, default: default),
+                mock.patch.object(cli, "sessions_status", return_value=[]),
+                mock.patch.object(cli, "usage_status", return_value={}),
+                mock.patch.object(cli, "dictation_status", return_value={"state": "idle"}),
+                mock.patch.object(cli, "crash_rows", return_value=[]),
+                mock.patch.multiple(
+                    cli,
+                    DEFAULT_WORKSPACE=installed,
+                    DEPLOYMENT_MANIFEST=manifest_path,
+                    HOME=deployed,
+                ),
+                mock.patch.object(cli.sys, "argv", ["quattro-agent", "status", "--json"]),
+                contextlib.redirect_stdout(output),
+            ):
+                result = cli.main()
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(result, 0)
+        self.assertEqual(payload["runtime"]["sourceCheckoutComparison"], "unavailable")
+        self.assertEqual(payload["runtime"]["deployedSourceRevision"], self.MANIFEST_REVISION)
+        self.assertIsNone(payload["runtime"]["sourceRevision"])
 
 
 if __name__ == "__main__":
