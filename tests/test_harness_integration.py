@@ -33,6 +33,7 @@ from quattro_agent.retrieval import RetrievalStore
 from quattro_agent.retrieval import RepositoryIndexer
 from quattro_agent.adaptive_routing import AdaptiveRoutingDecision, CapabilityNegotiation
 from quattro_agent.routing_intelligence import ModelSelection
+from quattro_agent import ExecutionTarget
 
 
 class StandardAdaptiveClient:
@@ -125,6 +126,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             codex_preflight=lambda _home: None,
             adaptive_client_factory=StandardAdaptiveClient,
         )
+
         self.runtime._configured_codex_catalog = (  # type: ignore[method-assign]
             lambda _home: SRC / "quattro/omniroute-model-catalog.json"
         )
@@ -144,6 +146,41 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.runtime._locked_target_receipt = (  # type: ignore[method-assign]
             HarnessRuntimeIntegrationTests._matching_locked_receipt.__get__(self, type(self))
         )
+
+    @staticmethod
+    def _health_target(route: str = "account-2/gpt-5.6-luna") -> ExecutionTarget:
+        account, model = route.split("/", 1)
+        return ExecutionTarget(
+            mode="EXPLICIT", provider="codex", account=account, model=model,
+            route=route, tier="FAST", reason="test", fallbacks=(),
+        )
+
+    def test_account_authentication_failure_is_bounded_and_excludes_exact_route(self):
+        target = self._health_target()
+        self.runtime._record_account_health_failure(target, "AUTHENTICATION_FAILED")
+        self.assertEqual(
+            self.runtime._unavailable_registry_routes(None, [target]), {target.route},
+        )
+        payload = json.loads(self.runtime.account_health_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["routes"][target.route]["type"], "AUTHENTICATION_FAILED")
+        self.assertNotIn("credential", json.dumps(payload).lower())
+
+    def test_account_health_success_clears_route_for_manual_reauthentication_recovery(self):
+        target = self._health_target()
+        self.runtime._record_account_health_failure(target, "AUTHENTICATION_FAILED")
+        self.runtime._clear_account_health(target)
+        self.assertEqual(self.runtime._unavailable_registry_routes(None, [target]), set())
+
+    def test_expired_account_health_state_is_pruned(self):
+        target = self._health_target()
+        self.runtime._persist_account_health({target.route: {
+            "provider": target.provider, "account": target.account, "model": target.model,
+            "type": "RATE_LIMITED", "observedAt": "2000-01-01T00:00:00+00:00",
+            "expiresAt": "2000-01-01T00:01:00+00:00",
+        }})
+        self.assertEqual(self.runtime._unavailable_registry_routes(None, [target]), set())
+        payload = json.loads(self.runtime.account_health_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["routes"], {})
 
     def tearDown(self):
         self.temp.cleanup()

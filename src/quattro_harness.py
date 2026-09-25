@@ -185,6 +185,14 @@ TARGET_FAILURE_TYPES = frozenset({
 GATEWAY_RESOURCE_PRESSURE = "GATEWAY_RESOURCE_PRESSURE"
 GATEWAY_PRESSURE_MAX_RETRIES = 2
 GATEWAY_PRESSURE_MAX_BACKOFF_SECONDS = 30.0
+ACCOUNT_HEALTH_TTL_SECONDS = {
+    "AUTHENTICATION_FAILED": 15 * 60,
+    "RATE_LIMITED": 60,
+    "QUOTA_EXHAUSTED": 5 * 60,
+    "CREDITS_EXHAUSTED": 5 * 60,
+    "ACCOUNT_UNAVAILABLE": 60,
+    "PROVIDER_UNAVAILABLE": 60,
+}
 FALLBACK_ELIGIBLE_TARGET_FAILURES = TARGET_FAILURE_TYPES - frozenset({
     "CONTEXT_LIMIT", "CAPABILITY_UNSUPPORTED", "TRANSPORT_FAILURE",
 })
@@ -420,6 +428,8 @@ class HarnessRuntime:
             os.chmod(path, 0o700)
         self.store = TaskStore(self.private_root / "harness.sqlite3")
         self.intelligence_database = self.private_root / "intelligence" / "intelligence.sqlite3"
+        self.account_health_path = self.private_root / "routing" / "account-health.json"
+        self._account_health_lock = threading.Lock()
         self.codex_preflight = codex_preflight or self._default_codex_preflight
         self.adaptive_client_factory = adaptive_client_factory or OmniRouteAdaptiveClient
         delegation = self.config().get("delegation", {})
@@ -542,20 +552,18 @@ class HarnessRuntime:
             if isinstance(row, Mapping) and row.get("enabled") is True
         )
 
-    @staticmethod
     def _unavailable_registry_routes(
+        self,
         adaptive: AdaptiveRoutingDecision | None,
         registry: Sequence[Any],
     ) -> frozenset[str]:
         """Map verified provider/model unavailability onto account-pinned routes.
 
-        The public snapshot intentionally has no account identifiers. Therefore
-        this excludes both account routes only when the provider/model resource
-        itself is known unavailable; account-local failure remains a fallback
-        event discovered by the exact route execution.
+        The public snapshot intentionally has no account identifiers, so its
+        provider/model failures exclude every matching account route. Private,
+        bounded receipt evidence additionally excludes only the failed exact
+        account route.
         """
-        if adaptive is None or adaptive.selection is None:
-            return frozenset()
         unavailable_models = {
             (decision.provider, decision.model)
             for decision in adaptive.selection.candidates
@@ -564,11 +572,78 @@ class HarnessRuntime:
                 str(reason).startswith("unavailable:")
                 for reason in decision.rejection_reasons
             )
-        }
-        return frozenset(
+        } if adaptive is not None and adaptive.selection is not None else set()
+        registry_routes = {
             target.route for target in registry
             if (target.provider, target.model) in unavailable_models
-        )
+        }
+        return frozenset(registry_routes | self._account_health_unavailable_routes())
+
+    def _account_health_entries(self) -> dict[str, dict[str, Any]]:
+        """Load unexpired account-local failures without exposing credentials."""
+        try:
+            payload = json.loads(self.account_health_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return {}
+        rows = payload.get("routes", {}) if isinstance(payload, Mapping) else {}
+        if not isinstance(rows, Mapping):
+            return {}
+        now = dt.datetime.now(dt.timezone.utc)
+        active: dict[str, dict[str, Any]] = {}
+        for route, row in rows.items():
+            if not isinstance(route, str) or not isinstance(row, Mapping):
+                continue
+            try:
+                expires = dt.datetime.fromisoformat(str(row.get("expiresAt")))
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=dt.timezone.utc)
+            except ValueError:
+                continue
+            if expires > now:
+                active[route] = dict(row)
+        return active
+
+    def _persist_account_health(self, entries: Mapping[str, Mapping[str, Any]]) -> None:
+        atomic_json(self.account_health_path, {
+            "schemaVersion": 1,
+            "routes": {route: dict(row) for route, row in sorted(entries.items())},
+        })
+
+    def _account_health_unavailable_routes(self) -> set[str]:
+        with self._account_health_lock:
+            entries = self._account_health_entries()
+            # Opportunistically remove expired state so manual reauthentication
+            # becomes eligible without a service restart.
+            if self.account_health_path.is_file():
+                self._persist_account_health(entries)
+            return set(entries)
+
+    def _record_account_health_failure(
+        self, target: ExecutionTarget, failure_type: str, *, retry_after_ms: int | None = None,
+    ) -> None:
+        ttl = ACCOUNT_HEALTH_TTL_SECONDS.get(failure_type)
+        if ttl is None:
+            return
+        if failure_type == "RATE_LIMITED" and retry_after_ms is not None:
+            ttl = max(ttl, min(15 * 60, max(0, retry_after_ms) // 1_000))
+        now = dt.datetime.now(dt.timezone.utc)
+        with self._account_health_lock:
+            entries = self._account_health_entries()
+            entries[target.route] = {
+                "provider": target.provider,
+                "account": target.account,
+                "model": target.model,
+                "type": failure_type,
+                "observedAt": now.isoformat(timespec="seconds"),
+                "expiresAt": (now + dt.timedelta(seconds=ttl)).isoformat(timespec="seconds"),
+            }
+            self._persist_account_health(entries)
+
+    def _clear_account_health(self, target: ExecutionTarget) -> None:
+        with self._account_health_lock:
+            entries = self._account_health_entries()
+            if entries.pop(target.route, None) is not None:
+                self._persist_account_health(entries)
 
     def _memory(self, config: Mapping[str, Any]) -> tuple[bool, pathlib.Path, pathlib.Path, str]:
         enabled, vault, enforced = memory_settings(dict(config))
@@ -1332,6 +1407,11 @@ class HarnessRuntime:
                     if error.transport_retryable and transport_attempt == 0:
                         transport_attempt += 1
                         continue
+                    if attempt_plan is not None:
+                        self._record_account_health_failure(
+                            attempt_plan.target, error.error_type,
+                            retry_after_ms=error.retry_after_ms,
+                        )
                     fallback_events.append({
                         "planId": attempt_plan.plan_id if attempt_plan is not None else None,
                         "route": attempt_route, "attempt": attempt_index + 1,
@@ -1446,6 +1526,7 @@ class HarnessRuntime:
                     "locked target receipt failed provider/account/model/route fidelity",
                     terminal_code="locked_target_mismatch",
                 )
+            self._clear_account_health(selected_plan.target)
         update_execution_telemetry(self.intelligence_database, intelligence_record_id, {
             "context_tokens": profile_snapshot.final_request_tokens,
             "retrieval_used": int(diagnostics.get("selectedChunks", 0) or 0) > 0,
@@ -2007,12 +2088,22 @@ class HarnessRuntime:
                 "locked target receipt does not match the active execution plan",
                 terminal_code="locked_receipt_mismatch",
             )
+        expected = _execution_target_from_dict(target)
         if receipt.get("success") is not True:
+            failure = receipt.get("failure")
+            if isinstance(failure, Mapping):
+                self._record_account_health_failure(
+                    expected, str(failure.get("type", "")),
+                    retry_after_ms=(
+                        int(failure["retry_after_ms"])
+                        if isinstance(failure.get("retry_after_ms"), (int, float))
+                        and not isinstance(failure.get("retry_after_ms"), bool) else None
+                    ),
+                )
             raise LockedReceiptError(
                 "locked target receipt does not prove successful execution",
                 terminal_code="locked_receipt_failed",
             )
-        expected = _execution_target_from_dict(target)
         actual = {
             "provider": receipt.get("actual_provider"),
             "account": receipt.get("actual_account"),
@@ -2034,6 +2125,7 @@ class HarnessRuntime:
                 "locked target receipt failed provider/account/model/route fidelity",
                 terminal_code="locked_target_mismatch",
             )
+        self._clear_account_health(expected)
         refreshed = dict(private)
         snapshot = dict(refreshed.get("routingSnapshot", {}))
         snapshot["actual_selection"] = actual
@@ -3443,6 +3535,15 @@ class HarnessRuntime:
                     if isinstance(failure, Mapping):
                         failure_type = failure.get("type")
                         failure_retry_after_ms = failure.get("retry_after_ms")
+                        if isinstance(failure_type, str):
+                            self._record_account_health_failure(
+                                attempt_plan.target, failure_type,
+                                retry_after_ms=(
+                                    int(failure_retry_after_ms)
+                                    if isinstance(failure_retry_after_ms, (int, float))
+                                    and not isinstance(failure_retry_after_ms, bool) else None
+                                ),
+                            )
                     # Locked attempts never fall back based on human-readable process output.
                     if receipt is None:
                         locked_receipt_unavailable = True
