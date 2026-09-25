@@ -1358,6 +1358,55 @@ class TaskStore:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def bind_physical_native_session(
+        self, physical_session_id: str, native_codex_session_id: str
+    ) -> None:
+        """Bind the exact Codex thread discovered from a bounded JSONL launch."""
+        native = display_text(
+            native_codex_session_id, field="native_codex_session_id", maximum=200
+        )
+        now = utc_now()
+        with self._transaction(immediate=True) as connection:
+            row = connection.execute(
+                "SELECT * FROM physical_sessions WHERE physical_session_id = ?",
+                (physical_session_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown physical session: {physical_session_id}")
+            session = connection.execute(
+                "SELECT * FROM logical_sessions WHERE quattro_session_id = ?",
+                (row["quattro_session_id"],),
+            ).fetchone()
+            if session is None:
+                raise KeyError(f"unknown logical session: {row['quattro_session_id']}")
+            previous = json.loads(session["previous_codex_session_ids_json"])
+            current = session["current_codex_session_id"]
+            if current and current != native and current not in previous:
+                previous.append(current)
+            connection.execute(
+                "UPDATE physical_sessions SET native_codex_session_id = ?, updated_at = ? "
+                "WHERE physical_session_id = ?",
+                (native, now, physical_session_id),
+            )
+            connection.execute(
+                """UPDATE logical_sessions SET current_codex_session_id = ?,
+                       previous_codex_session_ids_json = ?, updated_at = ?
+                   WHERE quattro_session_id = ?""",
+                (
+                    native, json.dumps(previous[-100:], separators=(",", ":")), now,
+                    row["quattro_session_id"],
+                ),
+            )
+            self._event(
+                connection, row["task_id"], "physical_session.native_bound",
+                run_id=row["run_id"],
+                display={
+                    "quattroSessionId": row["quattro_session_id"],
+                    "physicalSessionId": physical_session_id,
+                    "nativeSessionId": native,
+                },
+            )
+
     def mark_physical_session_failed(self, physical_session_id: str, reason: str) -> None:
         now = utc_now()
         safe_reason = display_text(reason, field="recovery_reason", maximum=1_000)

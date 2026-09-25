@@ -244,6 +244,27 @@ def _execution_plan_from_dict(value: Mapping[str, Any]) -> ExecutionPlan:
         ),
         routing_locked=value.get("routingLocked") is True,
     )
+
+
+def _codex_thread_id_from_jsonl(path: pathlib.Path) -> str | None:
+    """Extract the native thread id from Codex JSONL without retaining model text."""
+    if not path.is_file():
+        return None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event, Mapping) or event.get("type") != "thread.started":
+            continue
+        value = event.get("thread_id")
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._:-]{1,200}", value):
+            return value
+    return None
 SELECTABLE_POLICIES = {
     "audit-read-only", "review-untrusted", "workspace-write",
     "desktop-config-write", "publication-capable", "full-access-explicit",
@@ -2116,6 +2137,14 @@ class HarnessRuntime:
         account_home = None
         config = self.config()
         routing_mode = omniroute_routing_mode(private.get("routingMode"))
+        if (
+            routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+            and mode in {AgentMode.INTERACTIVE, AgentMode.RESUME}
+        ):
+            raise ConfigError(
+                "persistent interactive/resume execution cannot refresh a locked plan per turn; "
+                "use a prompt task or resume-prompt turn, or explicitly select legacy mode"
+            )
         if task["agent"] == "codex":
             account_home = pathlib.Path(str(self.account(config, account_id)["codexHome"]))
             account_home = pathlib.Path(os.path.expandvars(os.path.expanduser(str(account_home)))).resolve()
@@ -2999,7 +3028,7 @@ class HarnessRuntime:
             agent="codex",
             project=pathlib.Path(session["repository_path"]),
             prompt=packet,
-            mode="interactive",
+            mode="prompt",
             account_id=account_id or session.get("last_account_id"),
             logical_session_id=quattro_session_id,
             recovery_checkpoint_id=checkpoint["checkpoint_id"],
@@ -3012,11 +3041,12 @@ class HarnessRuntime:
         quattro_session_id: str,
         *,
         native_session_available: bool,
+        prompt: str | None = None,
         account_id: str | None = None,
     ) -> tuple[str, str]:
         session = self.store.get_logical_session(quattro_session_id)
         native = session.get("current_codex_session_id")
-        if native and native_session_available:
+        if native and native_session_available and prompt and prompt.strip():
             current_task = session.get("current_task_id")
             if current_task:
                 self.checkpoint_task(
@@ -3025,12 +3055,14 @@ class HarnessRuntime:
                 )
             task_id = self.create_task(
                 agent="codex", project=pathlib.Path(session["repository_path"]),
-                prompt="", mode="resume",
+                prompt=prompt, mode="resume-prompt",
                 account_id=account_id or session.get("last_account_id"),
                 native_session_ref=str(native), logical_session_id=quattro_session_id,
-                title="Codex logical session resume",
+                title="Codex logical session turn",
             )
-            return task_id, "native-resume"
+            return task_id, "native-resume-turn"
+        if native and native_session_available:
+            raise ConfigError("passthrough resume requires a non-empty turn prompt")
         return self.prepare_recovery_task(
             quattro_session_id,
             account_id=account_id,
@@ -3379,6 +3411,16 @@ class HarnessRuntime:
                     capture_thread.join(timeout=5)
                     if capture_thread.is_alive():
                         raise RuntimeError("agent output collector did not stop")
+                if (
+                    result.state is RunState.SUCCEEDED
+                    and task["agent"] == "codex"
+                    and physical_session_id
+                ):
+                    discovered_native = _codex_thread_id_from_jsonl(output_path)
+                    if discovered_native:
+                        self.store.bind_physical_native_session(
+                            physical_session_id, discovered_native
+                        )
                 if result.state is RunState.SUCCEEDED:
                     break
                 failure_type = None
@@ -3559,12 +3601,13 @@ class HarnessRuntime:
                 if physical_session_id:
                     self.store.mark_physical_session_failed(
                         physical_session_id,
-                        "Native Codex resume failed." if task["private_payload"].get("mode") == "resume"
+                        "Native Codex resume failed."
+                        if task["private_payload"].get("mode") in {"resume", "resume-prompt"}
                         else "Physical Codex process exited unexpectedly.",
                     )
                 if (
                     task["agent"] == "codex"
-                    and task["private_payload"].get("mode") == "resume"
+                    and task["private_payload"].get("mode") in {"resume", "resume-prompt"}
                     and logical_session_id
                     and self.store.current_checkpoint(str(logical_session_id)) is not None
                 ):

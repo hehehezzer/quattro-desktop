@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from concurrent.futures import ThreadPoolExecutor
 
 SRC = pathlib.Path(__file__).parents[1] / "src"
@@ -80,6 +81,7 @@ class SessionDurabilityTests(unittest.TestCase):
         self.agent.write_text(
             "#!/bin/sh\n"
             "for arg in \"$@\"; do [ \"$arg\" = resume ] && exit ${FAIL_RESUME:-0}; done\n"
+            "printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"codex-recovery-thread\"}'\n"
             "printf 'RECOVERY_AGENT_OK\\nHARNESS_VERDICT: PASS\\n'\n",
             encoding="utf-8",
         )
@@ -108,15 +110,34 @@ class SessionDurabilityTests(unittest.TestCase):
                 else HarnessRuntime._configured_codex_model(pathlib.Path(home))
             )
         )
+        def matching_receipt(plan_id: str, **_kwargs):
+            for projected in self.runtime.store.list_display_tasks(limit=100):
+                private = self.runtime.store.get_task(
+                    str(projected["taskId"]), include_private=True,
+                )["private_payload"]
+                plan = private.get("activeExecutionPlan", private.get("executionPlan"))
+                if isinstance(plan, dict) and plan.get("planId") == plan_id:
+                    target = plan["target"]
+                    return {
+                        "plan_id": plan_id, "success": True,
+                        "actual_provider": target["provider"],
+                        "actual_account": target["account"],
+                        "actual_model": target["model"],
+                        "actual_route": target["route"],
+                        "target_honored": True,
+                    }
+            return None
+        self.runtime._locked_target_receipt = matching_receipt  # type: ignore[method-assign]
 
     def tearDown(self):
         self.temp.cleanup()
 
     def create(self, *, native: str | None = "codex-native-1", prompt: str = "Ship durable checkpoints"):
-        task = self.runtime.create_task(
-            agent="codex", project=self.project, prompt=prompt,
-            mode="interactive", account_id="account-1", native_session_ref=native,
-        )
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "legacy"}):
+            task = self.runtime.create_task(
+                agent="codex", project=self.project, prompt=prompt,
+                mode="interactive", account_id="account-1", native_session_ref=native,
+            )
         logical = self.runtime.store.logical_session_for_task(task)
         self.assertIsNotNone(logical)
         return task, logical["quattro_session_id"]
@@ -220,27 +241,31 @@ class SessionDurabilityTests(unittest.TestCase):
 
     def test_native_resume_first_and_missing_native_falls_back(self):
         task, logical = self.create()
-        native_task, path = self.runtime.prepare_resume_task(logical, native_session_available=True)
-        self.assertEqual(path, "native-resume")
+        native_task, path = self.runtime.prepare_resume_task(
+            logical, native_session_available=True, prompt="Continue the session"
+        )
+        self.assertEqual(path, "native-resume-turn")
         native_private = self.runtime.store.get_task(native_task, include_private=True)["private_payload"]
-        self.assertEqual(native_private["mode"], "resume")
+        self.assertEqual(native_private["mode"], "resume-prompt")
         self.assertEqual(native_private["nativeSessionRef"], "codex-native-1")
         self.runtime.store.transition_task(native_task, TaskState.CANCELLED)
         recovery_task, path = self.runtime.prepare_resume_task(logical, native_session_available=False)
         self.assertEqual(path, "checkpoint-recovery")
         recovery_private = self.runtime.store.get_task(recovery_task, include_private=True)["private_payload"]
-        self.assertEqual(recovery_private["mode"], "interactive")
+        self.assertEqual(recovery_private["mode"], "prompt")
         self.assertIn("OBJECTIVE", recovery_private["prompt"])
 
     def test_explicit_native_resume_failure_automatically_recovers_same_logical_session(self):
         _task, logical = self.create()
-        resume_task, path = self.runtime.prepare_resume_task(logical, native_session_available=True)
-        self.assertEqual(path, "native-resume")
+        resume_task, path = self.runtime.prepare_resume_task(
+            logical, native_session_available=True, prompt="Continue the session"
+        )
+        self.assertEqual(path, "native-resume-turn")
         original = self.runtime._agent_plan
 
         def failing_plan(task, run_id, profile):
             argv, stdin, overrides = original(task, run_id, profile)
-            if task["private_payload"].get("mode") == "resume":
+            if task["private_payload"].get("mode") == "resume-prompt":
                 overrides = {**overrides, "FAIL_RESUME": "7"}
             return argv, stdin, overrides
 
@@ -345,6 +370,24 @@ class SessionDurabilityTests(unittest.TestCase):
         restarted._configured_codex_model = (  # type: ignore[method-assign]
             self.runtime._configured_codex_model
         )
+        def restarted_receipt(plan_id: str, **_kwargs):
+            for projected in restarted.store.list_display_tasks(limit=100):
+                private = restarted.store.get_task(
+                    str(projected["taskId"]), include_private=True,
+                )["private_payload"]
+                plan = private.get("activeExecutionPlan", private.get("executionPlan"))
+                if isinstance(plan, dict) and plan.get("planId") == plan_id:
+                    target = plan["target"]
+                    return {
+                        "plan_id": plan_id, "success": True,
+                        "actual_provider": target["provider"],
+                        "actual_account": target["account"],
+                        "actual_model": target["model"],
+                        "actual_route": target["route"],
+                        "target_honored": True,
+                    }
+            return None
+        restarted._locked_target_receipt = restarted_receipt  # type: ignore[method-assign]
         results = restarted.reconcile()
         self.assertTrue(any(item.get("quattro_session_id") == logical for item in results))
         session = restarted.store.get_logical_session(logical)
@@ -419,6 +462,24 @@ class SessionDurabilityTests(unittest.TestCase):
         restarted._configured_codex_model = (  # type: ignore[method-assign]
             self.runtime._configured_codex_model
         )
+        def final_restarted_receipt(plan_id: str, **_kwargs):
+            for projected in restarted.store.list_display_tasks(limit=100):
+                private = restarted.store.get_task(
+                    str(projected["taskId"]), include_private=True,
+                )["private_payload"]
+                plan = private.get("activeExecutionPlan", private.get("executionPlan"))
+                if isinstance(plan, dict) and plan.get("planId") == plan_id:
+                    target = plan["target"]
+                    return {
+                        "plan_id": plan_id, "success": True,
+                        "actual_provider": target["provider"],
+                        "actual_account": target["account"],
+                        "actual_model": target["model"],
+                        "actual_route": target["route"],
+                        "target_honored": True,
+                    }
+            return None
+        restarted._locked_target_receipt = final_restarted_receipt  # type: ignore[method-assign]
         located = next(row for row in restarted.list_logical_sessions() if row["quattroSessionId"] == logical)
         self.assertEqual(located["recoveryState"], "recoverable")
         replacement = restarted.prepare_recovery_task(logical, reason="failure simulation")
