@@ -988,6 +988,34 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertIn("Codex should inspect", report["result"])
         self.assertEqual(len(self.runtime.store.runs_for_task(str(task_id))), 1)
 
+    def test_parentless_pi_delegation_is_locked_and_no_final_result_fails(self):
+        self.fake.write_text("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"agent_end\",\"messages\":[]}'\n", encoding="utf-8")
+        with mock.patch.object(
+            self.runtime, "_locked_target_receipt",
+            side_effect=self._matching_locked_receipt,
+        ):
+            task_id, exit_code, report = self.runtime.delegate_to_pi(
+                project=self.project,
+                objective="Explore the repository and identify the routing architecture file",
+                kind="exploration",
+                parent_task_id=None,
+            )
+        self.assertIsNotNone(task_id)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["terminalCode"], "WORKER_NO_FINAL_RESULT")
+        private = self.runtime.store.get_task(str(task_id), include_private=True)["private_payload"]
+        self.assertIsNotNone(private["executionPlan"])
+        dispatched = next(
+            event for event in self.runtime.store.display_events(str(task_id))
+            if event["type"] == "routing.dispatched"
+        )
+        self.assertEqual(dispatched["payload"]["selectedBy"], "Quattro")
+        self.assertTrue(any(
+            event["type"] == "delegation.worker_no_final_result"
+            for event in self.runtime.store.display_events(str(task_id))
+        ))
+
     def test_pi_child_cannot_delegate_recursively(self):
         parent = self.runtime.create_task(
             agent="pi", project=self.project, prompt="worker", mode="prompt",
@@ -1373,6 +1401,20 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         context = self.runtime.coordinator.context(first_coord["sessionId"])
         self.assertIn("appointment frontend", context)
         self.assertIn("Write ownership: src/auth", context)
+        worker_event = json.dumps({
+            "type": "message_end",
+            "message": {"role": "assistant", "provider": "omniroute", "model": "locked",
+                        "content": [{"type": "text", "text": "STATUS\nCOMPLETE\nFINDINGS\nBoundary inspected.\nFILES_CHANGED\nNone\nVALIDATION\nNot Run\nRISKS\nNone\nNEXT_ACTION\nContinue."}],
+                        "usage": {}},
+        })
+        self.fake.write_text(
+            "#!/bin/sh\n"
+            "case \" $* \" in\n"
+            f"  *' --mode json '*) printf '%s\\n' '{worker_event}' ;;\n"
+            "  *) printf 'FAKE_AGENT_OK\\nHARNESS_VERDICT: PASS\\n' ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
         with mock.patch.object(
             self.runtime, "_locked_target_receipt",
             side_effect=self._matching_locked_receipt,
@@ -1539,6 +1581,20 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(fallback.target, astra)
 
     def test_multi_agent_workflow_coordinates_dependencies_and_join(self):
+        worker_event = json.dumps({
+            "type": "message_end",
+            "message": {"role": "assistant", "provider": "omniroute", "model": "locked",
+                        "content": [{"type": "text", "text": "STATUS\nCOMPLETE\nFINDINGS\nDone.\nFILES_CHANGED\nNone\nVALIDATION\nPassed\nRISKS\nNone\nNEXT_ACTION\nComplete.\nHARNESS_VERDICT: PASS"}],
+                        "usage": {}},
+        })
+        self.fake.write_text(
+            "#!/bin/sh\n"
+            "case \" $* \" in\n"
+            f"  *' --mode json '*) printf '%s\\n' '{worker_event}' ;;\n"
+            "  *) printf 'FAKE_AGENT_OK\\nHARNESS_VERDICT: PASS\\n' ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
         parent = self.runtime.create_workflow(
             count=3,
             project=self.project,
