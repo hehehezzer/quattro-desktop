@@ -199,6 +199,26 @@ class PublicPortabilityTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("outside-secret", result.stdout + result.stderr)
 
+    def test_containment_path_uses_mapped_user_runtime_bin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            project = root / "project"
+            runtime = root / "runtime"
+            report = root / "report"
+            binary = root / ".nvm/versions/node/v24/bin/codex"
+            for path in (project, runtime, report, binary.parent):
+                path.mkdir(parents=True, exist_ok=True)
+            binary.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+            with mock.patch("quattro_agent.containment.bubblewrap_path", return_value="/usr/bin/bwrap"):
+                _, environment, _ = build_bwrap_command(
+                    [str(binary), "exec"], project_root=project,
+                    runtime_root=runtime, report_root=report,
+                    environment={"HOME": str(runtime)},
+                )
+            self.assertTrue(
+                environment["PATH"].startswith("/quattro-nvm/versions/node/v24/bin:")
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
