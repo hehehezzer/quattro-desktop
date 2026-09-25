@@ -1465,6 +1465,31 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
                 profile_name="workspace-write",
             )
 
+    def test_passthrough_direct_pi_task_has_locked_quattro_plan(self):
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "passthrough"}):
+            task_id = self.runtime.create_task(
+                agent="pi", project=self.project, prompt="Inspect README.md",
+                mode="prompt", profile_name="audit-read-only",
+            )
+        task = self.runtime.store.get_task(task_id, include_private=True)
+        private = task["private_payload"]
+        self.assertTrue(private["executionPlan"]["routingLocked"])
+        self.assertEqual(private["executionPlan"]["target"], private["executionTarget"])
+        self.assertEqual(
+            self.runtime.store.display_task(task_id)["metadata"]["selectedBy"],
+            "Quattro",
+        )
+
+        run = self.runtime.store.create_run(task_id, agent="pi")
+        argv, _, env = self.runtime._agent_plan(
+            task, run, PolicyProfile.from_dict(task["policy"]),
+        )
+        self.assertEqual(argv[argv.index("--provider") + 1], "omniroute")
+        self.assertEqual(
+            argv[argv.index("--model") + 1], private["executionPlan"]["target"]["route"],
+        )
+        self.assertIn("QUATTRO_ROUTING_ENVELOPE", env)
+
     def test_workflow_uses_supplied_narrow_write_scopes(self):
         parent = self.runtime.create_workflow(
             count=2, project=self.project, objective="exercise auth ownership",
