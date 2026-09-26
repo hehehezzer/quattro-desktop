@@ -9,6 +9,7 @@ import tempfile
 import threading
 
 from .codex_turn_bridge import CodexTurnBridge
+from .provider_access import typesafe_credential_status
 from .turn_gate import TurnGate
 from .turn_transport import TurnTransport
 
@@ -61,6 +62,9 @@ def launch_routed_native(*, agent, binary, command, env, config, directory,
                          session_id, account, state_root, runtime_factory,
                          profile_name=None, confirm_full_access=False):
     """Keep the actual TUI on inherited terminal handles; own only its backend."""
+    if config.get('routing', {}).get('jev', {}).get('mode', 'OFF') != 'OFF':
+        if typesafe_credential_status() == 'missing':
+            print('Jev unavailable — using Quattro local intelligence.', flush=True)
     delegate_lock = threading.Lock()
     runtime_holder = []
     gate = TurnGate(session_id=session_id, config=config, directory=directory,

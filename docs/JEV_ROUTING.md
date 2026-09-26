@@ -47,9 +47,13 @@ Merge this object into the existing `routing` group in private `ai.json`:
 ```
 
 Strict accepted modes: `OFF`, `SHADOW`, `COOPERATIVE`. Timeout: integer
-100–3000 ms, default 300 ms. The bearer is read only from runtime environment
-`TYPESAFE_API_KEY`. Never put it in `ai.json`, shell command arguments, task
-records, source, or review notes. No native Codex/Pi credential store is read.
+100–3000 ms, default 300 ms. The provider resolver reads an explicit runtime
+`TYPESAFE_API_KEY` override, then the existing private user
+`environment.d/60-quattro-typesafe.conf` assignment. Empty/invalid explicit
+overrides suppress the stored fallback. No manual export is required. Never put
+the bearer in `ai.json`, shell command arguments, task records, source or review
+notes. No native Codex/Pi credential store is read. See
+[JEV_CREDENTIALS.md](JEV_CREDENTIALS.md) for permissions and live measurements.
 
 - **OFF:** existing routing; no worker, HTTP request, Jev SQLite access, or
   extra learned inference. The existing telemetry's local shadow model remains
@@ -96,7 +100,9 @@ match the exact requested question/choice vocabularies, finite probabilities,
 approximately normalized distributions, model identity, and bounded usage.
 Unknown fields/values, duplicate JSON keys, oversized bodies, invalid JSON,
 and unknown model identities fail open. The returned canonical model is
-recorded separately from the requested alias and must appear in the catalog.
+recorded separately from the requested alias. It must appear in the catalog or
+be a strict numeric `jev-MAJOR.MINOR.PATCH` canonical version returned after
+successful catalog verification of the requested alias.
 
 There are no retries. Three consecutive provider/worker failures suppress new
 workers for 30 seconds, using a monotonic process-local cooldown keyed by the
@@ -230,10 +236,13 @@ provider evaluation**, eight task types, and isolated state with no active
 learned artifact. It does not contact TypeSafe. Zero fixture token counts are
 not usage measurements. Full relevant suite/checks remain in `AGENTS.md`.
 
-Live validation requires runtime `TYPESAFE_API_KEY`; unit tests never use it or
-contact the service. The current session lacks that variable, so authenticated
-model discovery, evaluation, native RTT, billing, and quality remain unverified.
-See `JEV_BENCHMARK.md` for measured local results and limits.
+Live validation now resolves the existing stored credential automatically.
+Authenticated alias discovery and 20 parsed `jev-1.13.0` evaluations succeeded;
+see [JEV_CREDENTIALS.md](JEV_CREDENTIALS.md) for actual RTT/usage and limitations.
+The prior environment-only credential blocker was incomplete discovery, not a
+missing stored key. Billing and routing-quality benefit remain unverified.
+Unit tests use fake credentials and must not contact the service.
+See `JEV_BENCHMARK.md` for the earlier simulated results and limits.
 
 Before global SHADOW -> COOPERATIVE promotion, require a separately reviewed
 report after rebasing onto latency-fixed main:

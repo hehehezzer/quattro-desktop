@@ -102,6 +102,19 @@ class JevClientTests(unittest.TestCase):
         self.serve({"models": [{"name": MODEL}, {"name": canonical}]}, body)
         self.assertEqual(self.client.evaluate(serialize_state("hello"))["response"]["model"], canonical)
 
+    def test_alias_only_catalog_accepts_canonical_semantic_version(self):
+        body = response()
+        body["model"] = "jev-1.13.0"
+        self.serve({"models": [{"name": MODEL}]}, body)
+        self.assertEqual(self.client.evaluate(serialize_state("hello"))["response"]["model"], "jev-1.13.0")
+
+    def test_unadvertised_nonversion_model_rejected(self):
+        body = response()
+        body["model"] = "jev-unexpected"
+        self.serve({"models": [{"name": MODEL}]}, body)
+        with self.assertRaisesRegex(JevFailure, "model_unavailable"):
+            self.client.evaluate(serialize_state("hello"))
+
     def test_absent_alias_never_silently_substitutes(self):
         self.serve({"models": [{"name": "jev-different"}]})
         with self.assertRaisesRegex(JevFailure, "model_unavailable"):

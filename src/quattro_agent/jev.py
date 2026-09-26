@@ -217,6 +217,11 @@ class JevClient:
             }))
         finally:
             self.timings["jev_latency_ms"] = (time.perf_counter() - start) * 1000
-        if result["model"] not in {item["name"] for item in catalog["models"]}:
+        # The authenticated catalog advertises aliases, while System One returns
+        # a concrete semantic version (observed jev-latest -> jev-1.13.0).
+        # Accept that narrow canonical form only after verifying our requested
+        # alias above. Never substitute an unadvertised request model.
+        if (result["model"] not in {item["name"] for item in catalog["models"]}
+                and not re.fullmatch(r"jev-[0-9]+\.[0-9]+\.[0-9]+", result["model"])):
             raise JevFailure("model_unavailable")
         return {"response": result, **self.timings}

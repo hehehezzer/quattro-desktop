@@ -25,9 +25,8 @@ uses no retry thread, and retains the existing worker cancellation ownership.
 Six hermetic regressions cover threshold/expiry, reset, isolation, bounded LRU,
 no-worker suppression, and lifecycle-owned failure/retry/reaping.
 
-This does not complete launcher integration, enable the default, or establish
-live provider latency/quality. The current agent environment has no
-`TYPESAFE_API_KEY`; no authenticated live validation was performed.
+This does not complete launcher integration or enable the default. The initial
+credential blocker is superseded by the following credential integration.
 
 ## Validation of cooldown increment
 
@@ -45,6 +44,26 @@ live provider latency/quality. The current agent environment has no
   per enabled mode. These are not broad coprocessor or live service results;
   no first-token, actual execution duration, actual usage or cost was measured.
 - Scoped diff self-reviewed; independent review remains outstanding.
+
+## Persistent credential integration and live evidence
+
+The existing owner-only environment.d TypeSafe assignment is now resolved by
+`provider_access`, with explicit environment override precedence, no secret
+copies, no environment mutation and pipe-only delivery to the isolated worker.
+Status exposes configured/missing only. Enabled native launch warns once if the
+credential is unavailable. The deployment inventory includes the resolver.
+
+Live validation found and repaired an alias/canonical model mismatch:
+`jev-latest` is catalog-advertised, while System One returns `jev-1.13.0`.
+Twenty live evaluations succeeded; RTT p50/p95 was 358.339/405.528 ms. Including
+catalog and worker overhead, eligible native routing was 745.857/799.753 ms.
+The old 300 ms default is too short for those observed round trips. No timeout
+or enabled-default promotion was made. See [JEV_CREDENTIALS.md](JEV_CREDENTIALS.md)
+for exact benchmark scope, usage, security boundary and remaining limitations.
+
+Validation of this increment: 724 full-suite tests, 5 skipped; compileall,
+Python hygiene, public artifact policy and diff checks pass. Tests explicitly
+set an empty environment override to prevent accidental use of local credentials.
 
 ## Required remaining integration
 

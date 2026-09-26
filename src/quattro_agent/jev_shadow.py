@@ -22,6 +22,7 @@ import time
 from typing import Any
 import uuid
 
+from .provider_access import resolve_typesafe_credential
 from .jev import MODEL, SCHEMA_VERSION, JevFailure, decode, serialize_state, validate_response
 
 _SCOPE: ContextVar[list | None] = ContextVar("jev_scope", default=None)
@@ -159,7 +160,7 @@ class ShadowRun:
                 return
             if self.cancel.is_set():
                 raise JevFailure(self.stop_reason)
-            key = os.environ.get("TYPESAFE_API_KEY", "")
+            key = resolve_typesafe_credential()
             if not key:
                 raise JevFailure("missing_credential")
             serialization_started = time.perf_counter()
