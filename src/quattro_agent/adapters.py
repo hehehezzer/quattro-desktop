@@ -154,6 +154,8 @@ class CodexAdapter(AgentAdapter):
         if spec.account_home is None:
             raise ValueError("Codex requires an explicit account home")
         permissions = _codex_permission_args(spec.policy)
+        from .decision_launch import codex_arguments, proxy_environment
+        decision_args = codex_arguments(spec.policy)
         network_args = (
             ("-c", "sandbox_workspace_write.network_access=true")
             if spec.policy.network is NetworkAccess.FULL
@@ -185,10 +187,10 @@ class CodexAdapter(AgentAdapter):
                 argv = (*argv, spec.private_input)
         return LaunchPlan(
             agent=self.name,
-            argv=argv,
+            argv=(argv[0], *decision_args, *argv[1:]),
             cwd=spec.project_path,
             stdin_text=stdin,
-            environment_overrides={"CODEX_HOME": str(spec.account_home)},
+            environment_overrides={"CODEX_HOME": str(spec.account_home), **proxy_environment()},
         )
 
 

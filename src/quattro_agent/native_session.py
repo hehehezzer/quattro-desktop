@@ -9,6 +9,8 @@ import tempfile
 import threading
 
 from .codex_turn_bridge import CodexTurnBridge
+from .decision_launch import NATIVE_PROXY, codex_arguments
+from .policy import policy_profile
 from .provider_access import typesafe_credential_status
 from .turn_gate import TurnGate
 from .turn_transport import TurnTransport
@@ -88,7 +90,16 @@ def launch_routed_native(*, agent, binary, command, env, config, directory,
         if turn.cancel_event.is_set():
             runtime.request_cancel(task_id)
             raise RuntimeError('turn cancelled')
-        code = runtime.run_task(task_id)
+        # Keep Jev in the Quattro owner, not in the read-only Pi/Codex child.
+        # Only the existing private loopback capability crosses this boundary.
+        proxy_token = NATIVE_PROXY.set({
+            'QUATTRO_TURN_GATE_URL': transport.url,
+            'QUATTRO_DECISION_TOKEN': transport.decision_token,
+        })
+        try:
+            code = runtime.run_task(task_id)
+        finally:
+            NATIVE_PROXY.reset(proxy_token)
         if code:
             raise RuntimeError('delegated task failed')
         output_path = runtime._child_output_path(task_id)
@@ -122,6 +133,7 @@ def launch_routed_native(*, agent, binary, command, env, config, directory,
             child_env = dict(env)
             child_env['QUATTRO_TURN_GATE_URL'] = transport.url
             child_env['QUATTRO_TURN_GATE_TOKEN'] = transport.token
+            child_env['QUATTRO_DECISION_TOKEN'] = transport.decision_token
             if agent == 'codex':
                 child_env['QUATTRO_TURN_GATE_AUTH'] = 'Bearer ' + transport.token
                 overrides = [
@@ -138,7 +150,14 @@ def launch_routed_native(*, agent, binary, command, env, config, directory,
                 socket_path = Path(temporary) / 'rpc.sock'
                 # Remote TUI rejects --add-dir; workspace grants belong to its server.
                 command, policy_overrides = _codex_remote_arguments(command)
-                backend = [binary, *overrides, *policy_overrides, 'app-server', '--stdio']
+                decision_policy = policy_profile(
+                    profile_name or config.get('defaultPolicyProfile', 'workspace-write'),
+                    project_root=directory,
+                )
+                decision_args = codex_arguments(
+                    decision_policy, config.get('routing', {}).get('jev', {}), native_proxy=True,
+                )
+                backend = [binary, *overrides, *policy_overrides, *decision_args, 'app-server', '--stdio']
                 bridge = CodexTurnBridge(socket_path, backend, child_env, gate,
                                          history_root=state_root / "private" / "interactive-history")
                 thread = threading.Thread(target=bridge.run, daemon=True)

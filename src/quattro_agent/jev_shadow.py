@@ -295,6 +295,18 @@ def lifecycle(function):
         runs: list[ShadowRun] = []
         token = _SCOPE.set(runs)
         evidence_token = _EVIDENCE.set({})
+        # Propagate only validated launcher options to execution adapters. This
+        # context survives routing into run_task, but never crosses sessions.
+        from .decision_launch import OPTIONS
+        options = None
+        try:
+            owner_config = getattr(args[0], "config", None) if args else None
+            config = owner_config() if callable(owner_config) else owner_config
+            if isinstance(config, dict):
+                options = dict(config.get("routing", {}).get("jev", {}))
+        except Exception:
+            pass  # Optional tool registration cannot prevent normal execution.
+        decision_token = OPTIONS.set(options)
         try:
             return function(*args, **kwargs)
         finally:
@@ -308,6 +320,7 @@ def lifecycle(function):
             finally:
                 _SCOPE.reset(token)
                 _EVIDENCE.reset(evidence_token)
+                OPTIONS.reset(decision_token)
     return wrapped
 
 

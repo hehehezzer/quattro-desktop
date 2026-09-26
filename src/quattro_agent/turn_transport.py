@@ -16,6 +16,7 @@ class TurnTransport:
     def __init__(self, gate):
         self.gate = gate
         self.token = secrets.token_urlsafe(32)
+        self.decision_token = secrets.token_urlsafe(32)
         self.lock = threading.RLock()
         self.cancelled = set()
         owner = self
@@ -39,7 +40,8 @@ class TurnTransport:
 
             def do_POST(self):
                 self.connection.settimeout(10)
-                if not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + owner.token):
+                expected_token = owner.decision_token if self.path == '/decision' else owner.token
+                if not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + expected_token):
                     self.close_connection = True
                     self.reply(403, {'error': 'session authorization required'})
                     return
@@ -52,7 +54,9 @@ class TurnTransport:
                     body = json.loads(self.rfile.read(length))
                     if not isinstance(body, dict):
                         raise ValueError('invalid body')
-                    if self.path == '/turn':
+                    if self.path == '/decision':
+                        self.reply(200, owner.gate.decide(body))
+                    elif self.path == '/turn':
                         if body.get('frontend') != 'pi':
                             raise ValueError('invalid frontend')
                         thread_id = body.get('session_id')

@@ -1,0 +1,50 @@
+{
+  "measurement": "LIVE synthetic task smoke matrix; one pair per scenario, not statistical quality evidence",
+  "source_sha256": "8cd8e2ab0f3f159d805ea5c86ba67780af666ad6c821295299782149d19a73bc",
+  "source_unchanged": true,
+  "rows": [
+    {
+      "case": "skill_heavy",
+      "mode": "OFF",
+      "total_task_ms": 39583.87066295836,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 770748,
+        "cached_input_tokens": 758272,
+        "output_tokens": 1077,
+        "reasoning_output_tokens": 130
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 5,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "skill_heavy",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 29243.925211019814,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 645124,
+        "cached_input_tokens": 631552,
+        "output_tokens": 858,
+        "reasoning_output_tokens": 207
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 4,
+      "model_turns": null,
+      "cost": null
+    }
+  ],
+  "limits": [
+    "No price data or model-turn counter.",
+    "No causal speed attribution; provider caching and load vary.",
+    "Subagent candidate respects the one-worker hard budget; it does not benchmark spawning."
+  ]
+}

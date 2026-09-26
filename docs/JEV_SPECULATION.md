@@ -1,5 +1,12 @@
 # PR #31: speculative routing increment (not release completion)
 
+## Runtime follow-up
+
+The session-wide extension is documented in [JEV_DECISION_PLANE.md](JEV_DECISION_PLANE.md).
+It preserves this initial-routing implementation and its historical measurements.
+The lifecycle audit below describes the original `6c89760` increment, not the new
+runtime worker. Runtime model/task performance and release gates remain separate.
+
 ## Changes and authority
 
 Eligible canonical routing now starts the existing owned Jev worker before

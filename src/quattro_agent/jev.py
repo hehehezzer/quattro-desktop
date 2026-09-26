@@ -115,24 +115,24 @@ def _probability(value: Any) -> bool:
     return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1
 
 
-def validate_response(body: Any) -> dict[str, Any]:
+def validate_response(body: Any, choices: Mapping[str, Any] = CHOICES) -> dict[str, Any]:
     if not isinstance(body, dict) or set(body) != {"model", "answers", "usage"}:
         raise JevFailure("schema_mismatch")
     model = body["model"]
     if not isinstance(model, str) or not re.fullmatch(r"jev-[a-zA-Z0-9._-]{1,80}", model):
         raise JevFailure("schema_mismatch")
     answers = body["answers"]
-    if not isinstance(answers, dict) or set(answers) != set(CHOICES):
+    if not isinstance(answers, dict) or set(answers) != set(choices):
         raise JevFailure("schema_mismatch")
-    for name, choices in CHOICES.items():
+    for name, vocabulary in choices.items():
         answer = answers[name]
         if not isinstance(answer, dict) or set(answer) != {"type", "choice", "confidence", "probabilities"}:
             raise JevFailure("schema_mismatch")
-        if answer["type"] != "choice" or not isinstance(answer["choice"], str) or answer["choice"] not in choices:
+        if answer["type"] != "choice" or not isinstance(answer["choice"], str) or answer["choice"] not in vocabulary:
             raise JevFailure("unknown_choice")
         probabilities = answer["probabilities"]
         if (not _probability(answer["confidence"])
-                or not isinstance(probabilities, dict) or set(probabilities) != set(choices)
+                or not isinstance(probabilities, dict) or set(probabilities) != set(vocabulary)
                 or not all(_probability(value) for value in probabilities.values())
                 or abs(sum(probabilities.values()) - 1) > 0.02
                 or probabilities[answer["choice"]] < max(probabilities.values())):
@@ -156,6 +156,7 @@ class JevClient:
         self.timings: dict[str, float] = {}
         self.timeout_seconds = timeout_seconds
         self._opener = opener
+        self._catalog = None
         # One worker owns one client. Reuse TLS between catalog and evaluation;
         # no process-global pool, redirects, proxies or automatic POST retries.
         self._connection = None if opener else http.client.HTTPSConnection(
@@ -209,9 +210,18 @@ class JevClient:
     def evaluate(self, state_json: str) -> dict[str, Any]:
         state = decode(state_json.encode())
         validate_state(state)
+        return self.evaluate_questions(state, QUESTIONS)
+
+    def evaluate_questions(self, state: Mapping[str, Any], questions: Mapping[str, Any],
+                           *, reuse_catalog: bool = False) -> dict[str, Any]:
+        """Use the native named-choice API; callers validate their own state schema.
+
+        Initial routing retains per-call catalog verification. A lifecycle-owned
+        session can explicitly reuse its verified catalog until the client closes.
+        """
         start = time.perf_counter()
         try:
-            catalog = self._request("/v1/models")
+            catalog = self._catalog if reuse_catalog and self._catalog is not None else self._request("/v1/models")
         finally:
             self.timings["catalog_latency_ms"] = (time.perf_counter() - start) * 1000
         if (not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list)
@@ -221,12 +231,13 @@ class JevClient:
         if MODEL not in {item["name"] for item in catalog["models"]}:
             # Never silently substitute a different live identifier.
             raise JevFailure("model_unavailable")
+        self._catalog = catalog
         start = time.perf_counter()
         self.timings["jev_request_started"] = start
         try:
             result = validate_response(self._request("/v1/systemone", {
-                "state": state, "model": MODEL, "questions": QUESTIONS,
-            }))
+                "state": state, "model": MODEL, "questions": questions,
+            }), {name: question["criteria"] for name, question in questions.items()})
         finally:
             self.timings["jev_request_finished"] = time.perf_counter()
             self.timings["jev_latency_ms"] = (self.timings["jev_request_finished"] - start) * 1000
