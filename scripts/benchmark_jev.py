@@ -30,6 +30,7 @@ from quattro_agent.jev_shadow import ShadowRun, annotate, lifecycle, mark_dispat
 from quattro_agent.model_registry import default_policy_path, load_model_registry, select_execution_target
 from quattro_agent.routing_intelligence import make_pre_routing_input, task_profile_from_dict
 from quattro_agent.routing_signals import classify_with_signals
+from quattro_agent.turn_gate import TurnGate
 
 TASKS = {
     "informational": "Hello",
@@ -75,6 +76,7 @@ def distribution(values):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repetitions", type=int, default=20)
+    parser.add_argument("--native", action="store_true", help="Benchmark latency-fixed native TurnGate")
     args = parser.parse_args()
     registry = load_model_registry(default_policy_path(), SRC / "quattro/omniroute-model-catalog.json")
     original_init = ShadowRun.__init__
@@ -82,7 +84,8 @@ def main():
         return subprocess.Popen([sys.executable, "-c", WORKER], **kwargs)
     def init(run, **kwargs):
         original_init(run, **kwargs, popen=popen)
-    output = {"transport": "simulated; real child process; no external calls",
+    output = {"entrypoint": "native TurnGate" if args.native else "harness routing boundary",
+              "transport": "simulated; real child process; no external calls",
               "provider_usage": "unavailable; fixture zero counts are not real usage",
               "learned_model": "no active artifact in isolated benchmark store",
               "modes": {}}
@@ -92,9 +95,25 @@ def main():
         database = Path(temporary) / "intelligence.sqlite3"
         for mode in ("OFF", "SHADOW", "COOPERATIVE"):
             samples, models, categories = [], Counter(), {}
+            gate = TurnGate(
+                session_id="benchmark", config={"routing": {"jev": {"mode": mode, "timeoutMs": 300}}},
+                directory=Path(temporary), telemetry_path=Path(temporary) / "turns.jsonl",
+                account="account-1", registry=registry,
+            ) if args.native else None
             @lifecycle
             def route(label, prompt):
                 started = time.perf_counter()
+                if gate is not None:
+                    try:
+                        turn = gate.begin(label, prompt, "codex")
+                    except ConfigError:
+                        return (time.perf_counter() - started) * 1000, "no_eligible_target"
+                    critical_ms = (time.perf_counter() - started) * 1000
+                    for run in turn.shadow_runs:
+                        run.annotations["benchmark_category"] = label
+                    time.sleep(.080)
+                    gate.finish(turn)
+                    return critical_ms, turn.plan.target.model
                 execution = classify_task_request(prompt)
                 boundary = make_pre_routing_input(
                     request=prompt, working_directory=temporary, repository_present=True,
@@ -131,8 +150,10 @@ def main():
                     categories.setdefault(label, []).append(latency)
                     models[model] += 1
             rows = []
-            if database.with_name("jev-shadow.sqlite3").exists():
-                with closing(sqlite3.connect(database.with_name("jev-shadow.sqlite3"))) as connection:
+            evidence_path = (Path(temporary) / "intelligence" / "jev-shadow.sqlite3"
+                             if args.native else database.with_name("jev-shadow.sqlite3"))
+            if evidence_path.exists():
+                with closing(sqlite3.connect(evidence_path)) as connection:
                     rows = [json.loads(row[0]) for row in connection.execute("SELECT evidence FROM jev_shadow")]
                 rows = [row for row in rows if row.get("mode") == mode]
             output["modes"][mode] = {

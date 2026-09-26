@@ -1,7 +1,8 @@
 # Jev as a Quattro classification signal
 
 Default: **OFF**. No deployment or production promotion is performed by this
-feature. Keep its PR unmerged until the separate latency work is integrated.
+feature. Rebased onto latency/per-turn fix #29 at
+`0f965b938e3c57a9f251103803743b8d46231981`. The Jev PR remains unmerged.
 
 ## Architecture and authority
 
@@ -126,7 +127,12 @@ error into a fabricated successful plan.
 ## Lifecycle and performance
 
 `create_task` and `direct_response` own a request scope; `run_task` also owns any
-nested routing work. Each scope starts at most one worker. A process-local cap
+nested routing work. The latency-fixed native `TurnGate.begin` transfers scope
+ownership to its `Turn`, which closes it idempotently on finish, cancellation,
+or session shutdown. Native sensitive/credential lookup turns skip Jev entirely.
+Native DIRECT minimal context, no-tools policy, 20-second FAST budget, and locked
+receipts remain intact. Already-locked plans handed to durable tasks do not
+trigger another Jev request. Each scope starts at most one worker. A process-local cap
 of eight rejects excess work with a fixed-category warning. Existing Quattro
 session limits remain authoritative across processes.
 
@@ -138,7 +144,8 @@ contains only Windows system-root variables where necessary; stderr is discarded
 
 At scope exit, pending work is cancelled, killed, and joined, including on an
 exception. Quattro does **not** wait for the provider deadline after a short
-execution completes. Cancellation is evidence, not a provider success. A
+execution completes. Native turn ownership lets SHADOW overlap execution without
+holding up dispatch. Cancellation is evidence, not a provider success. A
 completed result is retained; shutdown persists owner-only annotations after
 joining, avoiding shared task writes. Linux additionally uses parent-death
 SIGKILL. Normal lifecycle is portable; abrupt-parent-death protection is
@@ -170,8 +177,10 @@ No observation is imported as a human-gold label.
 Join `record_id` to `intelligence.sqlite3.routing_records.record_id` for actual
 execution/validation results, execution cost, retries, fallback outcome and
 actual selected target. Join `source_task_id` to TaskStore for the locked plan,
-physical run, or validation lifecycle. Direct calls have a request record but
-no durable task. Initial final-plan evidence is distinct from later fallback
+physical run, or validation lifecycle. Harness direct calls have a request record but
+no durable task. Native turns instead join `turn_id`/`plan_id` to the existing
+private `interactive-turns.jsonl`, preserving its metadata-only evidence boundary;
+no new raw prompt/training record is created for native turns. Initial final-plan evidence is distinct from later fallback
 execution evidence. Repeated requests have distinct observation IDs.
 
 The documented TypeSafe response exposes `input_tokens` and `output_tokens`,
@@ -194,6 +203,7 @@ elapsed time/failure is retained rather than inventing a completed RTT.
 ```bash
 python -m unittest discover -s tests -p 'test_jev.py'
 python scripts/benchmark_jev.py --repetitions 20
+python scripts/benchmark_jev.py --native --repetitions 20
 ```
 
 The benchmark uses real supervised child processes and a **simulated 20 ms

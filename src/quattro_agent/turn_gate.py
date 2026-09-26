@@ -19,6 +19,9 @@ import uuid
 from urllib.parse import urlencode, urlsplit
 
 from .delegation import TaskDelegationDecision, classify_task_request
+from .jev_shadow import lifecycle as jev_lifecycle, annotate as annotate_signals, take_scope
+from .routing import RoutingDecision, RoutingTier
+from .routing_signals import classify_with_signals
 from .model_registry import (
     ContextDecision, ExecutionPlan, build_execution_plan, default_policy_path,
     execution_target_for_route, load_model_registry, select_execution_target,
@@ -27,7 +30,9 @@ from .model_registry import (
 from .omniroute import APPROVED_BASE_URL, validate_omniroute_runtime_capabilities
 from .paths import model_catalog_path
 from .privacy import redact_secret_text
-from .routing_intelligence import ContextProfile, RoutingTierName, profile_task
+from .routing_intelligence import (
+    ContextProfile, RoutingTierName, profile_task, make_pre_routing_input, task_profile_from_dict,
+)
 
 
 _SECRET = re.compile(r"(?i)\b(password|passwd|api[ _-]?key|access[ _-]?token|secret|credential)\b")
@@ -61,6 +66,7 @@ class Turn:
     request_id: str | None = None
     failure_code: str | None = None
     model_requests: int = 0
+    shadow_runs: tuple = field(default=(), repr=False)
 
 
 class TurnGate:
@@ -81,6 +87,7 @@ class TurnGate:
         self._active: dict[str, Turn] = {}
         self._history: dict[str, list[dict]] = {}
 
+    @jev_lifecycle
     def begin(self, thread_id: str, prompt: str, frontend: str, params=None) -> Turn:
         started = time.monotonic()
         if frontend not in {"codex", "pi"} or not isinstance(prompt, str):
@@ -119,6 +126,34 @@ class TurnGate:
             accounts = frozenset(str(row['id']) for row in self.config.get('accounts', [])
                                  if row.get('enabled', True)) or frozenset({self.account})
             selected = (params or {}).get('model')
+            if not sensitive and self.config.get('routing', {}).get('jev', {}).get('mode', 'OFF') != 'OFF':
+                # Preserve the latency fix's DIRECT minimal profile and budgets.
+                # Only the latest prompt enters feature extraction, never native history.
+                baseline = RoutingDecision(
+                    tier=RoutingTier(tier), reason=decision.reason,
+                    reasoning_effort={"FAST": "low", "STANDARD": "medium", "REASONING": "high"}[tier],
+                    task_profile=profile.to_dict(),
+                )
+                def available(proposed):
+                    try:
+                        return bool(select_execution_target(
+                            task_profile_from_dict(proposed.task_profile), self.registry,
+                            preferred_account=self.account, available_accounts=accounts,
+                        ))
+                    except (ValueError, RuntimeError):
+                        return False
+                fused = classify_with_signals(
+                    pre_routing_input=make_pre_routing_input(
+                        request=prompt, working_directory=str(self.directory), repository_present=False,
+                        explicit_model=selected or 'auto', routing_mode='auto' if not selected else 'manual',
+                        selected_account=self.account, agent=frontend,
+                        workflow='interactive-turn', policy_name='audit-read-only',
+                    ),
+                    config=self.config, database=self.telemetry_path.parent / 'intelligence' / 'intelligence.sqlite3',
+                    execution=decision.decision, baseline_override=baseline, can_select=available,
+                )
+                profile = task_profile_from_dict(fused.task_profile)
+                tier = profile.tier.value
             target = None
             if selected and not str(selected).startswith('auto'):
                 target = execution_target_for_route(profile, self.registry, selected,
@@ -144,6 +179,14 @@ class TurnGate:
                         plan, decision.reason, sensitive, started,
                         (time.monotonic() - started) * 1000,
                         BUDGETS[tier] if decision.decision == "DIRECT" else None)
+            annotate_signals(
+                turn_id=ident, plan_id=ident,
+                final_decision={"execution": decision.decision,
+                                "worker": None if decision.decision == 'DIRECT' else 'codex',
+                                "provider": target.provider, "account": target.account,
+                                "model": target.model, "reasoning_effort": plan.reasoning_effort},
+                outcome_source='interactive-turns.jsonl',
+            )
             turn.request_id = (params or {}).get('request_id')
             self._active[thread_id] = turn
             self._record(turn, "planned", False, False)
@@ -152,6 +195,7 @@ class TurnGate:
                                              self.cancel, args=(turn,))
                 turn.timer.daemon = True
                 turn.timer.start()
+            turn.shadow_runs = take_scope()
             return turn
 
     def remaining(self, turn: Turn) -> float:
@@ -385,6 +429,14 @@ class TurnGate:
             turn.failure_code = 'locked_receipt_mismatch'
             raise RuntimeError("locked execution receipt failed verification")
 
+    @staticmethod
+    def _close_signals(turn: Turn):
+        for run in getattr(turn, 'shadow_runs', ()):
+            try:
+                run.finish_owned()
+            except Exception:
+                pass  # Optional evidence must not interrupt turn cleanup.
+
     def cancel(self, turn: Turn):
         turn.failure_code = ('budget_exceeded' if turn.budget and
                              time.monotonic() - turn.started >= turn.budget else 'cancelled')
@@ -397,6 +449,7 @@ class TurnGate:
         connection = turn.connection
         if connection:
             connection.close()
+        TurnGate._close_signals(turn)
 
     def cancel_thread(self, thread_id: str, request_id: str | None = None):
         with self._lock:
@@ -409,6 +462,7 @@ class TurnGate:
             if turn.finished:
                 return
             turn.finished = True
+            TurnGate._close_signals(turn)
             if turn.timer:
                 turn.timer.cancel()
             if turn.connection:

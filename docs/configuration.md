@@ -45,6 +45,9 @@ by mandatory-context resolution.
 - `delegation`: optional bounded Pi worker limit, maximum three.
 - `cooperation`: global and per-repository top-level session limits.
 - `routing`: Quattro's three tiers, effort, route labels, and context budgets.
+  Optional `jev: {"mode": "OFF", "timeoutMs": 300}` enables direct TypeSafe
+  classification in `SHADOW` or controlled `COOPERATIVE` mode. Credentials come
+  only from runtime `TYPESAFE_API_KEY`; see [Jev routing](JEV_ROUTING.md).
 - `prReview`: review-only by default; publication requires an explicit CLI flag.
 
 Unknown fields, unsafe account paths, disabled default accounts, invalid route

@@ -858,6 +858,7 @@ class HarnessRuntime:
             selected_account=selected_account,
             session_continuation=logical_session_id is not None,
             write_scopes=ownership,
+            signal_allowed=turn_execution_plan is None,
         )
         pre_profile = task_profile_from_dict(routing.task_profile)
         execution_target = None
@@ -2260,6 +2261,7 @@ class HarnessRuntime:
         session_continuation: bool = False,
         write_scopes: Sequence[str] = (),
         attachments: Mapping[str, bool] | None = None,
+        signal_allowed: bool = True,
     ) -> tuple[RoutingDecision, Any | None, dict[str, Any]]:
         """Perform Quattro's complete pre-routing phase at the request boundary.
 
@@ -2286,7 +2288,7 @@ class HarnessRuntime:
             pre_routing_input=boundary, config=config,
             database=self.intelligence_database, execution="DELEGATE",
             can_select=lambda proposed: self._signal_target_available(config, selected_account, proposed),
-        )
+        ) if signal_allowed else classify_pre_routing(pre_routing_input=boundary, config=config)
         profile = task_profile_from_dict(routing.task_profile)
         adaptive = None
         if agent == "codex" and configured_model == "auto":

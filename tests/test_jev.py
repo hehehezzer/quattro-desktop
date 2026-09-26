@@ -254,6 +254,17 @@ class LifecycleTests(unittest.TestCase):
         self.assertIsNotNone(run.process.poll())
         self.assertFalse(run.thread.is_alive())
 
+    def test_standalone_worker_missing_key_is_bounded_and_private(self):
+        payload = json.dumps({"key": "", "state": serialize_state("hello"), "timeout_seconds": .1})
+        result = subprocess.run(
+            [sys.executable, str(SRC / "quattro_agent/jev_worker.py")], input=payload,
+            text=True, capture_output=True, timeout=2, env={},
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)["failure_category"], "missing_credential")
+        self.assertEqual(result.stderr, "")
+        self.assertNotIn(self.key, result.stdout)
+
     def test_close_cancels_without_waiting_for_provider(self):
         run = self.run_instance(popen=self.sleeper, timeout=3000)
         run.start()
@@ -388,6 +399,23 @@ class FusionTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             select_execution_target(profile, targets, preferred_account="account-1", available_accounts=frozenset())
 
+    def test_unavailable_uplift_target_veto_keeps_baseline(self):
+        original = ShadowRun.__init__
+        def init(run, **kwargs):
+            original(run, **kwargs, popen=FakeProcess)
+        @lifecycle
+        def route():
+            return classify_with_signals(
+                pre_routing_input=self.boundary, config=options(), database=self.database,
+                execution="DELEGATE", can_select=lambda _: False,
+            )
+        with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": secrets.token_hex(24)}), \
+             mock.patch.object(ShadowRun, "__init__", init):
+            self.assertEqual(route(), self.baseline)
+        with closing(sqlite3.connect(self.database.with_name("jev-shadow.sqlite3"))) as connection:
+            row = json.loads(connection.execute("SELECT evidence FROM jev_shadow").fetchone()[0])
+        self.assertEqual(row["fusion_reason"], "runtime_capability_veto")
+
     def test_local_learned_failure_is_optional(self):
         self.database.touch()
         with mock.patch("quattro_agent.routing_signals.IntelligenceStore", side_effect=OSError("not available")):
@@ -509,6 +537,79 @@ class HarnessSignalTests(unittest.TestCase):
         self.assertEqual(row["record_id"], task["private_payload"]["intelligenceRecordId"])
         self.assertEqual(row["final_decision"]["worker"], "codex")
         self.assertEqual(row["final_decision"]["model"], task["private_payload"]["executionTarget"]["model"])
+
+
+class NativeTurnSignalTests(unittest.TestCase):
+    def setUp(self):
+        import test_turn_gate as fixtures
+        self.fixture = fixtures.TurnGateTests()
+        self.fixture.setUp()
+        self.gate = self.fixture.gate
+
+    def tearDown(self):
+        self.fixture.doCleanups()
+
+    def test_rebased_latency_cases_preserve_direct_budget_and_no_tools(self):
+        for mode in ("OFF", "SHADOW", "COOPERATIVE"):
+            self.gate.config = options(mode)
+            for frontend in ("codex", "pi"):
+                for text in ("What is an API gateway?", "Explain how to run tests", "Explain this Python traceback"):
+                    with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}):
+                        turn = self.gate.begin("thread", text, frontend)
+                        self.assertEqual(turn.decision, "DIRECT")
+                        self.assertEqual(turn.plan.target.tier, "FAST")
+                        self.assertEqual(turn.plan.required_tools, ())
+                        self.assertEqual(turn.budget, 20)
+                        self.gate.finish(turn)
+            self.assertFalse(any(t.name == "jev-shadow" for t in threading.enumerate()))
+
+    def test_sensitive_turn_skips_jev_entirely(self):
+        self.gate.config = options("COOPERATIVE")
+        with mock.patch.object(ShadowRun, "start") as start:
+            turn = self.gate.begin("thread", "What's my OmniRoute dashboard password?", "codex")
+            self.gate.finish(turn)
+        start.assert_not_called()
+
+    def test_native_cooperative_fuses_before_lock_and_shadow_owned_until_finish(self):
+        original_init = ShadowRun.__init__
+        def init(run, **kwargs):
+            original_init(run, **kwargs, popen=FakeProcess)
+        for mode, expected in (("SHADOW", "STANDARD"), ("COOPERATIVE", "REASONING")):
+            self.gate.config = options(mode)
+            with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": secrets.token_hex(24)}), \
+                 mock.patch.object(ShadowRun, "__init__", init):
+                turn = self.gate.begin("thread", "Modify the repository parser", "codex")
+                self.assertEqual(turn.plan.target.tier, expected)
+                self.assertTrue(turn.plan.routing_locked)
+                self.assertEqual(len(turn.shadow_runs), 1)
+                self.assertTrue(turn.shadow_runs[0].done.wait(2))
+                self.gate.finish(turn)
+                self.gate.cancel(turn)  # Double cleanup must not release capacity twice.
+                self.assertFalse(turn.shadow_runs[0].thread.is_alive())
+                row = turn.shadow_runs[0].record
+                self.assertEqual(row["turn_id"], turn.turn_id)
+                self.assertEqual(row["final_decision"]["execution"], "DELEGATE")
+                self.assertEqual(row["final_decision"]["model"], turn.plan.target.model)
+
+    def test_native_cancel_all_reaps_real_inflight_child(self):
+        original_init = ShadowRun.__init__
+        def popen(_args, **kwargs):
+            return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+        def init(run, **kwargs):
+            original_init(run, **kwargs, popen=popen)
+        self.gate.config = options("SHADOW", timeout=3000)
+        with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": secrets.token_hex(24)}), \
+             mock.patch.object(ShadowRun, "__init__", init):
+            turn = self.gate.begin("thread", "hello", "pi")
+            run = turn.shadow_runs[0]
+            deadline = time.monotonic() + 2
+            while run.process is None and time.monotonic() < deadline:
+                time.sleep(.001)
+            self.gate.cancel_all()
+            self.assertFalse(run.thread.is_alive())
+            if run.process:
+                self.assertIsNotNone(run.process.poll())
+            self.gate.finish(turn)
 
 
 if __name__ == "__main__":

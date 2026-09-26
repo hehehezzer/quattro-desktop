@@ -74,7 +74,7 @@ def fuse(baseline: RoutingDecision, *, execution: str, manual: bool,
 
 
 def _classify_with_signals(*, pre_routing_input, config, database: Path, execution: str,
-                           can_select=None) -> RoutingDecision:
+                           can_select=None, baseline_override=None) -> RoutingDecision:
     """Jev runs concurrently with deterministic and learned analysis.
 
     SHADOW never waits at the fusion boundary. COOPERATIVE waits only for the
@@ -82,7 +82,7 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
     """
     mode = config.get("routing", {}).get("jev", {}).get("mode", "OFF")
     if mode == "OFF":
-        return classify_pre_routing(pre_routing_input=pre_routing_input, config=config)
+        return baseline_override or classify_pre_routing(pre_routing_input=pre_routing_input, config=config)
     started = time.perf_counter()
     state = serialize_state(pre_routing_input.request)
     features = json.loads(state)
@@ -92,7 +92,7 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
         request="", state_json=state, decision=execution,
     )
     local_started = time.perf_counter()
-    baseline = classify_pre_routing(pre_routing_input=pre_routing_input, config=config)
+    baseline = baseline_override or classify_pre_routing(pre_routing_input=pre_routing_input, config=config)
     deterministic_ms = (time.perf_counter() - local_started) * 1000
     local_started = time.perf_counter()
     learned = learned_signal(database, pre_routing_input.request)
@@ -106,9 +106,11 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
     )
     if mode == "COOPERATIVE" and run is not None and eligible:
         remaining = max(0, run.timeout_ms / 1000 - (time.perf_counter() - started))
-        if not run.done.wait(remaining):
+        completed_in_budget = run.done.wait(remaining)
+        if not completed_in_budget:
+            annotate(routing_deadline_exceeded=True)
             run.close(reason="timeout")
-        if run.record["status"] == "success":
+        if completed_in_budget and run.record["status"] == "success":
             jev = {"answers": run.record["answers"]}
     added_wait_ms = (time.perf_counter() - wait_started) * 1000
     fusion_started = time.perf_counter()
@@ -136,14 +138,14 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
 
 
 def classify_with_signals(*, pre_routing_input, config, database: Path, execution: str,
-                          can_select=None) -> RoutingDecision:
+                          can_select=None, baseline_override=None) -> RoutingDecision:
     try:
         return _classify_with_signals(
             pre_routing_input=pre_routing_input, config=config, database=database,
-            execution=execution, can_select=can_select,
+            execution=execution, can_select=can_select, baseline_override=baseline_override,
         )
     except Exception:
         # Optional intelligence must never replace the authoritative exception
         # or make a previously routable request fail. Baseline errors still surface.
         annotate(fusion_reason="signal_failure_fallback")
-        return classify_pre_routing(pre_routing_input=pre_routing_input, config=config)
+        return baseline_override or classify_pre_routing(pre_routing_input=pre_routing_input, config=config)

@@ -1,4 +1,4 @@
-"""Lifecycle-owned optional evidence; outputs cannot reach execution policy.
+"""Lifecycle-owned optional evidence; only Quattro fusion can consume signals.
 
 Each harness call owns at most one child and a joined monitor. A short execution
 cancels pending shadow work instead of waiting for the provider. SQLite is an
@@ -70,6 +70,8 @@ class ShadowRun:
         self.popen = popen
         self.process = None
         self.lock = threading.Lock()
+        self.release_lock = threading.Lock()
+        self.released = False
         self.cancel = threading.Event()
         self.stop_reason = "cancelled"
         self.done = threading.Event()
@@ -126,7 +128,8 @@ class ShadowRun:
                     env=env, cwd=str(Path(__file__).resolve().parent),
                 )
             try:
-                output, _ = self.process.communicate(payload, timeout=self.timeout_ms / 1000)
+                remaining = max(0.001, self.timeout_ms / 1000 - (time.perf_counter() - self.started))
+                output, _ = self.process.communicate(payload, timeout=remaining)
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.communicate()
@@ -188,6 +191,27 @@ class ShadowRun:
         if self.annotations:
             self.record.update(self.annotations)
             self.persistence_ok = persist(self.database, self.record)
+            if not self.persistence_ok:
+                _LOG.warning("Jev telemetry annotations unavailable")
+
+    def finish_owned(self) -> None:
+        """Idempotent across native finish/cancel/shutdown callers."""
+        with self.release_lock:
+            if not self.released:
+                try:
+                    self.close()
+                finally:
+                    self.released = True
+                    _CAPACITY.release()
+
+
+def take_scope() -> tuple[ShadowRun, ...]:
+    """Transfer ownership to a native Turn that closes on finish/cancel/shutdown."""
+    runs = _SCOPE.get()
+    owned = tuple(runs or ())
+    if runs is not None:
+        runs.clear()
+    return owned
 
 
 def lifecycle(function):
@@ -202,12 +226,10 @@ def lifecycle(function):
             try:
                 for run in runs:
                     try:
-                        run.close()
+                        run.finish_owned()
                     except Exception:
                         # Shadow cleanup must not replace the authoritative outcome.
                         pass
-                    finally:
-                        _CAPACITY.release()
             finally:
                 _SCOPE.reset(token)
     return wrapped
