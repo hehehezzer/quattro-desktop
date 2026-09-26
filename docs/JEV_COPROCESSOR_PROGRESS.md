@@ -15,6 +15,37 @@ The resolver has no I/O, credentials, dispatch or routing authority.
 This foundation is not yet connected to CLI/configuration/native persistence.
 Therefore it does not change the current production or source launcher default.
 
+## Bounded failure suppression
+
+The existing lifecycle now suppresses provider workers for 30 seconds after
+three consecutive provider/worker failures per evidence-store path in the same
+process. Success resets the count; cancellation, absent credentials and local
+telemetry failure do not count. Suppression is observable in turn evidence,
+uses no retry thread, and retains the existing worker cancellation ownership.
+Six hermetic regressions cover threshold/expiry, reset, isolation, bounded LRU,
+no-worker suppression, and lifecycle-owned failure/retry/reaping.
+
+This does not complete launcher integration, enable the default, or establish
+live provider latency/quality. The current agent environment has no
+`TYPESAFE_API_KEY`; no authenticated live validation was performed.
+
+## Validation of cooldown increment
+
+- `python -m unittest discover -s tests -p 'test_*.py'`: 713 tests,
+  OK (5 skipped).
+- `python -m compileall -q src scripts`: passed.
+- `python scripts/check_python.py`: PASS.
+- `python scripts/check_public_artifacts.py`: PASS.
+- `git diff --check`: passed.
+- `python scripts/benchmark_jev.py --native --repetitions 6`: 72 turns per
+  mode, balanced six-order rotation, simulated provider with real supervised
+  children. OFF routing p50/p95 0.620/0.909 ms; COOPERATIVE 0.615/55.542 ms.
+  Cooperative fusion p50/p95 0.008/0.011 ms; simulated evaluation RTT
+  20.091/20.097 ms. Existing eligibility guards admitted only six observations
+  per enabled mode. These are not broad coprocessor or live service results;
+  no first-token, actual execution duration, actual usage or cost was measured.
+- Scoped diff self-reviewed; independent review remains outstanding.
+
 ## Required remaining integration
 
 1. Connect one compact native-style agent/Jev selector, CLI overrides, global
@@ -27,8 +58,9 @@ Therefore it does not change the current production or source launcher default.
 4. Run Jev and learned inference concurrently from the same frozen features;
    reuse the bundle downstream. No duplicate call on ordinary steps; material
    rerouting requires explicit evidence and a distinct transition identifier.
-5. Add bounded failure cooldown, warning-once behavior, session indicator,
-   contribution/call-count telemetry and unavailable-provider fallback.
+5. Connect the implemented process-local failure cooldown to complete session
+   diagnostics; add warning-once behavior, session indicator and
+   contribution/call-count telemetry. Existing provider fallback is retained.
 6. Add full launch/resume/cancellation/concurrency regressions, paired latency
    and decision-quality audits, live native smoke, independent review and CI.
 7. Merge/deploy only after that validation. Do not enable production cooperative

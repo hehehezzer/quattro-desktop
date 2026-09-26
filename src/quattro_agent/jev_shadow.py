@@ -6,6 +6,7 @@ independent projection, never the task store or human-gold label store.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from contextlib import closing
 from contextvars import ContextVar
 from functools import wraps
@@ -32,6 +33,56 @@ FAILURES = frozenset({
     "http_error", "response_too_large", "invalid_json", "schema_mismatch", "unknown_choice",
     "catalog_schema", "model_unavailable", "invalid_state", "worker_failure", "cancelled",
 })
+
+
+class FailureCooldown:
+    """Bounded process-local provider suppression, isolated by evidence store.
+
+    No timer threads, persistence, retries, credentials or request text. Ordinary
+    cancellation and local telemetry failures are not provider health evidence.
+    """
+    PROVIDER_FAILURES = FAILURES - {"missing_credential", "cancelled"}
+
+    def __init__(self, *, threshold=3, cooldown_seconds=30.0, capacity=128,
+                 clock=time.monotonic):
+        self.threshold = threshold
+        self.cooldown_seconds = cooldown_seconds
+        self.capacity = capacity
+        self.clock = clock
+        self.lock = threading.Lock()
+        self.states: OrderedDict[Path, tuple[int, float]] = OrderedDict()
+
+    def suppressed(self, database: Path) -> bool:
+        with self.lock:
+            state = self.states.get(database)
+            if state is None:
+                return False
+            self.states.move_to_end(database)
+            failures, until = state
+            if until and self.clock() >= until:
+                del self.states[database]
+                return False
+            return failures >= self.threshold
+
+    def observe(self, database: Path, failure: str | None) -> None:
+        if failure is not None and failure not in self.PROVIDER_FAILURES:
+            return
+        with self.lock:
+            if failure is None:
+                self.states.pop(database, None)
+                return
+            failures, until = self.states.get(database, (0, 0.0))
+            # In-flight failures must not extend an already active cooldown.
+            failures = min(self.threshold, failures + 1)
+            if failures == self.threshold and not until:
+                until = self.clock() + self.cooldown_seconds
+            self.states[database] = (failures, until)
+            self.states.move_to_end(database)
+            while len(self.states) > self.capacity:
+                self.states.popitem(last=False)
+
+
+_COOLDOWN = FailureCooldown()
 
 
 def persist(database: Path, record: dict[str, Any]) -> bool:
@@ -173,6 +224,7 @@ class ShadowRun:
             self.request = ""
             self.record["finished_at"] = time.time()
             self.record["status"] = "failed" if self.record["failure_category"] else "success"
+            _COOLDOWN.observe(self.database, self.record["failure_category"])
             self.record["timeout_count"] = int(self.record["failure_category"] == "timeout")
             self.record["shadow_elapsed_ms"] = (time.perf_counter() - started) * 1000
             self.persistence_ok = persist(self.database, self.record)
@@ -245,6 +297,9 @@ def start_shadow(*, config, database, request, decision, record_id=None,
     options = config.get("routing", {}).get("jev", {})
     if options.get("mode", "OFF") not in {"SHADOW", "COOPERATIVE"} or runs is None or runs:
         return
+    if _COOLDOWN.suppressed(database):
+        annotate(jev_suppressed="circuit_open", jev_requested=False)
+        return None
     if not _CAPACITY.acquire(blocking=False):
         _LOG.warning("Jev skipped: shadow capacity unavailable")
         return

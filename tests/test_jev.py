@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 from quattro_agent.jev import (
     CHOICES, MODEL, JevClient, JevFailure, decode, serialize_state, validate_response,
 )
-from quattro_agent.jev_shadow import ShadowRun, lifecycle, start_shadow
+from quattro_agent.jev_shadow import FailureCooldown, ShadowRun, current_evidence, lifecycle, start_shadow
 from quattro_agent.routing_signals import classify_with_signals, fuse, learned_signal
 from quattro_agent.routing import RoutingTier, classify_pre_routing
 from quattro_agent.routing_intelligence import make_pre_routing_input, task_profile_from_dict
@@ -324,6 +324,105 @@ class LifecycleTests(unittest.TestCase):
             run.close()
         factory.assert_not_called()
         self.assertFalse(run.persistence_ok)
+
+
+class FailureCooldownTests(unittest.TestCase):
+    def setUp(self):
+        self.now = 100.0
+        self.breaker = FailureCooldown(clock=lambda: self.now, capacity=2)
+        self.database = Path("session-a.sqlite3")
+
+    def test_threshold_cooldown_and_recovery(self):
+        for failure in ("timeout", "connection"):
+            self.breaker.observe(self.database, failure)
+            self.assertFalse(self.breaker.suppressed(self.database))
+        self.breaker.observe(self.database, "rate_limited")
+        self.assertTrue(self.breaker.suppressed(self.database))
+        self.now += 29
+        self.breaker.observe(self.database, "http_error")
+        self.assertTrue(self.breaker.suppressed(self.database))
+        self.now += 1
+        self.assertFalse(self.breaker.suppressed(self.database))
+        self.breaker.observe(self.database, "schema_mismatch")
+        self.assertFalse(self.breaker.suppressed(self.database))
+        self.breaker.observe(self.database, None)
+        self.assertNotIn(self.database, self.breaker.states)
+
+    def test_local_failures_and_cancellation_do_not_trip(self):
+        for failure in ("missing_credential", "cancelled", "telemetry_unavailable"):
+            for _ in range(5):
+                self.breaker.observe(self.database, failure)
+        self.assertFalse(self.breaker.states)
+
+    def test_isolation_and_bounded_lru(self):
+        for _ in range(3):
+            self.breaker.observe(self.database, "timeout")
+        other = Path("session-b.sqlite3")
+        self.assertFalse(self.breaker.suppressed(other))
+        self.breaker.observe(other, "connection")
+        self.assertTrue(self.breaker.suppressed(self.database))
+        self.breaker.observe(Path("session-c.sqlite3"), "connection")
+        self.assertEqual(len(self.breaker.states), 2)
+        self.assertIn(self.database, self.breaker.states)
+        self.assertNotIn(other, self.breaker.states)
+
+    def test_open_circuit_never_starts_worker_and_reports_suppression(self):
+        for _ in range(3):
+            self.breaker.observe(self.database, "timeout")
+
+        @lifecycle
+        def route():
+            run = start_shadow(config=options(), database=self.database,
+                               request="", decision="DELEGATE")
+            return run, current_evidence()
+
+        with mock.patch("quattro_agent.jev_shadow._COOLDOWN", self.breaker), \
+                mock.patch.object(ShadowRun, "start") as start:
+            run, evidence = route()
+        self.assertIsNone(run)
+        start.assert_not_called()
+        self.assertEqual(evidence["jev_suppressed"], "circuit_open")
+        self.assertFalse(evidence["jev_requested"])
+
+    def test_owned_provider_failures_suppress_then_retry_without_orphans(self):
+        original = ShadowRun.__init__
+        created = []
+
+        class Failed(FakeProcess):
+            result = {"failure_category": "timeout"}
+
+        def init(run, **kwargs):
+            original(run, **kwargs, popen=Failed)
+            created.append(run)
+
+        @lifecycle
+        def route(database):
+            run = start_shadow(config=options(), database=database,
+                               request="hello", decision="DIRECT")
+            if run:
+                self.assertTrue(run.done.wait(2))
+            return run
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch("quattro_agent.jev_shadow._COOLDOWN", self.breaker), \
+                mock.patch.object(ShadowRun, "__init__", init), \
+                mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": secrets.token_hex(24)}):
+            database = Path(directory) / "jev.sqlite3"
+            for _ in range(3):
+                self.assertEqual(route(database).record["failure_category"], "timeout")
+            self.assertIsNone(route(database))
+            self.assertEqual(len(created), 3)
+            self.now += 30
+            self.assertIsNotNone(route(database))
+            self.assertEqual(len(created), 4)
+        self.assertTrue(all(not run.thread.is_alive() and run.released for run in created))
+
+    def test_success_resets_consecutive_failure_count(self):
+        for _ in range(2):
+            self.breaker.observe(self.database, "timeout")
+        self.breaker.observe(self.database, None)
+        self.breaker.observe(self.database, "timeout")
+        self.assertFalse(self.breaker.suppressed(self.database))
 
 
 class FusionTests(unittest.TestCase):

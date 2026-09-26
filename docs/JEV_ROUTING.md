@@ -1,8 +1,9 @@
 # Jev as a Quattro classification signal
 
-Default: **OFF**. No deployment or production promotion is performed by this
-feature. Rebased onto latency/per-turn fix #29 at
-`0f965b938e3c57a9f251103803743b8d46231981`. The Jev PR remains unmerged.
+Current launcher default: **OFF**. The optional-signal foundation merged in
+PR #30 at `3393d0b6cb6fbd25835f15137bc5a0a367878ab5`. Default-enabled
+coprocessor work continues in draft PR #31; it is not production-ready.
+See [JEV_COPROCESSOR_PROGRESS.md](JEV_COPROCESSOR_PROGRESS.md).
 
 ## Architecture and authority
 
@@ -97,7 +98,18 @@ Unknown fields/values, duplicate JSON keys, oversized bodies, invalid JSON,
 and unknown model identities fail open. The returned canonical model is
 recorded separately from the requested alias and must appear in the catalog.
 
-There are no retries. Catalog and evaluation timing are separate. The overall
+There are no retries. Three consecutive provider/worker failures suppress new
+workers for 30 seconds, using a monotonic process-local cooldown keyed by the
+private evidence database path. Successful evaluations reset the count. Missing
+credentials, ordinary cancellation and local telemetry failures do not count.
+In-flight failures do not extend an active cooldown. After expiry, the next
+eligible turn may try again; there is no timer or background retry. The existing
+eight-worker cap still applies. State is bounded to 128 least-recently-used
+stores, is not persisted, and is not shared across launcher processes. Suppressed
+turn evidence records `jev_suppressed=circuit_open` and `jev_requested=false`;
+local intelligence and deterministic routing continue normally.
+
+Catalog and evaluation timing are separate. The overall
 child wall-clock timeout includes startup and both requests. Catalog checking
 is deliberately uncached in this initial experiment; it adds observable
 latency but prevents stale alias assumptions. Evaluation RTT excludes catalog,
