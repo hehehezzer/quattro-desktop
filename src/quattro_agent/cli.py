@@ -2829,10 +2829,6 @@ def routing_command(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="quattro-agent", description="Quattro AI control plane")
     parser.add_argument("--version", action="version", version=f"quattro-agent {VERSION}")
-    # Keep the implicit bare-command launch path equivalent to `launch`.
-    # argparse only creates subparser-specific attributes after a subcommand is
-    # selected, so provide the two launch defaults at the root parser as well.
-    parser.set_defaults(agent=None, directory=None)
     sub = parser.add_subparsers(dest="command")
     launch = sub.add_parser("launch")
     launch.add_argument("agent", nargs="?", choices=("codex", "pi"))
@@ -3307,6 +3303,9 @@ def handle_deployment(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        return 0
     if args.command == "ui-state":
         print(json.dumps(ui_snapshot(), ensure_ascii=False))
         return 0
@@ -3314,7 +3313,7 @@ def main() -> int:
         return initialize_config(args.force)
     ensure_state_dirs()
     config = load_config()
-    command = args.command or "launch"
+    command = args.command
     if command == "launch":
         agent = args.agent or str(config["defaultAgent"])
         print(launch_terminal(
