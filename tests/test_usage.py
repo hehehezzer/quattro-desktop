@@ -309,7 +309,7 @@ class NativeHandoffTests(unittest.TestCase):
             mock.patch.object(agent, "update_recent"),
         )
 
-    def test_codex_exec_handoff_preserves_terminal_workspace_account_and_policy(self):
+    def test_codex_routed_handoff_preserves_terminal_workspace_account_and_policy(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             codex_home = root / "codex-home"
@@ -319,12 +319,15 @@ class NativeHandoffTests(unittest.TestCase):
                     mock.patch.object(agent, "tool_environment", return_value={"TERM": "xterm"}), \
                     mock.patch.object(agent, "prepare_codex_launch", return_value=codex_home) as prepare, \
                     mock.patch.object(agent.os, "chdir") as chdir, \
-                    mock.patch.object(agent.os, "execvpe", side_effect=SystemExit) as execute:
+                    mock.patch("quattro_agent.native_session.launch_routed_native", side_effect=SystemExit) as execute:
                 with self.assertRaises(SystemExit):
                     agent.native_interactive_handoff("codex", root)
             prepare.assert_called_once_with(self.config, "account-2")
-            executable, argv, env = execute.call_args.args
-            chdir.assert_called_once_with(root)
+            executable = execute.call_args.kwargs["binary"]
+            argv = execute.call_args.kwargs["command"]
+            env = execute.call_args.kwargs["env"]
+            self.assertEqual(execute.call_args.kwargs["directory"], root)
+            chdir.assert_not_called()
             self.assertEqual(executable, "/native/codex")
             self.assertEqual(argv[0], "/native/codex")
             self.assertEqual(argv[argv.index("-C") + 1], str(root))
@@ -332,10 +335,10 @@ class NativeHandoffTests(unittest.TestCase):
             self.assertEqual(env["CODEX_HOME"], str(codex_home))
             self.assertEqual(env["TERM"], "xterm")
             self.assertTrue(env["QUATTRO_SESSION_ID"].startswith("qsession_"))
-            self.assertEqual(env["QUATTRO_NATIVE_ROUTING_MODE"], "native-persistent-configured-route")
+            self.assertEqual(env["QUATTRO_NATIVE_ROUTING_MODE"], "quattro-per-turn-gate")
             self.assertEqual(write_runtime.call_args.args[1:4], ("codex", root, "account-2"))
 
-    def test_pi_exec_handoff_uses_real_binary_omniroute_home_and_no_tools(self):
+    def test_pi_routed_handoff_uses_real_binary_omniroute_home_and_no_tools(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             pi_home = root / "pi-home"
@@ -345,11 +348,14 @@ class NativeHandoffTests(unittest.TestCase):
                     mock.patch.object(agent, "tool_environment", return_value={"TERM": "xterm"}), \
                     mock.patch.object(agent, "ensure_pi_worker_home", return_value=pi_home) as worker_home, \
                     mock.patch.object(agent.os, "chdir") as chdir, \
-                    mock.patch.object(agent.os, "execvpe", side_effect=SystemExit) as execute:
+                    mock.patch("quattro_agent.native_session.launch_routed_native", side_effect=SystemExit) as execute:
                 with self.assertRaises(SystemExit):
                     agent.native_interactive_handoff("pi", root)
-            executable, argv, env = execute.call_args.args
-            chdir.assert_called_once_with(root)
+            executable = execute.call_args.kwargs["binary"]
+            argv = execute.call_args.kwargs["command"]
+            env = execute.call_args.kwargs["env"]
+            self.assertEqual(execute.call_args.kwargs["directory"], root)
+            chdir.assert_not_called()
             self.assertEqual(executable, "/native/pi")
             self.assertEqual(argv[:5], [
                 "/native/pi", "--provider", "omniroute", "--model", "auto",

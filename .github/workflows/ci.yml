@@ -21,6 +21,9 @@ jobs:
           cache: pip
       - name: Install Core package
         run: python -m pip install --upgrade pip build && python -m pip install --no-deps .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: CLI smoke test
         run: quattro-agent --help && quattro-agent --version
       - name: Existing and architecture tests

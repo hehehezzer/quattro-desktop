@@ -174,10 +174,10 @@ user-configurable.
 ## Common commands
 
 ```text
-quattro-agent                          # choose and exec native Codex or Pi
+quattro-agent                          # choose native Codex or Pi with per-turn routing
 quattro-agent launch                   # same native-agent chooser
-quattro-agent launch codex [PATH]      # hand this terminal to native Codex
-quattro-agent launch pi [PATH]         # hand this terminal to bounded native Pi
+quattro-agent launch codex [PATH]      # open native Codex with the Quattro turn gate
+quattro-agent launch pi [PATH]         # open native Pi with the Quattro input hook
 quattro-agent doctor [--json]
 quattro-agent prompt [codex|pi] "Explain this repository"
 quattro-agent submit --agent auto --directory PATH --prompt "Implement ..."
@@ -197,28 +197,21 @@ interactive launches remain launcher controls rather than user work.
 
 ## Routing
 
-When the selected Codex model is exactly `auto`, Quattro requests:
+Interactive UI selection is independent of execution selection. Each user turn
+receives a fresh immutable Quattro ExecutionPlan. DIRECT questions use a bounded
+OmniRoute Responses call; only DELEGATE work enters an agent lifecycle. Codex
+uses its real native TUI connected to Quattro's local app-server bridge. Pi uses
+its real native TUI with a trusted input extension.
 
-| Tier | Route label | Default effort |
-| --- | --- | --- |
-| FAST | `auto/coding:cheap` | `low` |
-| STANDARD | `auto/coding` | `medium` |
-| REASONING | `auto/reasoning` | `high` |
+Quattro chooses and locks the provider, account, model, effort, and context
+budget. OmniRoute retains transport, caching, token optimization, and accounting;
+it cannot replace the locked target. Automatic FAST turns select a lightweight
+approved target with low effort. Explicit approved model selections remain
+explicit, while the routing tier controls effort.
 
-A concrete `/model` selection is preserved, while Quattro still controls the
-managed task's effective reasoning effort. Account-pinned GPT-6 Astra is the
-exception: its picker offers only low/high thinking and preserves either
-saved choice. OmniRoute makes the provider and
-model choice inside the eligible pool. Quattro stores sanitized versioned
-decision snapshots and supports `quattro-agent routing profile`, `explain`,
-`replay`, `refresh-evidence`, `record-outcome`, and `status`. Details are in
-[routing](docs/ROUTING.md).
-
-Standard OmniRoute remains supported for tier-based routing. For full
-evidence-aware adaptive routing, candidate observability, expected
-completion-cost ordering, and capability-aware fallback, use the
-[Quattro-compatible OmniRoute fork](https://github.com/hehehezzer/OmniRoute).
-Compatibility is detected automatically; no custom-mode switch is required.
+See [interactive routing](docs/interactive-routing.md) for budgets, native
+protocol requirements, supported interactions, privacy, measurements, and
+reproducible validation. See [routing](docs/routing.md) for the gateway contract.
 
 ## Memory
 

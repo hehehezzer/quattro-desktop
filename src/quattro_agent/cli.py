@@ -986,10 +986,9 @@ def native_interactive_handoff(
     resume: bool = False,
     native_session_ref: str | None = None,
 ) -> "NoReturn":
-    """Replace Quattro with the selected native interactive CLI in this terminal.
+    """Open the selected native interactive CLI with Quattro controlling turns.
 
-    Persistent native CLIs retain configured provider/model routing, but cannot
-    receive a fresh Quattro ExecutionPlan for every subsequent turn.
+    The actual selected TUI uses a Quattro-controlled per-turn backend.
     """
     config = load_config()
     if agent not in {"codex", "pi"}:
@@ -1010,7 +1009,7 @@ def native_interactive_handoff(
     ) if part)
     selected_account = account_id or str(config["defaultCodexAccount"])
     session_id = f"qsession_{uuid.uuid4().hex}"
-    routing_label = "native-persistent-configured-route"
+    routing_label = "quattro-per-turn-gate"
 
     if agent == "codex":
         binary = require("codex")
@@ -1063,8 +1062,14 @@ def native_interactive_handoff(
     )
     update_recent(directory, agent, session_id, agent == "codex")
     try:
-        os.chdir(directory)
-        os.execvpe(binary, command, env)
+        from .native_session import launch_routed_native
+        code = launch_routed_native(
+            agent=agent, binary=binary, command=command, env=env, config=config,
+            directory=directory, session_id=session_id, account=selected_account,
+            state_root=STATE_ROOT, runtime_factory=harness,
+            profile_name=profile_name, confirm_full_access=confirm_full_access,
+        )
+        raise SystemExit(code)
     except BaseException:
         try:
             runtime.unlink()
@@ -3486,7 +3491,7 @@ def main() -> int:
                 profile_name=args.policy,
                 confirm_full_access=args.confirm_full_access,
             )
-            return 0  # reached only by test doubles; os.execvpe does not return
+            return 0  # reached only by test doubles; native launch raises SystemExit
         except (ConfigError, LeaseConflict, OSError, ValueError, RuntimeError) as error:
             die(str(error))
     if command == "desktop":
@@ -3553,9 +3558,7 @@ def main() -> int:
             if matches:
                 logical_id = matches[0]["quattro_session_id"]
             else:
-                # Backward-compatible native-only path for legacy tasks.
-                if omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH:
-                    die("Native-only legacy sessions cannot resume under locked routing; start a new Quattro session")
+                # Native history can now resume through a fresh per-turn gate.
                 prepare_codex_launch(config, args.account or str(config["defaultCodexAccount"]))
                 try:
                     native_target = resolve_codex_resume_target(
@@ -3566,13 +3569,21 @@ def main() -> int:
                     die(str(error))
                 if native_target is None:
                     die(f"No logical or native resumable Codex session was found for {directory}")
-                print(launch_terminal(
-                    "codex", str(directory), "resume",
+                if args.prompt is not None:
+                    _task_id, result = harness().submit(
+                        agent="codex", project=directory, prompt=args.prompt,
+                        mode="resume-prompt", native_session_ref=native_target["sessionId"],
+                        account_id=args.account or str(config["defaultCodexAccount"]),
+                        profile_name=args.policy, confirm_full_access=args.confirm_full_access,
+                    )
+                    return result or 0
+                native_interactive_handoff(
+                    "codex", directory, resume=True,
                     account_id=args.account or str(config["defaultCodexAccount"]),
                     native_session_ref=native_target["sessionId"],
                     profile_name=args.policy,
                     confirm_full_access=args.confirm_full_access,
-                ))
+                )
                 return 0
         if logical_id is None:
             die("No recoverable logical Quattro session matched the request")

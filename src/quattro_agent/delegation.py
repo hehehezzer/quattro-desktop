@@ -100,6 +100,33 @@ def classify_task_request(request: str, *, preferred_agent: str = "codex") -> Ta
     if "\x00" in compact:
         raise ValueError("request must contain safe characters")
     agent = preferred_agent if preferred_agent in {"codex", "pi"} else "codex"
+    # An explanatory question is not an instruction to execute its subject.
+    action_clause = re.search(
+        r"(?i)(?:[.;]\s*|\b(?:and|then)\s+)(?:then\s+)?"
+        r"(?:run|fix|edit|apply|deploy|install|modify|execute|refactor|build|test|"
+        r"patch|inspect|search|commit|open)\b", compact,
+    )
+    if re.match(
+        r"(?i)^(?:(?:please|can you|could you|would you)\s+)*"
+        r"(?:what (?:is|are|does)|what['’]s|how (?:does|do|can)|explain|define)\b", compact,
+    ) and not action_clause:
+        return TaskDelegationDecision(
+            "DIRECT", "request_can_be_answered_without_execution", 0.93, None,
+        )
+    if re.search(
+        r"(?i)\b(?:search|inspect|explore|scan|read|trace|debug|investigate)\b"
+        r".{0,100}\b(?:repository|repo|codebase|files?|directory)\b", compact,
+    ):
+        return TaskDelegationDecision(
+            "DELEGATE", "explicit_repository_inspection", 0.98, agent,
+        )
+    if re.search(
+        r"(?i)(?:^|[.;]\s*|\b(?:and|then)\s+)(?:commit\b|open\s+(?:a\s+)?(?:pr|pull request)\b)",
+        compact,
+    ):
+        return TaskDelegationDecision("DELEGATE", "explicit_repository_delivery", 0.99, "codex")
+    if action_clause:
+        return TaskDelegationDecision("DELEGATE", "explicit_execution_clause", 0.98, agent)
     # A requested recommendation is still direct even when its object is a
     # fix; only an explicit action verb changes the decision.
     if _DIRECT_OVERRIDE.search(compact) and not re.search(
