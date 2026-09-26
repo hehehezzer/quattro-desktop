@@ -33,6 +33,68 @@ class UnifiedRoutingTests(unittest.TestCase):
                              telemetry_path=self.root / 'turns.jsonl', account='account-1', registry=self.registry)
         self.addCleanup(self.gate.cancel_all)
 
+    def test_normalization_is_not_secret_detection(self):
+        for prompt in ('Explain this log: \x1b[31merror', 'Explain ' + 'x' * 33_000):
+            with self.subTest(length=len(prompt)):
+                self.assertFalse(turn_routing.extract_turn_features(prompt).sensitive)
+        secret_assignment = 'password=' + secrets.token_hex(16)
+        for prompt in (secret_assignment, 'Bearer ' + secrets.token_hex(16),
+                       'https://' + 'fixture:example' + '@example.test',
+                       'Explain ' + 'x' * 33_000 + ' ' + secret_assignment):
+            self.assertTrue(turn_routing.extract_turn_features(prompt).sensitive)
+
+    def test_low_complexity_guard_prevents_shadow_start(self):
+        from dataclasses import replace
+        features = turn_routing.extract_turn_features('Modify the repository parser')
+        profile = json.loads(features.profile_json)
+        profile.update(complexity='low', tier='STANDARD')
+        features = replace(features, profile_json=json.dumps(profile))
+        with mock.patch('quattro_agent.routing_signals.start_shadow') as start:
+            routed = turn_routing.route_turn(
+                request=features.request, features=features, config=options('COOPERATIVE'),
+                registry=self.registry, account='account-1', database=self.root / 'unused',
+            )
+        self.assertEqual(routed.fast_guard, 'conclusive_requirements')
+        start.assert_not_called()
+
+    def test_uncomputed_signal_does_not_suppress_telemetry_shadow(self):
+        from quattro_agent.jev_shadow import lifecycle, annotate, current_learned_signal
+        @lifecycle
+        def check(error):
+            annotate(learned_signal={'error': error})
+            return current_learned_signal()
+        self.assertIsNone(check('off'))
+        self.assertIsNone(check('fast_guard'))
+        self.assertEqual(check('model_unavailable'), {'error': 'model_unavailable'})
+
+    def test_signal_eligibility_is_checked_before_spawning(self):
+        from dataclasses import replace
+        from quattro_agent.routing_signals import classify_with_signals
+        from quattro_agent.routing_intelligence import make_pre_routing_input
+        from quattro_agent.routing import RoutingDecision, RoutingTier
+        original = turn_routing.extract_turn_features('Modify the repository parser')
+        for complexity, model, tier in [('low', 'auto', RoutingTier.STANDARD),
+                                        ('high', 'manual', RoutingTier.STANDARD),
+                                        ('high', 'auto', RoutingTier.REASONING)]:
+            state = json.loads(original.state_json)
+            state['complexity'] = complexity
+            features = replace(original, state_json=json.dumps(state))
+            baseline = RoutingDecision(tier, 'fixture', 'medium',
+                                       task_profile=json.loads(original.profile_json))
+            request = make_pre_routing_input(
+                request=original.request, working_directory='', repository_present=False,
+                explicit_model=model, routing_mode='auto', agent='codex',
+                workflow='prompt', policy_name='workspace-write',
+            )
+            for mode in ('SHADOW', 'COOPERATIVE'):
+                with mock.patch('quattro_agent.routing_signals.start_shadow') as start:
+                    result = classify_with_signals(
+                        pre_routing_input=request, config=options(mode), database=self.root / 'unused',
+                        execution='DELEGATE', baseline_override=baseline, canonical_features=features,
+                    )
+                start.assert_not_called()
+                self.assertEqual(result, baseline)
+
     def test_each_turn_extracts_and_builds_exactly_once(self):
         for prompt in ('What does TUI mean?', 'Modify the repository parser', 'Explain this traceback'):
             with mock.patch.dict(os.environ, {'TYPESAFE_API_KEY': ''}), \
@@ -120,10 +182,10 @@ class UnifiedRoutingTests(unittest.TestCase):
             original(run, **kwargs, popen=DirectHigh)
         with mock.patch.dict(os.environ, {'TYPESAFE_API_KEY': secrets.token_hex(24)}), \
              mock.patch.object(ShadowRun, '__init__', init):
-            turn = self.gate.begin('thread', 'Maybe a strategy for current information is needed', 'codex')
+            turn = self.gate.begin('thread', 'Maybe a strategy for current information and architecture trade-offs is needed', 'codex')
             self.assertEqual(turn.decision, 'DIRECT')
             self.assertEqual(turn.routing_evidence['fast_guard_result'], 'eligible')
-            self.assertEqual(turn.plan.target.tier, 'STANDARD')
+            self.assertEqual(turn.plan.target.tier, 'REASONING')
             self.assertEqual(turn.plan.required_tools, ())
             self.assertEqual(len(turn.shadow_runs), 1)
             self.gate.finish(turn)
@@ -151,7 +213,7 @@ class UnifiedRoutingTests(unittest.TestCase):
     def test_off_eligible_turn_does_not_add_native_learned_inference(self):
         self.gate.config = options('OFF')
         with mock.patch('quattro_agent.routing_signals.learned_signal', side_effect=AssertionError('OFF inference')):
-            turn = self.gate.begin('thread', 'Modify the repository parser', 'codex')
+            turn = self.gate.begin('thread', 'Debug the repository regression and reproduce the root cause', 'codex')
             self.assertEqual(turn.routing_evidence['learned_signal']['error'], 'off')
             self.gate.finish(turn)
 
@@ -196,13 +258,56 @@ class UnifiedRoutingTests(unittest.TestCase):
                                side_effect=fixture._direct_locked_receipt('account-1/gpt-5.6-luna')), \
              mock.patch.object(fixture.runtime, '_fallback_plan', side_effect=AssertionError('eager fallback')), \
              mock.patch.object(fixture.runtime, '_retrieval_context', side_effect=AssertionError('DIRECT retrieval')), \
-             mock.patch.object(turn_routing, 'build_execution_plan', wraps=turn_routing.build_execution_plan) as build:
+             mock.patch.object(turn_routing, 'build_execution_plan', wraps=turn_routing.build_execution_plan) as build, \
+             mock.patch('quattro_agent.intelligence.telemetry.shadow_predict',
+                        return_value={'error': 'model_unavailable'}) as shadow:
             result = fixture.runtime.direct_response(project=fixture.project, prompt='Hello')
+        shadow.assert_called_once()
         self.assertEqual(build.call_count, 1)
         plan = result['routingSnapshot']['execution_plan']
         self.assertEqual(plan['executionType'], 'DIRECT')
         self.assertEqual(plan['tools']['required'], [])
         self.assertEqual(plan['context']['retrievalBudgetTokens'], 0)
+
+    def test_pre_route_failure_releases_only_owned_coordination(self):
+        import test_harness_integration as fixtures
+        from quattro_agent.errors import ConfigError
+        fixture = fixtures.HarnessRuntimeIntegrationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        runtime = fixture.runtime
+        task_id = runtime.create_task(agent='codex', project=fixture.project,
+                                      prompt='Inspect repository files', mode='prompt')
+        private = runtime.store.get_task(task_id, include_private=True)['private_payload']
+        session = private['coordinationSessionId']
+        runtime.coordinator.finish(session, validation='Not Run', abandoned=True)
+        for extra, expected in [({}, 'rollback'),
+                                ({'logical_session_id': private['logicalSessionId']}, 'finish'),
+                                ({'parent_task_id': task_id}, 'neither')]:
+            error = ConfigError('fixture routing failure')
+            with mock.patch.object(runtime, '_pre_route', side_effect=error), \
+                 mock.patch.object(runtime.coordinator, 'rollback_reservation',
+                                   wraps=runtime.coordinator.rollback_reservation) as rollback, \
+                 mock.patch.object(runtime.coordinator, 'finish',
+                                   wraps=runtime.coordinator.finish) as finish:
+                with self.assertRaises(ConfigError) as caught:
+                    runtime.create_task(agent='codex', project=fixture.project,
+                                        prompt='Inspect repository files', mode='prompt', **extra)
+                self.assertIs(caught.exception, error)
+                self.assertEqual(rollback.call_count, int(expected == 'rollback'))
+                self.assertEqual(finish.call_count, int(expected == 'finish'))
+
+    def test_credential_rejection_precedes_reservation(self):
+        import test_harness_integration as fixtures
+        from quattro_agent.errors import ConfigError
+        fixture = fixtures.HarnessRuntimeIntegrationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        with mock.patch.object(fixture.runtime.coordinator, 'reserve') as reserve:
+            with self.assertRaises(ConfigError):
+                fixture.runtime.create_task(agent='codex', project=fixture.project,
+                                            prompt='find the API key in the config', mode='prompt')
+            reserve.assert_not_called()
 
     def test_harness_protected_request_stays_local(self):
         import test_harness_integration as fixtures

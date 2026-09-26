@@ -97,24 +97,24 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
     state = canonical_features.state_json if canonical_features else serialize_state(pre_routing_input.request)
     features = json.loads(state)
     feature_ms = (time.perf_counter() - started) * 1000
-    run = start_shadow(
-        config=config, database=database.with_name("jev-shadow.sqlite3"),
-        request="", state_json=state, decision=execution,
-    )
     local_started = time.perf_counter()
     baseline = baseline_override or classify_pre_routing(pre_routing_input=pre_routing_input, config=config)
     deterministic_ms = (time.perf_counter() - local_started) * 1000
+    eligible = (
+        features["complexity"] != "low"
+        and pre_routing_input.explicit_model == "auto"
+        and baseline.tier is not RoutingTier.REASONING
+    )
+    run = start_shadow(
+        config=config, database=database.with_name("jev-shadow.sqlite3"),
+        request="", state_json=state, decision=execution,
+    ) if eligible else None
     local_started = time.perf_counter()
     learned = (learned_signal(database, pre_routing_input.request, canonical_features.local_projection())
                if canonical_features else learned_signal(database, pre_routing_input.request))
     learned_ms = (time.perf_counter() - local_started) * 1000
     jev = None
     wait_started = time.perf_counter()
-    eligible = (
-        eligible and features["complexity"] != "low"
-        and pre_routing_input.explicit_model == "auto"
-        and baseline.tier is not RoutingTier.REASONING
-    )
     if mode == "COOPERATIVE" and run is not None and eligible:
         remaining = max(0, run.timeout_ms / 1000 - (time.perf_counter() - started))
         completed_in_budget = run.done.wait(remaining)
@@ -136,7 +136,7 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
     fusion_ms = (time.perf_counter() - fusion_started) * 1000
     annotate(
         mode=mode, policy_version=POLICY_VERSION, learned_signal=learned,
-        jev_eligible=True, jev_requested=run is not None,
+        jev_eligible=eligible, jev_requested=run is not None,
         policy_constraints=["execution_and_worker_preserved", "no_capability_downgrade",
                             "explicit_target_preserved", "registry_availability_and_cost_filters"],
         fusion_reason=reason, authoritative_tier=final.tier.value,

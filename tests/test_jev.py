@@ -523,7 +523,7 @@ class HarnessSignalTests(unittest.TestCase):
              mock.patch.object(ShadowRun, "__init__", init):
             task_id = self.runtime.create_task(
                 agent="codex", project=self.fixture.project, mode="prompt",
-                prompt="Modify the repository parser", profile_name="workspace-write",
+                prompt="Debug the repository regression and reproduce the root cause", profile_name="workspace-write",
             )
         task = self.runtime.store.get_task(task_id, include_private=True)
         self.assertEqual(task["agent"], "codex")
@@ -575,7 +575,7 @@ class NativeTurnSignalTests(unittest.TestCase):
             self.gate.config = options(mode)
             with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": secrets.token_hex(24)}), \
                  mock.patch.object(ShadowRun, "__init__", init):
-                turn = self.gate.begin("thread", "Modify the repository parser", "codex")
+                turn = self.gate.begin("thread", "Debug the repository regression and reproduce the root cause", "codex")
                 self.assertEqual(turn.plan.target.tier, expected)
                 self.assertTrue(turn.plan.routing_locked)
                 self.assertEqual(len(turn.shadow_runs), 1)
@@ -597,7 +597,7 @@ class NativeTurnSignalTests(unittest.TestCase):
         self.gate.config = options("SHADOW", timeout=3000)
         with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": secrets.token_hex(24)}), \
              mock.patch.object(ShadowRun, "__init__", init):
-            turn = self.gate.begin("thread", "Modify the repository parser", "pi")
+            turn = self.gate.begin("thread", "Debug the repository regression and reproduce the root cause", "pi")
             run = turn.shadow_runs[0]
             deadline = time.monotonic() + 2
             while run.process is None and time.monotonic() < deadline:

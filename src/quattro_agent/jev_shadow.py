@@ -266,7 +266,8 @@ def start_shadow(*, config, database, request, decision, record_id=None,
 
 def current_learned_signal() -> dict[str, Any] | None:
     signal = (_EVIDENCE.get() or {}).get("learned_signal")
-    return None if signal and signal.get("error") == "off" else signal
+    # Uncomputed routing signals must not suppress existing telemetry inference.
+    return None if signal and signal.get("error") in {"off", "fast_guard"} else signal
 
 
 def mark_dispatch() -> None:

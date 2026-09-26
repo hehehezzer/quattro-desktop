@@ -711,6 +711,9 @@ class HarnessRuntime:
             policy_name=profile_name or str(config.get("defaultPolicyProfile", "workspace-write")),
             config=config, write_scopes=write_scopes,
         ) if turn_execution_plan is None else None)
+        if (routing_mode is OmniRouteRoutingMode.PASSTHROUGH
+                and routing_features is not None and routing_features.credential_lookup):
+            raise ConfigError("credential lookup cannot enter a delegated lifecycle")
         delegation = (routing_features.gate.to_dict() if routing_features else {
             "decision": "DELEGATE", "reason": "validated_supplied_plan",
             "confidence": 1.0, "requiredAgent": agent,
@@ -850,12 +853,27 @@ class HarnessRuntime:
             adaptive, pre_routing_diagnostics = None, {"source": "validated_supplied_plan"}
             execution_plan = turn_execution_plan
         else:
-            routing, adaptive, pre_routing_diagnostics, routed = self._pre_route(
-                config=config, request=prompt, project=actual_project, agent=agent,
-                workflow=workflow, policy_name=profile.name, configured_model=configured_model,
-                selected_account=selected_account, session_continuation=logical_session_id is not None,
-                write_scopes=ownership, routing_features=routing_features,
-            )
+            try:
+                routing, adaptive, pre_routing_diagnostics, routed = self._pre_route(
+                    config=config, request=prompt, project=actual_project, agent=agent,
+                    workflow=workflow, policy_name=profile.name, configured_model=configured_model,
+                    selected_account=selected_account, session_continuation=logical_session_id is not None,
+                    write_scopes=ownership, routing_features=routing_features,
+                )
+            except BaseException:
+                # A child borrows its parent's coordination; only release capacity
+                # that this invocation reserved or resumed.
+                if coordination and top_level:
+                    try:
+                        if new_reservation:
+                            self.coordinator.rollback_reservation(str(coordination["sessionId"]))
+                        else:
+                            self.coordinator.finish(
+                                str(coordination["sessionId"]), validation="Not Run", abandoned=True,
+                            )
+                    except BaseException:
+                        pass  # Cleanup must not replace the original routing error.
+                raise
             pre_profile = task_profile_from_dict(routing.task_profile)
             execution_plan = routed.plan if routed else None
         execution_target = execution_plan.target if execution_plan else None

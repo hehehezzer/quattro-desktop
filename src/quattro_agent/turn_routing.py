@@ -16,7 +16,7 @@ from collections.abc import Callable, Mapping, Sequence
 
 from .delegation import TaskDelegationDecision, classify_task_request
 from .intelligence.features import extract_decision_features, SAFE_FEATURES
-from .intelligence.telemetry import sanitize_request
+from .intelligence.telemetry import sanitize_request, redact_request_credentials
 from .jev import serialize_features
 from .jev_shadow import annotate
 from .model_registry import (
@@ -29,7 +29,6 @@ from .routing_intelligence import (
     make_pre_routing_input,
 )
 from .routing_signals import classify_with_signals
-from .privacy import redact_secret_text
 from .errors import ConfigError
 
 CREDENTIAL_RESPONSE = (
@@ -93,7 +92,8 @@ def extract_turn_features(request: str, *, agent="codex", workflow="general-task
         raise ValueError("turn input exceeds supported bounds")
     # Existing lexical extractors are collected once here. No model or telemetry
     # adapter may invoke them again for this evaluation.
-    safe, redacted = sanitize_request(request)
+    safe, _normalized = sanitize_request(request)
+    _, redacted = redact_request_credentials(request)
     requirements = extract_decision_features(safe)
     model_input = {"request_text": safe, "request_length": len(safe),
                    "estimated_tokens": (len(safe) + 3) // 4,
@@ -211,7 +211,7 @@ def route_turn(*, request: str, config: Mapping, registry: Sequence[ModelTarget]
         guard = "explicit_target"
     elif profile.tier.value == "REASONING":
         guard = "deterministic_ceiling"
-    elif profile.complexity.value == "LOW":
+    elif profile.complexity.value == "low":
         guard = "conclusive_requirements"
     guard_ms = (time.perf_counter() - guard_started) * 1000
     constraints = unavailable_routes
