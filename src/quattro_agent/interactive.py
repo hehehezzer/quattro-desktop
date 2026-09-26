@@ -99,7 +99,12 @@ def run_interactive(
                 agent=agent, project=workspace, prompt=prompt, mode="prompt",
                 logical_session_id=session_id, title=message[:100],
             )
-            code = runtime.run_task(task_id)
+            try:
+                code = runtime.run_task(task_id)
+            except KeyboardInterrupt:
+                runtime.request_cancel(task_id, reason="interactive_interrupt")
+                print("\nSession saved.", file=output, flush=True)
+                break
             task = runtime.store.get_task(task_id)
             artifacts = runtime.store.artifacts_for_task(task_id)
             raw = pathlib.Path(artifacts[-1]["path"]).read_text(encoding="utf-8") if artifacts else ""

@@ -53,6 +53,24 @@ class InteractiveTests(unittest.TestCase):
             runtime.coordinator.finish.assert_called_once()
             self.assertIn("Session saved.", output.getvalue())
 
+    def test_interrupt_cancels_current_task_and_preserves_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = mock.Mock()
+            runtime.store.get_logical_session.return_value = {
+                "working_directory": directory, "current_task_id": "anchor",
+                "initial_task_id": "anchor",
+            }
+            runtime.create_task.return_value = "interrupted-turn"
+            runtime.run_task.side_effect = KeyboardInterrupt()
+            output = io.StringIO()
+            result = run_interactive(
+                runtime, agent="codex", workspace=pathlib.Path(directory),
+                session_id="qsession_test", input_stream=io.StringIO("start\n"), output=output,
+            )
+            self.assertEqual(result, 0)
+            runtime.request_cancel.assert_called_once_with("interrupted-turn", reason="interactive_interrupt")
+            self.assertIn("Session saved.", output.getvalue())
+
     def test_resume_restores_checkpoint_context(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
