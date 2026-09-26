@@ -24,6 +24,7 @@ import uuid
 from .jev import MODEL, SCHEMA_VERSION, JevFailure, decode, serialize_state, validate_response
 
 _SCOPE: ContextVar[list | None] = ContextVar("jev_scope", default=None)
+_EVIDENCE: ContextVar[dict | None] = ContextVar("routing_evidence", default=None)
 _CAPACITY = threading.BoundedSemaphore(8)
 _LOG = logging.getLogger(__name__)
 FAILURES = frozenset({
@@ -220,6 +221,7 @@ def lifecycle(function):
     def wrapped(*args, **kwargs):
         runs: list[ShadowRun] = []
         token = _SCOPE.set(runs)
+        evidence_token = _EVIDENCE.set({})
         try:
             return function(*args, **kwargs)
         finally:
@@ -232,6 +234,7 @@ def lifecycle(function):
                         pass
             finally:
                 _SCOPE.reset(token)
+                _EVIDENCE.reset(evidence_token)
     return wrapped
 
 
@@ -262,8 +265,8 @@ def start_shadow(*, config, database, request, decision, record_id=None,
 
 
 def current_learned_signal() -> dict[str, Any] | None:
-    runs = _SCOPE.get()
-    return runs[0].annotations.get("learned_signal") if runs else None
+    signal = (_EVIDENCE.get() or {}).get("learned_signal")
+    return None if signal and signal.get("error") == "off" else signal
 
 
 def mark_dispatch() -> None:
@@ -273,8 +276,16 @@ def mark_dispatch() -> None:
         runs[0].annotations["dispatch_ms"] = (time.perf_counter() - runs[0].started) * 1000
 
 
+def current_evidence() -> dict:
+    """Content-free snapshot for the existing per-turn routing record."""
+    return dict(_EVIDENCE.get() or {})
+
+
 def annotate(**values) -> None:
     """Owner-thread-only annotations; applied after the monitor has been joined."""
+    evidence = _EVIDENCE.get()
+    if evidence is not None:
+        evidence.update(values)
     runs = _SCOPE.get()
     if runs:
         runs[0].annotations.update(values)

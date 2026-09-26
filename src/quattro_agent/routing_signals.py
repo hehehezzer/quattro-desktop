@@ -23,14 +23,15 @@ MIN_CONFIDENCE = 0.90
 LEARNED_VETO_CONFIDENCE = 0.80
 
 
-def learned_signal(database: Path, request: str) -> dict[str, Any]:
+def learned_signal(database: Path, request: str, model_input=None) -> dict[str, Any]:
     """Use the existing safe-feature artifact, not a new learned classifier."""
     if not database.is_file():
         return {"error": "model_unavailable"}
     try:
         safe, _ = sanitize_request(request)
         result = shadow_predict(IntelligenceStore(database, busy_timeout_ms=20),
-                                request=safe, profile=None, repository_present=False)
+                                request=safe, profile=None, repository_present=False,
+                                model_input=model_input)
         # Native error categories and bounded model IDs only, never paths/text.
         return {name: result[name] for name in
                 ("prediction", "confidence", "model_version", "latency_ms", "error") if name in result}
@@ -44,7 +45,7 @@ def fuse(baseline: RoutingDecision, *, execution: str, manual: bool,
     """Explicit eligibility/veto policy, never an average or router contest."""
     if manual:
         return baseline, "explicit_target_preserved"
-    if execution != "DELEGATE" or features["complexity"] == "low":
+    if features["complexity"] == "low":
         return baseline, "deterministic_execution_preserved"
     if baseline.tier is RoutingTier.REASONING:
         return baseline, "deterministic_maximum_preserved"
@@ -55,7 +56,7 @@ def fuse(baseline: RoutingDecision, *, execution: str, manual: bool,
     answers = jev["answers"]
     if any(answers[name]["confidence"] < MIN_CONFIDENCE for name in ("execution", "complexity", "capability")):
         return baseline, "uncertain_signal"
-    if answers["execution"]["choice"] != "DELEGATE" or answers["complexity"]["choice"] != "HIGH":
+    if answers["execution"]["choice"] != execution or answers["complexity"]["choice"] != "HIGH":
         return baseline, "deterministic_floor_preserved"
     requested = {"CHEAP": 0, "STANDARD": 1, "STRONG": 2, "FRONTIER": 2}[answers["capability"]["choice"]]
     tiers = (RoutingTier.FAST, RoutingTier.STANDARD, RoutingTier.REASONING)
@@ -74,17 +75,26 @@ def fuse(baseline: RoutingDecision, *, execution: str, manual: bool,
 
 
 def _classify_with_signals(*, pre_routing_input, config, database: Path, execution: str,
-                           can_select=None, baseline_override=None) -> RoutingDecision:
+                           can_select=None, baseline_override=None, canonical_features=None,
+                           eligible=True) -> RoutingDecision:
     """Jev runs concurrently with deterministic and learned analysis.
 
     SHADOW never waits at the fusion boundary. COOPERATIVE waits only for the
     remainder of the strict routing budget; the lifecycle owns cancellation.
     """
     mode = config.get("routing", {}).get("jev", {}).get("mode", "OFF")
+    if not eligible:
+        annotate(mode=mode, jev_eligible=False, jev_requested=False,
+                 learned_signal={"error": "fast_guard"},
+                 quattro_learned_ms=0.0, fusion_ms=0.0, critical_path_wait_ms=0.0,
+                 fusion_reason="fast_guard")
+        return baseline_override or classify_pre_routing(pre_routing_input=pre_routing_input, config=config)
     if mode == "OFF":
+        annotate(mode=mode, jev_eligible=True, jev_requested=False, learned_signal={"error": "off"},
+                 quattro_learned_ms=0.0, fusion_ms=0.0, critical_path_wait_ms=0.0, fusion_reason="off")
         return baseline_override or classify_pre_routing(pre_routing_input=pre_routing_input, config=config)
     started = time.perf_counter()
-    state = serialize_state(pre_routing_input.request)
+    state = canonical_features.state_json if canonical_features else serialize_state(pre_routing_input.request)
     features = json.loads(state)
     feature_ms = (time.perf_counter() - started) * 1000
     run = start_shadow(
@@ -95,12 +105,13 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
     baseline = baseline_override or classify_pre_routing(pre_routing_input=pre_routing_input, config=config)
     deterministic_ms = (time.perf_counter() - local_started) * 1000
     local_started = time.perf_counter()
-    learned = learned_signal(database, pre_routing_input.request)
+    learned = (learned_signal(database, pre_routing_input.request, canonical_features.local_projection())
+               if canonical_features else learned_signal(database, pre_routing_input.request))
     learned_ms = (time.perf_counter() - local_started) * 1000
     jev = None
     wait_started = time.perf_counter()
     eligible = (
-        execution == "DELEGATE" and features["complexity"] != "low"
+        eligible and features["complexity"] != "low"
         and pre_routing_input.explicit_model == "auto"
         and baseline.tier is not RoutingTier.REASONING
     )
@@ -125,6 +136,7 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
     fusion_ms = (time.perf_counter() - fusion_started) * 1000
     annotate(
         mode=mode, policy_version=POLICY_VERSION, learned_signal=learned,
+        jev_eligible=True, jev_requested=run is not None,
         policy_constraints=["execution_and_worker_preserved", "no_capability_downgrade",
                             "explicit_target_preserved", "registry_availability_and_cost_filters"],
         fusion_reason=reason, authoritative_tier=final.tier.value,
@@ -138,11 +150,13 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
 
 
 def classify_with_signals(*, pre_routing_input, config, database: Path, execution: str,
-                          can_select=None, baseline_override=None) -> RoutingDecision:
+                          can_select=None, baseline_override=None, canonical_features=None,
+                          eligible=True) -> RoutingDecision:
     try:
         return _classify_with_signals(
             pre_routing_input=pre_routing_input, config=config, database=database,
             execution=execution, can_select=can_select, baseline_override=baseline_override,
+            canonical_features=canonical_features, eligible=eligible,
         )
     except Exception:
         # Optional intelligence must never replace the authoritative exception

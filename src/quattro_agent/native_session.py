@@ -25,16 +25,18 @@ def launch_routed_native(*, agent, binary, command, env, config, directory,
     def delegate(turn):
         # Instantiate the heavyweight harness only after the gate selected DELEGATE.
         with delegate_lock:
+            if gate.by_plan(turn.plan.plan_id) is not turn or turn.task_id is not None:
+                raise ValueError('turn plan is stale or already consumed')
             if not runtime_holder:
                 runtime_holder.append(runtime_factory())
             runtime = runtime_holder[0]
-        task_id = runtime.create_task(
-            agent='codex', project=directory, prompt=turn.prompt, mode='prompt',
-            profile_name=profile_name, account_id=turn.plan.target.account,
-            confirm_full_access=confirm_full_access,
-            turn_execution_plan=turn.plan, turn_context=gate.conversation_context(turn),
-        )
-        turn.task_id = task_id
+            task_id = runtime.create_task(
+                agent='codex', project=directory, prompt=turn.prompt, mode='prompt',
+                profile_name=profile_name, account_id=turn.plan.target.account,
+                confirm_full_access=confirm_full_access,
+                turn_execution_plan=turn.plan, turn_context=gate.conversation_context(turn),
+            )
+            turn.task_id = task_id
         if turn.cancel_event.is_set():
             runtime.request_cancel(task_id)
             raise RuntimeError('turn cancelled')

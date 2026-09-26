@@ -1,4 +1,10 @@
-# Jev routing benchmark — latency-fixed baseline
+# Jev routing benchmark — historical PR #30 evidence
+
+This file preserves measurements from `b79900e7` **before canonical pipeline
+unification**. Its all-turn shadow counts and harness-only classification
+boundary are not current behavior. Current measurements, eligibility counts,
+and the direct comparison with main #29 are in
+[UNIFIED_TURN_ROUTING.md](UNIFIED_TURN_ROUTING.md).
 
 Baseline main: `0f965b938e3c57a9f251103803743b8d46231981` (#29).
 Python 3.14, local Linux; 20 repetitions × 8 task types = **160 samples per

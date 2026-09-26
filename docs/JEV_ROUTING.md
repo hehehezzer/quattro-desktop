@@ -7,16 +7,20 @@ feature. Rebased onto latency/per-turn fix #29 at
 ## Architecture and authority
 
 ```text
-request boundary
-  -> compact pre-decision features
-  -> bounded TypeSafe worker  ----+
-  -> deterministic Quattro gate  | concurrent
-  -> existing learned artifact --+
+native turn / CLI prompt / harness ingestion
+  -> turn_routing.extract_turn_features (one frozen predecision snapshot)
+  -> deterministic DIRECT/worker gate + fast guards
+  -> eligible only: bounded TypeSafe worker ----+
+                   existing learned artifact --+ concurrent, optional
   -> Quattro explicit fusion policy
   -> existing capability/account/health/cost-ranked target filters
-  -> Quattro locked ExecutionPlan
-  -> existing OmniRoute transport and fallback supervision
+  -> one fresh locked ExecutionPlan, including immutable profile projection
+  -> DIRECT transport/local handling OR validated durable-plan handoff
+  -> existing OmniRoute transport and Quattro fallback supervision
 ```
+
+See [UNIFIED_TURN_ROUTING.md](UNIFIED_TURN_ROUTING.md) for the entrypoint map,
+invariants, review, and remaining validation gates.
 
 There is no router-winner selection. Jev answers requirement questions. It
 cannot choose an account/model, launch a worker, alter execution status, or
@@ -53,9 +57,9 @@ records, source, or review notes. No native Codex/Pi credential store is read.
   never waits at the fusion boundary and cannot modify a routing requirement.
 - **COOPERATIVE:** the same concurrent stage; eligible requests wait only for
   the remainder of the timeout budget. Jev failures retain the deterministic
-  baseline. Direct requests, explicit models/auto aliases, low-complexity
-  requests, and already-REASONING requests do not wait because policy cannot
-  change them. This is conservative capability fusion, not probabilistic
+  baseline. Conclusive/protected DIRECT, explicit models/auto aliases,
+  low-complexity requirements, and already-REASONING requests do not start Jev.
+  Ambiguous DIRECT may receive a capability signal but cannot become an agent. This is conservative capability fusion, not probabilistic
   worker/execution-gate replacement.
 
 Without the key, enabled modes record `missing_credential` and normal routing
@@ -103,10 +107,11 @@ worker startup, SQLite, and policy time.
 
 1. Preserve DIRECT/DELEGATE, worker, manual model, required capabilities, context
    eligibility, deterministic minimum quality, and deterministic tier floor.
-2. Only automatic delegated non-low-complexity requests below REASONING can
-   be upgraded, by **at most one tier**.
-3. Require Jev execution=DELEGATE, complexity=HIGH, and capability above the
-   current floor; each native choice confidence must be at least **0.90**.
+2. Only eligible automatic non-low-complexity requests below REASONING can
+   be upgraded, by **at most one tier**. This includes ambiguous DIRECT.
+3. Require Jev execution to match the hard Quattro execution constraint,
+   complexity=HIGH, and capability above the current floor; each relevant
+   native choice confidence must be at least **0.90**.
 4. An available learned DIRECT signal with confidence at least **0.80** vetoes
    an upgrade. Missing/failed local artifacts are explicit unavailable signals,
    not false zero-confidence predictions. No model is trained or activated.
@@ -132,7 +137,9 @@ ownership to its `Turn`, which closes it idempotently on finish, cancellation,
 or session shutdown. Native sensitive/credential lookup turns skip Jev entirely.
 Native DIRECT minimal context, no-tools policy, 20-second FAST budget, and locked
 receipts remain intact. Already-locked plans handed to durable tasks do not
-trigger another Jev request. Each scope starts at most one worker. A process-local cap
+trigger another feature extraction, classification, target selection, plan build,
+or Jev request. Native handoff rejects expired/already-consumed turn plans.
+Each scope starts at most one worker. A process-local cap
 of eight rejects excess work with a fixed-category warning. Existing Quattro
 session limits remain authoritative across processes.
 

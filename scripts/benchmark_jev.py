@@ -24,16 +24,18 @@ from unittest import mock
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
-from quattro_agent.delegation import classify_task_request
 from quattro_agent.errors import ConfigError
 from quattro_agent.jev_shadow import ShadowRun, annotate, lifecycle, mark_dispatch
-from quattro_agent.model_registry import default_policy_path, load_model_registry, select_execution_target
-from quattro_agent.routing_intelligence import make_pre_routing_input, task_profile_from_dict
-from quattro_agent.routing_signals import classify_with_signals
+from quattro_agent.model_registry import default_policy_path, load_model_registry
+from quattro_agent.turn_routing import route_turn
 from quattro_agent.turn_gate import TurnGate
 
 TASKS = {
-    "informational": "Hello",
+    "informational": "What does TUI mean?",
+    "ambiguous": "Consider a strategy for uncertain architecture trade-offs",
+    "repository_question": "What is a git commit?",
+    "credential": "What's my OmniRoute dashboard password?",
+    "resume": "Explain this traceback",
     "coding_question": "Explain a Python list comprehension",
     "repository_modification": "Modify the repository parser",
     "frontend": "Implement accessible frontend controls and verify tests",
@@ -114,30 +116,13 @@ def main():
                     time.sleep(.080)
                     gate.finish(turn)
                     return critical_ms, turn.plan.target.model
-                execution = classify_task_request(prompt)
-                boundary = make_pre_routing_input(
-                    request=prompt, working_directory=temporary, repository_present=True,
-                    explicit_model="auto", routing_mode="auto", selected_account="account-1",
-                    agent="codex", workflow="prompt", policy_name="workspace-write",
+                routed = route_turn(
+                    request=prompt, config={"routing": {"jev": {"mode": mode, "timeoutMs": 300}}},
+                    database=database, registry=registry, account="account-1", selected_model="auto",
+                    workflow="prompt", policy_name="workspace-write",
                 )
-                def select(proposed):
-                    try:
-                        return select_execution_target(task_profile_from_dict(proposed.task_profile), registry,
-                                                       preferred_account="account-1")
-                    except ConfigError:
-                        return None
-                routing = classify_with_signals(
-                    pre_routing_input=boundary, config={"routing": {"jev": {"mode": mode, "timeoutMs": 300}}},
-                    database=database, execution=execution.decision, can_select=lambda proposed: bool(select(proposed)),
-                )
-                target = select(routing)
-                annotate(final_decision={"execution": execution.decision, "worker": execution.required_agent,
-                                         "model": target.model if target else None,
-                                         "provider": target.provider if target else None,
-                                         "account": target.account if target else None,
-                                         "target_status": "selected" if target else "no_eligible_target",
-                                         "reasoning_effort": routing.reasoning_effort},
-                         benchmark_category=label)
+                target = routed.plan.target
+                annotate(benchmark_category=label)
                 mark_dispatch()
                 critical_ms = (time.perf_counter() - started) * 1000
                 # Simulate useful execution so SHADOW can finish without extending routing.

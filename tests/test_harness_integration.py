@@ -1257,6 +1257,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         turn = SimpleNamespace(plan=plan, prompt="Inspect README.md", task_id=None,
                                frontend="pi", cancel_event=threading.Event())
         gate = SimpleNamespace(cancel=lambda _turn: None,
+                               by_plan=lambda plan_id: turn if plan_id == plan.plan_id else None,
                                conversation_context=lambda _turn: "Earlier request: inspect the project documentation.")
         transport = SimpleNamespace(url="http://127.0.0.1:9", token="synthetic-session-token",
                                     close=lambda: None)

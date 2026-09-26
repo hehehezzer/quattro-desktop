@@ -22,7 +22,7 @@ CORE_DEPLOYMENT_MAPPINGS = {
         for name in (
             "__init__.py", "__main__.py", "adapters.py", "adaptive_routing.py",
             "benchmark.py", "cli.py", "interactive.py", "codex_turn_bridge.py",
-            "native_session.py", "turn_gate.py", "turn_transport.py",
+            "native_session.py", "turn_gate.py", "turn_transport.py", "turn_routing.py",
             "jev.py", "jev_shadow.py", "jev_worker.py",
             "collaboration.py", "config.py", "containment.py", "delegation.py", "errors.py",
             "mandatory_context.py", "model_registry.py", "models.py", "omniroute.py", "paths.py", "policy.py",

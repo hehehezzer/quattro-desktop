@@ -510,11 +510,8 @@ class HarnessSignalTests(unittest.TestCase):
                 self.assertEqual(result["model"], "account-1/gpt-5.6-luna")
                 self.assertEqual(send.call_count, 1)
                 self.assertEqual(self.runtime.store.list_display_tasks(), [])
-        with closing(sqlite3.connect(self.runtime.intelligence_database.with_name("jev-shadow.sqlite3"))) as connection:
-            rows = [json.loads(row[0]) for row in connection.execute("SELECT evidence FROM jev_shadow")]
-        self.assertEqual(len(rows), 6)
-        self.assertTrue(all(row["record_id"] for row in rows))
-        self.assertTrue(all(row["final_decision"]["execution"] == "DIRECT" for row in rows))
+        # Conclusive DIRECT is no longer shadow-eligible in any mode.
+        self.assertFalse(self.runtime.intelligence_database.with_name("jev-shadow.sqlite3").exists())
         self.assertFalse(any(t.name == "jev-shadow" for t in threading.enumerate()))
 
     def test_durable_worker_target_and_outcome_association(self):
@@ -600,7 +597,7 @@ class NativeTurnSignalTests(unittest.TestCase):
         self.gate.config = options("SHADOW", timeout=3000)
         with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": secrets.token_hex(24)}), \
              mock.patch.object(ShadowRun, "__init__", init):
-            turn = self.gate.begin("thread", "hello", "pi")
+            turn = self.gate.begin("thread", "Modify the repository parser", "pi")
             run = turn.shadow_runs[0]
             deadline = time.monotonic() + 2
             while run.process is None and time.monotonic() < deadline:

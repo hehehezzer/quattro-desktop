@@ -5,7 +5,7 @@ The frontend is presentation metadata, never a delegation signal.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import http.client
 import json
@@ -15,28 +15,19 @@ import re
 import socket
 import threading
 import time
-import uuid
 from urllib.parse import urlencode, urlsplit
 
-from .delegation import TaskDelegationDecision, classify_task_request
-from .jev_shadow import lifecycle as jev_lifecycle, annotate as annotate_signals, take_scope
-from .routing import RoutingDecision, RoutingTier
-from .routing_signals import classify_with_signals
+from .jev_shadow import lifecycle as jev_lifecycle, annotate as annotate_signals, take_scope, current_evidence
+from .turn_routing import route_turn, active_account_health, CREDENTIAL_RESPONSE
 from .model_registry import (
-    ContextDecision, ExecutionPlan, build_execution_plan, default_policy_path,
-    execution_target_for_route, load_model_registry, select_execution_target,
-    target_matches_actual,
+    ExecutionPlan, default_policy_path, load_model_registry, target_matches_actual,
 )
 from .omniroute import APPROVED_BASE_URL, validate_omniroute_runtime_capabilities
 from .paths import model_catalog_path
 from .privacy import redact_secret_text
-from .routing_intelligence import (
-    ContextProfile, RoutingTierName, profile_task, make_pre_routing_input, task_profile_from_dict,
-)
 
 
 _SECRET = re.compile(r"(?i)\b(password|passwd|api[ _-]?key|access[ _-]?token|secret|credential)\b")
-_DEEP = re.compile(r"(?i)\b(prove|derive|rigorous|trade.?offs?|detailed analysis)\b")
 BUDGETS = {"FAST": 20.0, "STANDARD": 60.0, "REASONING": 90.0}
 MAX_BODY = 4_000_000
 
@@ -67,6 +58,7 @@ class Turn:
     failure_code: str | None = None
     model_requests: int = 0
     shadow_runs: tuple = field(default=(), repr=False)
+    routing_evidence: dict = field(default_factory=dict, repr=False)
 
 
 class TurnGate:
@@ -97,84 +89,20 @@ class TurnGate:
         with self._lock:
             if thread_id in self._active:
                 raise ValueError("a turn is already active; cancel or wait before submitting")
-            decision = classify_task_request(prompt)
-            secret_value = bool(redact_secret_text(prompt)[1])
-            if secret_value and decision.decision == "DELEGATE":
-                raise ValueError("remove credential values before starting persistent execution")
-            sensitive = secret_value or bool(
-                _SECRET.search(prompt) and re.search(
-                    r"(?i)\b(my|dashboard|show|retrieve|look up|find|stored|configured)\b", prompt,
-                )
+            routed = route_turn(
+                request=prompt, config=self.config, registry=self.registry, account=self.account,
+                database=self.telemetry_path.parent / 'intelligence' / 'intelligence.sqlite3',
+                selected_model=(params or {}).get('model'), agent='codex',
+                workflow='interactive-turn', policy_name='audit-read-only',
+                unavailable_routes=frozenset(active_account_health(
+                    self.telemetry_path.parent / 'routing' / 'account-health.json',
+                )),
             )
-            credential_lookup = bool(_SECRET.search(prompt) and (
-                decision.decision == 'DIRECT' and sensitive or re.search(
-                    r'(?i)\b(show|read|find|retrieve|search|inspect|look up)\b.{0,160}'
-                    r'\b(password|credential|api[ _-]?key|secret|token)\b', prompt,
-                )
-            ))
-            if credential_lookup:
-                sensitive = True
-                decision = TaskDelegationDecision('DIRECT', 'credential_lookup_requires_approved_source', 1.0, None)
-            profile = profile_task(prompt, workflow="interactive-turn", policy_name="audit-read-only")
-            if decision.decision == "DIRECT":
-                tier = "STANDARD" if len(prompt) > 4_000 or _DEEP.search(prompt) else "FAST"
-                profile = replace(profile, tier=RoutingTierName(tier),
-                                  required_capabilities=("conversation",),
-                                  context_profile=ContextProfile.CHAT_MINIMAL)
-            else:
-                tier = profile.tier.value
-            accounts = frozenset(str(row['id']) for row in self.config.get('accounts', [])
-                                 if row.get('enabled', True)) or frozenset({self.account})
-            selected = (params or {}).get('model')
-            if not sensitive and self.config.get('routing', {}).get('jev', {}).get('mode', 'OFF') != 'OFF':
-                # Preserve the latency fix's DIRECT minimal profile and budgets.
-                # Only the latest prompt enters feature extraction, never native history.
-                baseline = RoutingDecision(
-                    tier=RoutingTier(tier), reason=decision.reason,
-                    reasoning_effort={"FAST": "low", "STANDARD": "medium", "REASONING": "high"}[tier],
-                    task_profile=profile.to_dict(),
-                )
-                def available(proposed):
-                    try:
-                        return bool(select_execution_target(
-                            task_profile_from_dict(proposed.task_profile), self.registry,
-                            preferred_account=self.account, available_accounts=accounts,
-                        ))
-                    except (ValueError, RuntimeError):
-                        return False
-                fused = classify_with_signals(
-                    pre_routing_input=make_pre_routing_input(
-                        request=prompt, working_directory=str(self.directory), repository_present=False,
-                        explicit_model=selected or 'auto', routing_mode='auto' if not selected else 'manual',
-                        selected_account=self.account, agent=frontend,
-                        workflow='interactive-turn', policy_name='audit-read-only',
-                    ),
-                    config=self.config, database=self.telemetry_path.parent / 'intelligence' / 'intelligence.sqlite3',
-                    execution=decision.decision, baseline_override=baseline, can_select=available,
-                )
-                profile = task_profile_from_dict(fused.task_profile)
-                tier = profile.tier.value
-            target = None
-            if selected and not str(selected).startswith('auto'):
-                target = execution_target_for_route(profile, self.registry, selected,
-                                                    available_accounts=accounts)
-                if target is None:
-                    raise ValueError("selected model is not an approved Quattro target")
-            if target is None:
-                target = select_execution_target(profile, self.registry,
-                                                 preferred_account=self.account,
-                                                 available_accounts=accounts)
-            ident = str(uuid.uuid4())
-            plan = build_execution_plan(profile, target, self.registry,
-                                        reasoning_effort=(
-                                            'high' if 'astra' in target.model and tier == 'STANDARD'
-                                            else {"FAST": "low", "STANDARD": "medium", "REASONING": "high"}[tier]
-                                        ),
-                                        plan_id=ident)
-            if decision.decision == "DIRECT":
-                budget_tokens = 2_000 if tier == "FAST" else 8_000
-                plan = replace(plan, context=ContextDecision("minimal", budget_tokens, budget_tokens, 0),
-                               required_tools=(), fallback_allowed=False, fallback_targets=())
+            decision, plan = routed.decision, routed.plan
+            if redact_secret_text(prompt)[1] and decision.decision == 'DELEGATE':
+                raise ValueError('remove credential values before starting persistent execution')
+            sensitive = routed.features.sensitive
+            ident, target, tier = plan.plan_id, plan.target, plan.target.tier
             turn = Turn(self.session_id, thread_id, ident, frontend, prompt, decision.decision,
                         plan, decision.reason, sensitive, started,
                         (time.monotonic() - started) * 1000,
@@ -187,6 +115,7 @@ class TurnGate:
                                 "model": target.model, "reasoning_effort": plan.reasoning_effort},
                 outcome_source='interactive-turns.jsonl',
             )
+            turn.routing_evidence = current_evidence()
             turn.request_id = (params or {}).get('request_id')
             self._active[thread_id] = turn
             self._record(turn, "planned", False, False)
@@ -318,8 +247,7 @@ class TurnGate:
             raise ValueError("direct transport requires a DIRECT plan")
         if turn.sensitive:
             # No filesystem search and no credential request forwarded to a model.
-            return ("No approved local credential lookup is configured for this session. "
-                    "Use the OmniRoute dashboard credential source or its password reset procedure.")
+            return CREDENTIAL_RESPONSE
         validate_omniroute_runtime_capabilities(
             APPROVED_BASE_URL, timeout_seconds=min(3.0, self.remaining(turn)),
         )
@@ -479,7 +407,7 @@ class TurnGate:
             status = 'failed'
         event = {"schema_version": 1, "session_id": self.session_id,
                  "timestamp": datetime.now(timezone.utc).isoformat(),
-                 "turn_id": turn.turn_id, "frontend": turn.frontend,
+                 "turn_id": turn.turn_id, "frontend": turn.frontend, "task_id": turn.task_id,
                  "decision": turn.decision, "profile": turn.plan.target.tier,
                  "provider": turn.plan.target.provider, "account": turn.plan.target.account,
                  "model": turn.plan.target.model, "effort": turn.plan.reasoning_effort,
@@ -491,7 +419,14 @@ class TurnGate:
                  "budget_seconds": turn.budget, "status": status,
                  "failure_code": turn.failure_code if status != 'completed' else None,
                  "model_requests": turn.model_requests,
-                 "fallback_events": [], "evidence_provenance": "quattro_per_turn_gate"}
+                 "fallback_events": [], "evidence_provenance": "quattro_per_turn_gate",
+                 "routing": dict(turn.routing_evidence)}
+        for run in turn.shadow_runs:
+            if run.done.is_set():
+                event['routing']['jev'] = {name: run.record.get(name) for name in (
+                    'answers', 'jev_model', 'jev_latency_ms', 'input_usage', 'output_usage',
+                    'cost', 'cost_source', 'failure_category', 'status',
+                )}
         self.telemetry_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         fd = os.open(self.telemetry_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, 'a') as stream:

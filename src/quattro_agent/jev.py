@@ -59,8 +59,13 @@ def serialize_state(request: str) -> str:
     """Discard text entirely; derive only bounded pre-decision requirement signals."""
     from .intelligence.features import extract_decision_features
 
+    return serialize_features(extract_decision_features(request[:32_000]), request=request)
+
+
+def serialize_features(requirements: Mapping[str, Any], *, request: str) -> str:
+    """Project the canonical extraction without re-running requirement analysis."""
     text = request[:32_000]
-    features = extract_decision_features(text)
+    features = dict(requirements)
     features.update({name: bool(re.search(pattern, text, re.IGNORECASE)) for name, pattern in {
         "frontend": r"\b(?:frontend|front-end|css|html|ui|ux|react|accessibility)\b",
         "security_sensitive": r"\b(?:security|credentials?|authentication|authorization|secrets?)\b",

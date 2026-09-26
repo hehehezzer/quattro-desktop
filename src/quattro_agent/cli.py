@@ -1109,12 +1109,19 @@ def run_prompt(agent: str, prompt: str, directory_value: str | None,
     if not prompt:
         die("A prompt is required")
     directory = safe_directory(directory_value)
-    from quattro_agent.delegation import classify_task_request
-    decision = classify_task_request(prompt, preferred_agent=agent)
+    from quattro_agent.turn_routing import extract_turn_features
+    runtime = harness()
+    config = runtime.config()
+    features = extract_turn_features(
+        prompt, agent=agent, config=config, write_scopes=write_scopes,
+        policy_name=profile_name or str(config.get("defaultPolicyProfile", "workspace-write")),
+    )
+    decision = features.gate
     if decision.decision == "DIRECT":
         try:
-            result = harness().direct_response(
+            result = runtime.direct_response(
                 project=directory, prompt=prompt, profile_name=profile_name,
+                routing_features=features,
             )
         except (RuntimeError, ValueError) as error:
             print(json.dumps({
@@ -1125,7 +1132,7 @@ def run_prompt(agent: str, prompt: str, directory_value: str | None,
             return 1
         print(result["response"])
         return 0
-    _task_id, result = harness().submit(
+    _task_id, result = runtime.submit(
         agent=agent,
         project=directory,
         prompt=prompt,
@@ -1133,6 +1140,7 @@ def run_prompt(agent: str, prompt: str, directory_value: str | None,
         profile_name=profile_name,
         confirm_full_access=confirm_full_access,
         write_scopes=write_scopes,
+        routing_features=features,
     )
     return int(result or 0)
 

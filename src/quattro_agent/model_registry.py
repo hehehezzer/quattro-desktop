@@ -82,8 +82,12 @@ class ExecutionPlan:
     fallback_allowed: bool
     fallback_targets: tuple[ExecutionTarget, ...]
     routing_locked: bool = True
+    execution_type: str = "DELEGATE"
+    profile_json: str = "{}"
 
     def __post_init__(self) -> None:
+        if self.execution_type not in {"DIRECT", "DELEGATE"}:
+            raise ConfigError("execution plan type is unsupported")
         if self.routing_locked is not True:
             raise ConfigError("Quattro execution plans must be routing locked")
         if self.reasoning_effort not in {"low", "medium", "high", "xhigh", "max", "ultra"}:
@@ -109,6 +113,8 @@ class ExecutionPlan:
                 "targets": [item.to_dict() for item in self.fallback_targets],
             },
             "routingLocked": self.routing_locked,
+            "executionType": self.execution_type,
+            "routingProfile": json.loads(self.profile_json),
         }
 
 
@@ -119,6 +125,8 @@ def build_execution_plan(
     *,
     reasoning_effort: str,
     plan_id: str,
+    direct: bool = False,
+    direct_fallback: bool = False,
 ) -> ExecutionPlan:
     """Materialize one immutable plan from an already selected exact target."""
     if reasoning_effort not in {"low", "medium", "high", "xhigh"}:
@@ -156,10 +164,14 @@ def build_execution_plan(
         task_complexity=profile.complexity.value,
         target=target,
         reasoning_effort=reasoning_effort,
-        context=ContextDecision(strategy, budget, conversation, retrieval),
-        required_tools=required_tools,
-        fallback_allowed=bool(fallback_targets),
-        fallback_targets=fallback_targets,
+        context=(ContextDecision("minimal", 2_000 if target.tier == "FAST" else 8_000,
+                                 2_000 if target.tier == "FAST" else 8_000, 0)
+                 if direct else ContextDecision(strategy, budget, conversation, retrieval)),
+        required_tools=() if direct else required_tools,
+        fallback_allowed=bool(fallback_targets) if not direct or direct_fallback else False,
+        fallback_targets=fallback_targets if not direct or direct_fallback else (),
+        execution_type="DIRECT" if direct else "DELEGATE",
+        profile_json=json.dumps(profile.to_dict(), sort_keys=True, separators=(",", ":")),
     )
 
 
@@ -180,6 +192,8 @@ def fallback_execution_plan(plan: ExecutionPlan, index: int, *, reason: str) -> 
         fallback_allowed=bool(remaining),
         fallback_targets=remaining,
         routing_locked=True,
+        execution_type=plan.execution_type,
+        profile_json=plan.profile_json,
     )
 
 
