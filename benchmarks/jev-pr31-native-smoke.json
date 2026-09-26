@@ -1,0 +1,38 @@
+{
+  "measurement": "Live source-tree native protocol smoke, not installed deployment or TUI rendering proof",
+  "source_sha256": "8cd8e2ab0f3f159d805ea5c86ba67780af666ad6c821295299782149d19a73bc",
+  "codex": {
+    "path": "Real app-server through CodexTurnBridge, TurnTransport and host-owned decision proxy",
+    "status": "completed",
+    "duration_ms": 41719.19846103992,
+    "model_requests_observed": 7,
+    "mcp_tool_completions": 1,
+    "decision_type": "validation_strategy",
+    "decision_evaluations": 1,
+    "fallback_reason": "uncertain",
+    "blocking_ms": 637.3307020403445,
+    "jev_rtt_ms": 297.73130698595196,
+    "catalog_ms": 298.9362389780581,
+    "initial_context_reuse": 1,
+    "errors": []
+  },
+  "pi": {
+    "path": "Real Pi JSON frontend -> native turn gate -> durable Codex delegate -> host-owned decision proxy",
+    "status": "completed",
+    "exit_code": 0,
+    "duration_ms": 28872.620159992948,
+    "delegated_model_requests": null,
+    "decision_type": "validation_strategy",
+    "decision_evaluations": 1,
+    "fallback_reason": "uncertain",
+    "blocking_ms": 639.2426179954782,
+    "jev_rtt_ms": 282.27575798518956,
+    "catalog_ms": 315.550122060813,
+    "initial_context_reuse": 1
+  },
+  "limits": [
+    "Synthetic read-only fixture, existing tests; each path explicitly requested a validation-strategy probe.",
+    "Both paths fell back on low confidence; these runs do not establish advice quality or speed gains.",
+    "Standalone Pi execution integration, installed runtime and actual TUI rendering are not covered."
+  ]
+}

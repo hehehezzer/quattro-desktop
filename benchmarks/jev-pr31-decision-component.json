@@ -1,0 +1,1499 @@
+{
+  "measurement": "LIVE decision component only; no execution model or tools run",
+  "release_gate_passed": false,
+  "limits": [
+    "No task-quality gold labels; usable advice is not successful execution.",
+    "No model-token, task-wall-time, cost or routing-quality improvement established.",
+    "Skill selection is intentionally unsupported and fails open."
+  ],
+  "summary": {
+    "OFF": {
+      "decision_boundary_ms": {
+        "samples": 33,
+        "p50": 0.0023649772629141808,
+        "p95": 0.009056995622813702
+      },
+      "jev_rtt_ms": null,
+      "blocking_ms": {
+        "samples": 30,
+        "p50": 0.0006665359251201153,
+        "p95": 0.00325602013617754
+      },
+      "usable_advice": 0,
+      "first_token_ms": null,
+      "total_task_ms": null,
+      "model_turns": null,
+      "execution_tokens": null,
+      "cost": null,
+      "task_success": null
+    },
+    "COOPERATIVE": {
+      "decision_boundary_ms": {
+        "samples": 33,
+        "p50": 281.2544669723138,
+        "p95": 613.1368849892169
+      },
+      "jev_rtt_ms": {
+        "samples": 27,
+        "p50": 280.90393100865185,
+        "p95": 352.5348809780553
+      },
+      "blocking_ms": {
+        "samples": 30,
+        "p50": 285.70207592565566,
+        "p95": 613.1285090232268
+      },
+      "usable_advice": 9,
+      "first_token_ms": null,
+      "total_task_ms": null,
+      "model_turns": null,
+      "execution_tokens": null,
+      "cost": null,
+      "task_success": null
+    }
+  },
+  "sessions": [
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "telemetry": {
+        "schema_version": "quattro-jev-decisions-v1",
+        "counts": {
+          "requests": 10,
+          "skipped": 10,
+          "blocking_ms": 0.01249730121344328,
+          "fallbacks": 10,
+          "fallback_disabled": 10
+        },
+        "calls_by_type": {},
+        "call_count_semantics": "supervised attempts; completed_evaluations separately",
+        "last_timing": {},
+        "jev_model": null,
+        "agent_overrides": null,
+        "model_turns_avoided": null,
+        "cost": null,
+        "cost_source": "unavailable"
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "telemetry": {
+        "schema_version": "quattro-jev-decisions-v1",
+        "counts": {
+          "requests": 10,
+          "calls": 9,
+          "worker_starts": 1,
+          "completed_evaluations": 9,
+          "input_tokens": 4809,
+          "output_tokens": 396,
+          "blocking_ms": 2947.8518401738256,
+          "fallbacks": 7,
+          "fallback_uncertain": 6,
+          "accepted": 3,
+          "skipped": 1,
+          "fallback_unsupported_decision": 1
+        },
+        "calls_by_type": {
+          "validation_strategy": 1,
+          "context_strategy": 3,
+          "retry_strategy": 2,
+          "execution_strategy": 2,
+          "progress_strategy": 1
+        },
+        "call_count_semantics": "supervised attempts; completed_evaluations separately",
+        "last_timing": {
+          "jev_latency_ms": 262.48096709605306,
+          "catalog_latency_ms": 0.0003009336069226265
+        },
+        "jev_model": "jev-1.13.0",
+        "agent_overrides": null,
+        "model_turns_avoided": null,
+        "cost": null,
+        "cost_source": "unavailable"
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "telemetry": {
+        "schema_version": "quattro-jev-decisions-v1",
+        "counts": {
+          "requests": 10,
+          "calls": 9,
+          "worker_starts": 1,
+          "completed_evaluations": 9,
+          "input_tokens": 4809,
+          "output_tokens": 396,
+          "blocking_ms": 2954.2390289716423,
+          "fallbacks": 7,
+          "fallback_uncertain": 6,
+          "accepted": 3,
+          "skipped": 1,
+          "fallback_unsupported_decision": 1
+        },
+        "calls_by_type": {
+          "validation_strategy": 1,
+          "context_strategy": 3,
+          "retry_strategy": 2,
+          "execution_strategy": 2,
+          "progress_strategy": 1
+        },
+        "call_count_semantics": "supervised attempts; completed_evaluations separately",
+        "last_timing": {
+          "jev_latency_ms": 275.2571830060333,
+          "catalog_latency_ms": 0.000200001522898674
+        },
+        "jev_model": "jev-1.13.0",
+        "agent_overrides": null,
+        "model_turns_avoided": null,
+        "cost": null,
+        "cost_source": "unavailable"
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "telemetry": {
+        "schema_version": "quattro-jev-decisions-v1",
+        "counts": {
+          "requests": 10,
+          "skipped": 10,
+          "blocking_ms": 0.01232221256941557,
+          "fallbacks": 10,
+          "fallback_disabled": 10
+        },
+        "calls_by_type": {},
+        "call_count_semantics": "supervised attempts; completed_evaluations separately",
+        "last_timing": {},
+        "jev_model": null,
+        "agent_overrides": null,
+        "model_turns_avoided": null,
+        "cost": null,
+        "cost_source": "unavailable"
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "telemetry": {
+        "schema_version": "quattro-jev-decisions-v1",
+        "counts": {
+          "requests": 10,
+          "skipped": 10,
+          "blocking_ms": 0.0068427762016654015,
+          "fallbacks": 10,
+          "fallback_disabled": 10
+        },
+        "calls_by_type": {},
+        "call_count_semantics": "supervised attempts; completed_evaluations separately",
+        "last_timing": {},
+        "jev_model": null,
+        "agent_overrides": null,
+        "model_turns_avoided": null,
+        "cost": null,
+        "cost_source": "unavailable"
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "telemetry": {
+        "schema_version": "quattro-jev-decisions-v1",
+        "counts": {
+          "requests": 10,
+          "calls": 9,
+          "worker_starts": 1,
+          "completed_evaluations": 9,
+          "input_tokens": 4809,
+          "output_tokens": 397,
+          "blocking_ms": 2858.574886806309,
+          "fallbacks": 7,
+          "fallback_uncertain": 6,
+          "accepted": 3,
+          "skipped": 1,
+          "fallback_unsupported_decision": 1
+        },
+        "calls_by_type": {
+          "validation_strategy": 1,
+          "context_strategy": 3,
+          "retry_strategy": 2,
+          "execution_strategy": 2,
+          "progress_strategy": 1
+        },
+        "call_count_semantics": "supervised attempts; completed_evaluations separately",
+        "last_timing": {
+          "jev_latency_ms": 270.2113970881328,
+          "catalog_latency_ms": 0.00027997884899377823
+        },
+        "jev_model": "jev-1.13.0",
+        "agent_overrides": null,
+        "model_turns_avoided": null,
+        "cost": null,
+        "cost_source": "unavailable"
+      }
+    }
+  ],
+  "rows": [
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "trivial_question",
+      "decision_boundary_ms": 0.0006109476089477539,
+      "result": {
+        "selected_action": null,
+        "fallback_required": true,
+        "evidence": "local_trivial_skip"
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "simple_coding",
+      "decision_boundary_ms": 0.011321972124278545,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.005019945092499256
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "repository_inspection",
+      "decision_boundary_ms": 0.006422051228582859,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0017040874809026718
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "debugging",
+      "decision_boundary_ms": 0.003897002898156643,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0010920921340584755
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "multi_file_implementation",
+      "decision_boundary_ms": 0.0029349466785788536,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0008520437404513359
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "tool_heavy",
+      "decision_boundary_ms": 0.002574990503489971,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0006720656529068947
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "skill_heavy",
+      "decision_boundary_ms": 0.004358007572591305,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0006919726729393005
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "subagent_worthy",
+      "decision_boundary_ms": 0.0022139865905046463,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0006109476089477539
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "failing_test_repair",
+      "decision_boundary_ms": 0.0020739389583468437,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0006420304998755455
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "research_retrieval",
+      "decision_boundary_ms": 0.0021239975467324257,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0006310874596238136
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "validation_heavy",
+      "decision_boundary_ms": 0.0020139850676059723,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0005810288712382317
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "trivial_question",
+      "decision_boundary_ms": 0.00034098047763109207,
+      "result": {
+        "selected_action": null,
+        "fallback_required": true,
+        "evidence": "local_trivial_skip"
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "simple_coding",
+      "decision_boundary_ms": 613.1368849892169,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.45,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "targeted_first": 0.63,
+          "agent": 0.1,
+          "broad_first": 0.27
+        },
+        "timing": {
+          "rtt_ms": 260.22035791538656,
+          "catalog_ms": 311.96748395450413,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 613.1285090232268
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "repository_inspection",
+      "decision_boundary_ms": 281.2544669723138,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.58,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "agent": 0.31,
+          "retrieve": 0.01,
+          "inspect": 0.68,
+          "sufficient": 0.0
+        },
+        "timing": {
+          "rtt_ms": 280.90393100865185,
+          "catalog_ms": 0.0007220078259706497,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 281.245129997842
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "debugging",
+      "decision_boundary_ms": 292.16846299823374,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.93,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "agent": 0.96,
+          "change_strategy": 0.04,
+          "retry": 0.0
+        },
+        "timing": {
+          "rtt_ms": 291.8904139660299,
+          "catalog_ms": 0.0004909234121441841,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 292.1589040197432
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "multi_file_implementation",
+      "decision_boundary_ms": 274.91855900734663,
+      "result": {
+        "selected_action": "sequential",
+        "confidence": 0.98,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "parallel": 0.0,
+          "agent": 0.02,
+          "sequential": 0.98
+        },
+        "timing": {
+          "rtt_ms": 274.63387802708894,
+          "catalog_ms": 0.0002200249582529068,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 274.90798896178603
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "tool_heavy",
+      "decision_boundary_ms": 352.8473050100729,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.56,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "inspect": 0.67,
+          "agent": 0.3,
+          "sufficient": 0.03,
+          "retrieve": 0.0
+        },
+        "timing": {
+          "rtt_ms": 352.5348809780553,
+          "catalog_ms": 0.000300002284348011,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 352.83798701129854
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "skill_heavy",
+      "decision_boundary_ms": 0.05348201375454664,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "unsupported_decision",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.04713900852948427
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "subagent_worthy",
+      "decision_boundary_ms": 304.1070559993386,
+      "result": {
+        "selected_action": "parallel",
+        "confidence": 0.95,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "sequential": 0.02,
+          "parallel": 0.97,
+          "agent": 0.01
+        },
+        "timing": {
+          "rtt_ms": 303.8483540294692,
+          "catalog_ms": 0.0003210734575986862,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 304.10106503404677
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "failing_test_repair",
+      "decision_boundary_ms": 294.1262749955058,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.26,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "change_strategy": 0.49,
+          "retry": 0.0,
+          "agent": 0.51
+        },
+        "timing": {
+          "rtt_ms": 293.8629650743678,
+          "catalog_ms": 0.00021990854293107986,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 294.1177790053189
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "research_retrieval",
+      "decision_boundary_ms": 272.5322110345587,
+      "result": {
+        "selected_action": "retrieve",
+        "confidence": 0.95,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "sufficient": 0.0,
+          "retrieve": 0.97,
+          "inspect": 0.01,
+          "agent": 0.02
+        },
+        "timing": {
+          "rtt_ms": 272.25641696713865,
+          "catalog_ms": 0.00023993197828531265,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 272.5242560263723
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "validation_heavy",
+      "decision_boundary_ms": 262.7918280195445,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.83,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "continue": 0.05,
+          "more_context": 0.05,
+          "agent": 0.03,
+          "validate": 0.87
+        },
+        "timing": {
+          "rtt_ms": 262.48096709605306,
+          "catalog_ms": 0.0003009336069226265,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 262.7830820856616
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "case": "trivial_question",
+      "decision_boundary_ms": 0.0007820781320333481,
+      "result": {
+        "selected_action": null,
+        "fallback_required": true,
+        "evidence": "local_trivial_skip"
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "case": "simple_coding",
+      "decision_boundary_ms": 597.5655199727044,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.39,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "agent": 0.09,
+          "targeted_first": 0.59,
+          "broad_first": 0.32
+        },
+        "timing": {
+          "rtt_ms": 270.5712120514363,
+          "catalog_ms": 294.1557999001816,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 597.5559529615566
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "case": "repository_inspection",
+      "decision_boundary_ms": 261.4768069470301,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.54,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "sufficient": 0.0,
+          "inspect": 0.66,
+          "agent": 0.33,
+          "retrieve": 0.01
+        },
+        "timing": {
+          "rtt_ms": 261.2036970676854,
+          "catalog_ms": 0.00046100467443466187,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 261.4676100201905
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "case": "debugging",
+      "decision_boundary_ms": 305.916948011145,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.92,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "change_strategy": 0.05,
+          "agent": 0.95,
+          "retry": 0.0
+        },
+        "timing": {
+          "rtt_ms": 305.5471950210631,
+          "catalog_ms": 0.00036100391298532486,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 305.90670893434435
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "case": "multi_file_implementation",
+      "decision_boundary_ms": 304.1216339915991,
+      "result": {
+        "selected_action": "sequential",
+        "confidence": 0.98,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "sequential": 0.98,
+          "agent": 0.02,
+          "parallel": 0.0
+        },
+        "timing": {
+          "rtt_ms": 303.8130570203066,
+          "catalog_ms": 0.0002400483936071396,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 304.1116140084341
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "case": "tool_heavy",
+      "decision_boundary_ms": 299.08927401993424,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.58,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "retrieve": 0.0,
+          "agent": 0.27,
+          "inspect": 0.68,
+          "sufficient": 0.04
+        },
+        "timing": {
+          "rtt_ms": 298.7729529850185,
+          "catalog_ms": 0.00026996713131666183,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 299.078164040111
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "case": "skill_heavy",
+      "decision_boundary_ms": 0.052789924666285515,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "unsupported_decision",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.04493596497923136
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "case": "subagent_worthy",
+      "decision_boundary_ms": 355.32008798327297,
+      "result": {
+        "selected_action": "parallel",
+        "confidence": 0.95,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "sequential": 0.02,
+          "parallel": 0.97,
+          "agent": 0.01
+        },
+        "timing": {
+          "rtt_ms": 355.053992010653,
+          "catalog_ms": 0.000241096131503582,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 355.3133850218728
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "case": "failing_test_repair",
+      "decision_boundary_ms": 293.5492489486933,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.25,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "agent": 0.5,
+          "retry": 0.0,
+          "change_strategy": 0.5
+        },
+        "timing": {
+          "rtt_ms": 293.28153003007174,
+          "catalog_ms": 0.0002300366759300232,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 293.53876900859177
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "case": "research_retrieval",
+      "decision_boundary_ms": 261.72439800575376,
+      "result": {
+        "selected_action": "retrieve",
+        "confidence": 0.95,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "sufficient": 0.0,
+          "agent": 0.03,
+          "retrieve": 0.96,
+          "inspect": 0.01
+        },
+        "timing": {
+          "rtt_ms": 261.4476920571178,
+          "catalog_ms": 0.00019103754311800003,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 261.71439001336694
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "COOPERATIVE",
+      "case": "validation_heavy",
+      "decision_boundary_ms": 275.51754796877503,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.79,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "continue": 0.05,
+          "validate": 0.84,
+          "agent": 0.04,
+          "more_context": 0.07
+        },
+        "timing": {
+          "rtt_ms": 275.2571830060333,
+          "catalog_ms": 0.000200001522898674,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 275.50749899819493
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "case": "trivial_question",
+      "decision_boundary_ms": 0.0005309702828526497,
+      "result": {
+        "selected_action": null,
+        "fallback_required": true,
+        "evidence": "local_trivial_skip"
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "case": "simple_coding",
+      "decision_boundary_ms": 0.009056995622813702,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0029850052669644356
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "case": "repository_inspection",
+      "decision_boundary_ms": 0.004358007572591305,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0011730007827281952
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "case": "debugging",
+      "decision_boundary_ms": 0.003496999852359295,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0008620554581284523
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "case": "multi_file_implementation",
+      "decision_boundary_ms": 0.002956017851829529,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0008310889825224876
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "case": "tool_heavy",
+      "decision_boundary_ms": 0.0026150373741984367,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0006910413503646851
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "case": "skill_heavy",
+      "decision_boundary_ms": 0.0023649772629141808,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0006610061973333359
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "case": "subagent_worthy",
+      "decision_boundary_ms": 0.0023150350898504257,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0007109483703970909
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "case": "failing_test_repair",
+      "decision_boundary_ms": 0.0022940803319215775,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0005810288712382317
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "case": "research_retrieval",
+      "decision_boundary_ms": 0.005150097422301769,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.00325602013617754
+        }
+      }
+    },
+    {
+      "sample": 1,
+      "mode": "OFF",
+      "case": "validation_heavy",
+      "decision_boundary_ms": 0.0027349451556801796,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0005710171535611153
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "case": "trivial_question",
+      "decision_boundary_ms": 0.0003009336069226265,
+      "result": {
+        "selected_action": null,
+        "fallback_required": true,
+        "evidence": "local_trivial_skip"
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "case": "simple_coding",
+      "decision_boundary_ms": 0.004176981747150421,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0013819662854075432
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "case": "repository_inspection",
+      "decision_boundary_ms": 0.002574990503489971,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0007619382813572884
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "case": "debugging",
+      "decision_boundary_ms": 0.002183951437473297,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0005710171535611153
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "case": "multi_file_implementation",
+      "decision_boundary_ms": 0.0021239975467324257,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0006009358912706375
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "case": "tool_heavy",
+      "decision_boundary_ms": 0.002103974111378193,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0006119953468441963
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "case": "skill_heavy",
+      "decision_boundary_ms": 0.00220397487282753,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0005610054358839989
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "case": "subagent_worthy",
+      "decision_boundary_ms": 0.002084067091345787,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0005809124559164047
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "case": "failing_test_repair",
+      "decision_boundary_ms": 0.003907945938408375,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0005610054358839989
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "case": "research_retrieval",
+      "decision_boundary_ms": 0.0021940795704722404,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0006509944796562195
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "OFF",
+      "case": "validation_heavy",
+      "decision_boundary_ms": 0.002034008502960205,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0005610054358839989
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "case": "trivial_question",
+      "decision_boundary_ms": 0.00018102582544088364,
+      "result": {
+        "selected_action": null,
+        "fallback_required": true,
+        "evidence": "local_trivial_skip"
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "case": "simple_coding",
+      "decision_boundary_ms": 613.8029340654612,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.49,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "agent": 0.09,
+          "targeted_first": 0.66,
+          "broad_first": 0.25
+        },
+        "timing": {
+          "rtt_ms": 273.6752759665251,
+          "catalog_ms": 300.18301610834897,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 613.795890007168
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "case": "repository_inspection",
+      "decision_boundary_ms": 309.27932099439204,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.55,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "agent": 0.32,
+          "retrieve": 0.01,
+          "inspect": 0.67,
+          "sufficient": 0.0
+        },
+        "timing": {
+          "rtt_ms": 309.00102108716965,
+          "catalog_ms": 0.0004409812390804291,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 309.2714858939871
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "case": "debugging",
+      "decision_boundary_ms": 305.2215449279174,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.91,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "retry": 0.0,
+          "agent": 0.94,
+          "change_strategy": 0.06
+        },
+        "timing": {
+          "rtt_ms": 304.9126679543406,
+          "catalog_ms": 0.0007109483703970909,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 305.2131390431896
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "case": "multi_file_implementation",
+      "decision_boundary_ms": 262.66300200950354,
+      "result": {
+        "selected_action": "sequential",
+        "confidence": 0.98,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "sequential": 0.98,
+          "agent": 0.02,
+          "parallel": 0.0
+        },
+        "timing": {
+          "rtt_ms": 262.38591503351927,
+          "catalog_ms": 0.00024994369596242905,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 262.6545849489048
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "case": "tool_heavy",
+      "decision_boundary_ms": 287.78690099716187,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.59,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "inspect": 0.69,
+          "retrieve": 0.0,
+          "sufficient": 0.04,
+          "agent": 0.27
+        },
+        "timing": {
+          "rtt_ms": 287.534411996603,
+          "catalog_ms": 0.00025099143385887146,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 287.77891595382243
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "case": "skill_heavy",
+      "decision_boundary_ms": 0.04074710886925459,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "unsupported_decision",
+        "fallback_required": true,
+        "timing": {
+          "rtt_ms": null,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 0.0345159787684679
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "case": "subagent_worthy",
+      "decision_boundary_ms": 264.5560030359775,
+      "result": {
+        "selected_action": "parallel",
+        "confidence": 0.96,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "sequential": 0.02,
+          "agent": 0.01,
+          "parallel": 0.97
+        },
+        "timing": {
+          "rtt_ms": 264.3049249891192,
+          "catalog_ms": 0.00018998980522155762,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 264.5508840214461
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "case": "failing_test_repair",
+      "decision_boundary_ms": 261.11610303632915,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.26,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "retry": 0.0,
+          "agent": 0.49,
+          "change_strategy": 0.51
+        },
+        "timing": {
+          "rtt_ms": 260.83506806753576,
+          "catalog_ms": 0.00023993197828531265,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 261.10777806025
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "case": "research_retrieval",
+      "decision_boundary_ms": 283.6341329384595,
+      "result": {
+        "selected_action": "retrieve",
+        "confidence": 0.94,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "retrieve": 0.96,
+          "agent": 0.03,
+          "sufficient": 0.0,
+          "inspect": 0.01
+        },
+        "timing": {
+          "rtt_ms": 283.3619749872014,
+          "catalog_ms": 0.000200001522898674,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 283.6252358974889
+        }
+      }
+    },
+    {
+      "sample": 2,
+      "mode": "COOPERATIVE",
+      "case": "validation_heavy",
+      "decision_boundary_ms": 270.5525360070169,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.77,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "validate": 0.83,
+          "more_context": 0.07,
+          "agent": 0.05,
+          "continue": 0.05
+        },
+        "timing": {
+          "rtt_ms": 270.2113970881328,
+          "catalog_ms": 0.00027997884899377823,
+          "useful_overlap_ms": 0.0,
+          "blocking_ms": 270.54245700128376
+        }
+      }
+    }
+  ]
+}

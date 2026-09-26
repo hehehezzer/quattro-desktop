@@ -1260,7 +1260,7 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
                                by_plan=lambda plan_id: turn if plan_id == plan.plan_id else None,
                                conversation_context=lambda _turn: "Earlier request: inspect the project documentation.")
         transport = SimpleNamespace(url="http://127.0.0.1:9", token="synthetic-session-token",
-                                    close=lambda: None)
+                                    decision_token="synthetic-decision-token", close=lambda: None)
         transport.start = lambda: transport
         callback_answers = []
         (self.root / "pi-native").mkdir()

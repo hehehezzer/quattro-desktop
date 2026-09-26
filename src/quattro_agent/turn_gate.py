@@ -25,6 +25,8 @@ from .model_registry import (
 from .omniroute import APPROVED_BASE_URL, validate_omniroute_runtime_capabilities
 from .paths import model_catalog_path
 from .privacy import redact_secret_text
+from .decision_service import DecisionSession
+from .decision_taxonomy import CONTEXT_FLAGS, CONTEXT_CATEGORIES, validate_request
 
 
 _SECRET = re.compile(r"(?i)\b(password|passwd|api[ _-]?key|access[ _-]?token|secret|credential)\b")
@@ -59,6 +61,9 @@ class Turn:
     model_requests: int = 0
     shadow_runs: tuple = field(default=(), repr=False)
     routing_evidence: dict = field(default_factory=dict, repr=False)
+    decision_context: dict = field(default_factory=dict, repr=False)
+    initial_context_reuse: int = 0
+    decision_outcomes: dict = field(default_factory=dict, repr=False)
 
 
 class TurnGate:
@@ -78,6 +83,66 @@ class TurnGate:
         self._lock = threading.RLock()
         self._active: dict[str, Turn] = {}
         self._history: dict[str, list[dict]] = {}
+        self._decision_revision = 0
+        self._decision_options = dict(config.get('routing', {}).get('jev', {}))
+        self.decisions = self._new_decisions()
+
+    def _new_decisions(self):
+        return DecisionSession(mode=self._decision_options.get('mode', 'OFF'),
+                               timeout_ms=self._decision_options.get('timeoutMs', 1500))
+
+    def observe_runtime(self, turn: Turn):
+        """Metadata-only invalidation, never tool authorization or output parsing."""
+        with self._lock:
+            if self._active.get(turn.thread_id) is turn:
+                self._decision_revision += 1
+
+    def decide(self, request):
+        fallback = {'selected_action': None, 'confidence': None,
+                    'evidence': 'inactive_or_stale', 'fallback_required': True}
+        try:
+            validate_request(request)
+            with self._lock:
+                turns = [turn for turn in self._active.values() if not turn.finished]
+                if len(turns) != 1:
+                    return fallback
+                turn = turns[0]
+                if turn.decision != 'DELEGATE' or turn.sensitive or turn.cancel_event.is_set():
+                    return fallback
+                # Never accept an execution model's revision as host truth. Each
+                # query is fresh; native item events additionally invalidate any
+                # in-flight advice. Opaque delegated Pi loops are never cached.
+                self._decision_revision += 1
+                revision = self._decision_revision
+                state = json.loads(json.dumps(request))
+                state['execution_state']['revision'] = revision
+                context = state['relevant_context']
+                for key in CONTEXT_CATEGORIES:
+                    context.pop(key, None)  # Initial Jev evidence is host-owned.
+                context.update(turn.decision_context)
+                # Consume a completed initial evaluation, never re-evaluate it.
+                # Its task features remain context, not a cached next action.
+                for run in turn.shadow_runs:
+                    if run.done.is_set() and run.record.get('status') == 'success':
+                        answers = run.record.get('answers') or {}
+                        for key, name in (('initial_complexity', 'complexity'), ('initial_task_type', 'task_type')):
+                            answer = answers.get(name, {})
+                            if answer.get('confidence', 0) >= DecisionSession.MIN_CONFIDENCE:
+                                context[key] = answer['choice']
+                if turn.decision_context:
+                    turn.initial_context_reuse += 1
+                service = self.decisions
+            result = service.decide(state)
+            with self._lock:
+                if (revision != self._decision_revision or turn.finished or turn.cancel_event.is_set()
+                        or self._active.get(turn.thread_id) is not turn):
+                    turn.decision_outcomes['stale'] = turn.decision_outcomes.get('stale', 0) + 1
+                    return fallback
+                outcome = 'fallback' if result['fallback_required'] else 'accepted'
+                turn.decision_outcomes[outcome] = turn.decision_outcomes.get(outcome, 0) + 1
+            return dict(result, telemetry=service.snapshot())
+        except Exception:
+            return fallback  # Optional advice cannot break execution.
 
     @jev_lifecycle
     def begin(self, thread_id: str, prompt: str, frontend: str, params=None) -> Turn:
@@ -116,8 +181,13 @@ class TurnGate:
                 outcome_source='interactive-turns.jsonl',
             )
             turn.routing_evidence = current_evidence()
+            initial_state = json.loads(routed.features.state_json)
+            turn.decision_context = {name: initial_state[name] for name in CONTEXT_FLAGS if name in initial_state}
             turn.request_id = (params or {}).get('request_id')
             self._active[thread_id] = turn
+            self._decision_revision += 1
+            if self.decisions.closed.is_set():
+                self.decisions = self._new_decisions()
             self._record(turn, "planned", False, False)
             if turn.budget:
                 turn.timer = threading.Timer(max(0, turn.budget - (time.monotonic() - started)),
@@ -219,6 +289,7 @@ class TurnGate:
             turns = list(self._active.values())
         for turn in turns:
             self.cancel(turn)
+        self.decisions.close()
 
     def _request(self, turn: Turn, method: str, path: str, body=None):
         base = urlsplit(APPROVED_BASE_URL)
@@ -369,6 +440,9 @@ class TurnGate:
         turn.failure_code = ('budget_exceeded' if turn.budget and
                              time.monotonic() - turn.started >= turn.budget else 'cancelled')
         turn.cancel_event.set()
+        if hasattr(self, 'decisions'):
+            self.observe_runtime(turn)
+            self.decisions.close()
         if turn.socket:
             try:
                 turn.socket.shutdown(socket.SHUT_RDWR)
@@ -390,6 +464,7 @@ class TurnGate:
             if turn.finished:
                 return
             turn.finished = True
+            self._decision_revision += 1
             TurnGate._close_signals(turn)
             if turn.timer:
                 turn.timer.cancel()
@@ -420,7 +495,10 @@ class TurnGate:
                  "failure_code": turn.failure_code if status != 'completed' else None,
                  "model_requests": turn.model_requests,
                  "fallback_events": [], "evidence_provenance": "quattro_per_turn_gate",
-                 "routing": dict(turn.routing_evidence)}
+                 "routing": dict(turn.routing_evidence),
+                 "decision_plane": self.decisions.snapshot(),
+                 "initial_context_reuse": turn.initial_context_reuse,
+                 "decision_plane_turn_outcomes": dict(turn.decision_outcomes)}
         for run in turn.shadow_runs:
             if run.done.is_set():
                 event['routing']['jev'] = {name: run.record.get(name) for name in (

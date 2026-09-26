@@ -369,6 +369,10 @@ class CodexTurnBridge:
                         "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch",
                     }:
                         state["tools_used"] = True
+                    if (message.get("method") in {"item/started", "item/completed"}
+                            and item.get("type") in {"commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch"}
+                            and hasattr(self.gate, "observe_runtime")):
+                        self.gate.observe_runtime(state["turn"])
                     if (message.get("method") == "item/completed" and item.get("type") == "agentMessage"
                             and item.get("phase") in {None, "final_answer"} and hasattr(self.gate, "remember")):
                         self.gate.remember(thread_id, state.get("prompt", ""), item.get("text", ""))
