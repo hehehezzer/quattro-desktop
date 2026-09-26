@@ -234,6 +234,50 @@ class BridgeTests(unittest.TestCase):
         release.set()
         self.assertEqual(self.receive()["params"]["turn"]["status"], "interrupted")
 
+    def test_real_gate_cancellation_exception_completes_as_interrupted(self):
+        from quattro_agent.turn_gate import TurnGate
+
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        original_begin, original_finish = self.gate.begin, self.gate.finish
+
+        def begin(*args, **kwargs):
+            turn = original_begin(*args, **kwargs)
+            turn.cancel_event = threading.Event()
+            turn.budget = None
+            turn.socket = None
+            turn.connection = None
+            return turn
+
+        def direct(turn):
+            entered.set()
+            release.wait(4)
+            # Exercise the production exception raised after cancel(), rather
+            # than a fake direct function returning normally on interruption.
+            TurnGate.remaining(self.gate, turn)
+            raise AssertionError("cancelled turn must not produce an answer")
+
+        def finish(turn, **kwargs):
+            original_finish(turn, **kwargs)
+            finished.set()
+
+        self.gate.begin, self.gate.direct, self.gate.finish = begin, direct, finish
+        self.gate.cancel = lambda turn: TurnGate.cancel(self.gate, turn)
+        self.send("turn/start", {"threadId":"thread-1","input":[{"type":"text","text":"Explain"}]})
+        self.assertTrue(entered.wait(4))
+        self.assertIn("result", self.receive())
+        self.assertEqual(self.receive()["method"], "turn/started")
+        self.send("turn/interrupt", {"threadId":"thread-1","turnId":"direct-turn"}, 2)
+        self.assertEqual(self.receive(), {"id":2,"result":{}})
+        release.set()
+        completed = self.receive()
+        self.assertEqual(completed["method"], "turn/completed")
+        self.assertEqual(completed["params"]["turn"]["status"], "interrupted")
+        self.assertIsNone(completed["params"]["turn"]["error"])
+        self.assertTrue(finished.wait(2))
+        self.assertEqual(self.gate.finished[-1], {
+            "status":"interrupted", "tools_used":False, "agent_lifecycle":False,
+        })
+
 
 if __name__ == "__main__":
     unittest.main()

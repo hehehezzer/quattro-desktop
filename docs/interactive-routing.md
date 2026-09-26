@@ -40,7 +40,8 @@ DIRECT/FAST has a 20-second wall budget, including routing, preflight, transport
 and receipt lookup. DIRECT/STANDARD has 60 seconds and DIRECT/REASONING reserves
 90 seconds. The current direct classifier uses FAST or STANDARD. DIRECT uses
 no repository scan, task database, retrieval, subprocess agent, or tools. It has
-no automatic retries or target fallback. Budget expiry fails promptly and closes
+no automatic model retries or target fallback. Pending receipts are polled at
+most four times within the remaining turn budget; malformed receipts fail closed. Budget expiry fails promptly and closes
 its active socket. The user can retry explicitly.
 
 DELEGATE has no conversation-wide deadline. Existing durable harness policy
@@ -131,3 +132,11 @@ python scripts/routing/benchmark_interactive.py --live --account account-1
 Hermetic regressions cover the requested A–F decisions, frontend independence,
 plan expiry, native bridge frames/rendering/history, cancellation, secret
 exclusion, locked receipts, evidence provenance, and Pi's fail-closed hook.
+
+A post-review live rerun measured gateway definition at 2.348 seconds
+(router 0.862 ms, dispatch 7.670 ms, first token 1,608.829 ms) and traceback
+explanation at 7.945 seconds (router 0.319 ms, dispatch 2.271 ms, first token
+2,121.651 ms). Credential refusal took 0.729 ms without a model call. Both
+model requests remained DIRECT with no tools or agent lifecycle; these samples
+show normal provider variability within the FAST budget. The artifact preserves
+both runs. Final validation covered 634 tests, with five platform skips.

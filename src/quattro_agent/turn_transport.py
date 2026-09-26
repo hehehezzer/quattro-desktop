@@ -7,7 +7,7 @@ import json
 import secrets
 import threading
 
-from .omniroute import validate_omniroute_runtime_capabilities
+from .omniroute import APPROVED_BASE_URL, validate_omniroute_runtime_capabilities
 from .turn_gate import MAX_BODY
 from .privacy import redact_secret_text
 
@@ -97,7 +97,7 @@ class TurnTransport:
                         turn = owner.gate.by_plan(str(metadata.get('quattro_plan_id', '')))
                         if turn.frontend != 'codex' or turn.decision != 'DELEGATE':
                             raise ValueError('transport requires active delegated plan')
-                        validate_omniroute_runtime_capabilities(timeout_seconds=3)
+                        validate_omniroute_runtime_capabilities(APPROVED_BASE_URL, timeout_seconds=3)
                         request = owner.gate.locked_body(turn, body)
                         conn, response = owner.gate._request(turn, 'POST', '/responses', request)
                         # Native tools must not act on output until the locked receipt

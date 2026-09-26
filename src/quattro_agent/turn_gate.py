@@ -24,8 +24,8 @@ from .model_registry import (
     execution_target_for_route, load_model_registry, select_execution_target,
     target_matches_actual,
 )
-from .omniroute import validate_omniroute_runtime_capabilities
-from .paths import model_catalog_path, omniroute_base_url
+from .omniroute import APPROVED_BASE_URL, validate_omniroute_runtime_capabilities
+from .paths import model_catalog_path
 from .privacy import redact_secret_text
 from .routing_intelligence import ContextProfile, RoutingTierName, profile_task
 
@@ -248,7 +248,7 @@ class TurnGate:
             self.cancel(turn)
 
     def _request(self, turn: Turn, method: str, path: str, body=None):
-        base = urlsplit(omniroute_base_url())
+        base = urlsplit(APPROVED_BASE_URL)
         cls = http.client.HTTPSConnection if base.scheme == 'https' else http.client.HTTPConnection
         conn = cls(base.hostname, base.port, timeout=min(3.0, self.remaining(turn)))
         turn.connection = conn
@@ -276,7 +276,9 @@ class TurnGate:
             # No filesystem search and no credential request forwarded to a model.
             return ("No approved local credential lookup is configured for this session. "
                     "Use the OmniRoute dashboard credential source or its password reset procedure.")
-        validate_omniroute_runtime_capabilities(timeout_seconds=min(3.0, self.remaining(turn)))
+        validate_omniroute_runtime_capabilities(
+            APPROVED_BASE_URL, timeout_seconds=min(3.0, self.remaining(turn)),
+        )
         with self._lock:
             history = list(self._history.get(turn.thread_id, []))
         max_chars = turn.plan.context.conversation_budget_tokens * 4
@@ -350,14 +352,31 @@ class TurnGate:
         return answer
 
     def verify_receipt(self, turn: Turn):
-        conn, response = self._request(turn, 'GET', '/routing/locked-receipts?' +
-                                       urlencode({'plan_id': turn.plan.plan_id}))
-        try:
-            receipt = json.loads(response.read(128_001))
-        finally:
-            conn.close()
-            turn.connection = None
-        if (receipt.get('plan_id') != turn.plan.plan_id or receipt.get('success') is not True
+        receipt = None
+        for attempt in range(4):
+            self.remaining(turn)
+            conn, response = self._request(turn, 'GET', '/routing/locked-receipts?' +
+                                           urlencode({'plan_id': turn.plan.plan_id}))
+            try:
+                raw = response.read(128_001)
+                self.remaining(turn)
+                candidate = json.loads(raw) if len(raw) <= 128_000 else None
+            except (ValueError, UnicodeError):
+                candidate = None
+            finally:
+                conn.close()
+                turn.connection = None
+            if not isinstance(candidate, dict):
+                break
+            receipt = candidate
+            if candidate.get('plan_id') != turn.plan.plan_id:
+                break
+            if 'success' in candidate or candidate.get('status') != 'pending':
+                break
+            if attempt < 3:
+                turn.cancel_event.wait(min(0.05 * (attempt + 1), self.remaining(turn)))
+        if (not isinstance(receipt, dict)
+                or receipt.get('plan_id') != turn.plan.plan_id or receipt.get('success') is not True
                 or not target_matches_actual(turn.plan.target,
                     actual_provider=receipt.get('actual_provider'),
                     actual_account=receipt.get('actual_account'),

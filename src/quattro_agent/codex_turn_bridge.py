@@ -465,15 +465,19 @@ class CodexTurnBridge:
                 self._delegate_requests[request["id"]] = thread_id
                 self._forward(outgoing)
         except Exception:
-            # Provider errors can contain request content; expose a constant message.
+            # User interruption closes the real provider connection and may
+            # raise while direct() is blocked. Preserve interruption semantics;
+            # unrelated provider/budget failures remain failures.
+            status = "interrupted" if state["cancelled"].is_set() else "failed"
             if state.get("accepted"):
                 self._notify("turn/completed", {"threadId": thread_id, "turn": {
-                    "id": str(state["turn"].turn_id), "status": "failed", "items": [],
-                    "error": {"message": "Quattro direct turn failed", "codexErrorInfo": None,
-                              "additionalDetails": None}}})
+                    "id": str(state["turn"].turn_id), "status": status, "items": [],
+                    "error": None if status == "interrupted" else {
+                        "message": "Quattro direct turn failed", "codexErrorInfo": None,
+                        "additionalDetails": None}}})
             else:
                 self._error(request["id"], "Quattro could not authorize or execute this turn")
-            self._finish(thread_id, state, "failed")
+            self._finish(thread_id, state, status)
 
     def handle(self, request: dict[str, Any]) -> None:
         method = request.get("method")

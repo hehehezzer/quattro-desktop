@@ -1,12 +1,14 @@
 """Hermetic per-turn routing, budgets, privacy, and locked transport contracts."""
 import http.client
+import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -122,6 +124,60 @@ class TurnGateTests(unittest.TestCase):
         self.assertTrue(turn.cancel_event.is_set())
         self.gate.finish(turn, status='interrupted')
 
+    def test_receipt_pending_polls_within_budget_and_validates_final_target(self):
+        turn = self.gate.begin('thread', 'Hello', 'codex')
+        pending = {'plan_id': turn.plan.plan_id, 'status': 'pending'}
+        final = {'plan_id': turn.plan.plan_id, 'success': True,
+                 'actual_provider': turn.plan.target.provider,
+                 'actual_account': turn.plan.target.account,
+                 'actual_model': turn.plan.target.model,
+                 'actual_route': turn.plan.target.route}
+        with patch.object(self.gate, '_request', side_effect=[
+            (Mock(), io.BytesIO(json.dumps(row).encode())) for row in (pending, final)
+        ]) as request:
+            self.gate.verify_receipt(turn)
+            self.assertEqual(request.call_count, 2)
+        with patch.object(self.gate, '_request', side_effect=lambda *_args: (
+            Mock(), io.BytesIO(json.dumps(pending).encode())
+        )) as request:
+            with self.assertRaisesRegex(RuntimeError, 'receipt failed verification'):
+                self.gate.verify_receipt(turn)
+            self.assertEqual(request.call_count, 4)
+        self.gate.finish(turn)
+
+    def test_receipt_rejects_malformed_oversized_and_mismatched_results(self):
+        turn = self.gate.begin('thread', 'Hello', 'codex')
+        for raw in (b'[]', b'null', b'{', b' ' * 128001,
+                    b'{"plan_id":"wrong","status":"pending"}',
+                    json.dumps({'plan_id': turn.plan.plan_id, 'success': True,
+                                'actual_model': 'wrong'}).encode()):
+            with self.subTest(size=len(raw)), patch.object(
+                self.gate, '_request', return_value=(Mock(), io.BytesIO(raw))
+            ) as request:
+                with self.assertRaisesRegex(RuntimeError, 'receipt failed verification'):
+                    self.gate.verify_receipt(turn)
+                self.assertEqual(request.call_count, 1)
+                self.assertEqual(turn.failure_code, 'locked_receipt_mismatch')
+        self.gate.cancel(turn)
+        with patch.object(self.gate, '_request') as request:
+            with self.assertRaises(TimeoutError):
+                self.gate.verify_receipt(turn)
+            request.assert_not_called()
+        self.gate.finish(turn, status='interrupted')
+
+    def test_transport_uses_fixed_approved_endpoint_despite_environment_change(self):
+        turn = self.gate.begin('thread', 'Hello', 'codex')
+        for scheme, connection_class in (('http', 'HTTPConnection'), ('https', 'HTTPSConnection')):
+            with patch('quattro_agent.turn_gate.APPROVED_BASE_URL',
+                       f'{scheme}://127.0.0.1:23456/api/v1'), \
+                 patch.dict(os.environ, {'QUATTRO_OMNIROUTE_BASE_URL': 'https://invalid.example/api/v1'}), \
+                 patch('quattro_agent.turn_gate.http.client.' + connection_class) as factory:
+                factory.return_value.getresponse.return_value.status = 200
+                conn, _ = self.gate._request(turn, 'GET', '/routing/locked-receipts')
+                self.assertEqual(factory.call_args.args, ('127.0.0.1', 23456))
+                self.assertEqual(conn.request.call_args.args[1], '/api/v1/routing/locked-receipts')
+        self.gate.finish(turn)
+
     def test_hard_budget_interrupts_slow_stream_without_waiting_for_newline(self):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         class Slow(BaseHTTPRequestHandler):
@@ -145,8 +201,8 @@ class TurnGateTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         with patch('quattro_agent.turn_gate.BUDGETS', {'FAST': .15}), \
              patch('quattro_agent.turn_gate.validate_omniroute_runtime_capabilities'), \
-             patch('quattro_agent.turn_gate.omniroute_base_url',
-                   return_value=f'http://127.0.0.1:{server.server_port}/api/v1'):
+             patch('quattro_agent.turn_gate.APPROVED_BASE_URL',
+                   f'http://127.0.0.1:{server.server_port}/api/v1'):
             turn = self.gate.begin('thread', 'Hello', 'codex')
             started = time.monotonic()
             with self.assertRaises((TimeoutError, OSError, RuntimeError)):

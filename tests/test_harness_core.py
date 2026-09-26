@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import contextlib
 import json
+import io
 import os
 import pathlib
 import sqlite3
@@ -1093,6 +1094,66 @@ class SupervisorTests(StoreTestCase):
             )
         self.assertEqual(managed.identity.start_ticks, -1)
         self.assertEqual(managed.identity.process_group, -1)
+
+    def test_proc_identity_exit_window_waits_for_confirmed_exit(self):
+        task_id, run_id = self.prepared_run()
+
+        class ExitingProcess:
+            pid = 12345
+            returncode = None
+
+            def poll(inner_self):
+                return inner_self.returncode
+
+            def wait(inner_self, timeout=None):
+                self.assertEqual(timeout, 0.02)
+                inner_self.returncode = 0
+                return 0
+
+        process = ExitingProcess()
+        with (
+            mock.patch("quattro_agent.supervisor.subprocess.Popen", return_value=process),
+            mock.patch("quattro_agent.supervisor.read_process_identity",
+                       side_effect=ProcessIdentityError("exit in progress")),
+        ):
+            managed = self.supervisor.start(
+                task_id=task_id, run_id=run_id,
+                argv=(sys.executable, "-c", "pass"), cwd=self.project,
+            )
+        self.assertEqual(managed.identity.start_ticks, -1)
+        self.assertEqual(managed.identity.process_group, -1)
+        result = self.supervisor.wait(managed)
+        self.assertEqual(result.state, RunState.SUCCEEDED)
+
+    def test_unidentified_live_process_fails_closed_and_closes_startup_pipes(self):
+        task_id, run_id = self.prepared_run()
+        process = mock.Mock(pid=12345)
+        process.stdin, process.stdout, process.stderr = io.StringIO(), io.StringIO(), io.StringIO()
+        process.poll.return_value = None
+
+        def wait(timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired("synthetic-child", timeout)
+            return -9
+
+        process.wait.side_effect = wait
+        with (
+            mock.patch("quattro_agent.supervisor.subprocess.Popen", return_value=process),
+            mock.patch("quattro_agent.supervisor.read_process_identity",
+                       side_effect=ProcessIdentityError("identity unavailable")) as identify,
+            mock.patch("quattro_agent.supervisor.os.killpg") as kill,
+        ):
+            with self.assertRaisesRegex(ProcessIdentityError, "cannot establish"):
+                self.supervisor.start(
+                    task_id=task_id, run_id=run_id,
+                    argv=(sys.executable, "-c", "pass"), cwd=self.project,
+                    stdin_text="synthetic input", stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+        self.assertEqual(identify.call_count, 3)
+        self.assertEqual(process.wait.call_count, 4)
+        kill.assert_called_once()
+        self.assertTrue(all(stream.closed for stream in (process.stdin, process.stdout, process.stderr)))
+        self.assertEqual(self.store.get_run(run_id)["state"], "interrupted")
 
     def test_deadline_terminates_the_process_group(self):
         task_id, run_id = self.prepared_run()

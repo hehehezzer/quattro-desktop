@@ -329,6 +329,7 @@ class NativeHandoffTests(unittest.TestCase):
             self.assertEqual(execute.call_args.kwargs["directory"], root)
             chdir.assert_not_called()
             self.assertEqual(executable, "/native/codex")
+            self.assertIsNone(execute.call_args.kwargs["profile_name"])
             self.assertEqual(argv[0], "/native/codex")
             self.assertEqual(argv[argv.index("-C") + 1], str(root))
             self.assertIn("workspace-write", argv)
@@ -357,6 +358,7 @@ class NativeHandoffTests(unittest.TestCase):
             self.assertEqual(execute.call_args.kwargs["directory"], root)
             chdir.assert_not_called()
             self.assertEqual(executable, "/native/pi")
+            self.assertEqual(execute.call_args.kwargs["profile_name"], "audit-read-only")
             self.assertEqual(argv[:5], [
                 "/native/pi", "--provider", "omniroute", "--model", "auto",
             ])

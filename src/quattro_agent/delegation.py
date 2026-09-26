@@ -102,7 +102,7 @@ def classify_task_request(request: str, *, preferred_agent: str = "codex") -> Ta
     agent = preferred_agent if preferred_agent in {"codex", "pi"} else "codex"
     # An explanatory question is not an instruction to execute its subject.
     action_clause = re.search(
-        r"(?i)(?:[.;]\s*|\b(?:and|then)\s+)(?:then\s+)?"
+        r"(?i)(?:\.\s+|;\s*|\b(?:and|then)\s+)(?:then\s+)?"
         r"(?:run|fix|edit|apply|deploy|install|modify|execute|refactor|build|test|"
         r"patch|inspect|search|commit|open)\b", compact,
     )
@@ -121,7 +121,7 @@ def classify_task_request(request: str, *, preferred_agent: str = "codex") -> Ta
             "DELEGATE", "explicit_repository_inspection", 0.98, agent,
         )
     if re.search(
-        r"(?i)(?:^|[.;]\s*|\b(?:and|then)\s+)(?:commit\b|open\s+(?:a\s+)?(?:pr|pull request)\b)",
+        r"(?i)(?:^|\.\s+|;\s*|\b(?:and|then)\s+)(?:commit\b|open\s+(?:a\s+)?(?:pr|pull request)\b)",
         compact,
     ):
         return TaskDelegationDecision("DELEGATE", "explicit_repository_delivery", 0.99, "codex")
