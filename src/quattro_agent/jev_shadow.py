@@ -175,11 +175,13 @@ class ShadowRun:
             with self.lock:
                 if self.cancel.is_set():
                     raise JevFailure(self.stop_reason)
+                process_started = time.perf_counter()
                 self.process = self.popen(
                     [sys.executable, str(Path(__file__).with_name("jev_worker.py").resolve())],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                     env=env, cwd=str(Path(__file__).resolve().parent),
                 )
+                self.record["process_creation_ms"] = (time.perf_counter() - process_started) * 1000
             try:
                 remaining = max(0.001, self.timeout_ms / 1000 - (time.perf_counter() - self.started))
                 output, _ = self.process.communicate(payload, timeout=remaining)
@@ -194,10 +196,18 @@ class ShadowRun:
             result = decode(output)
             if not isinstance(result, dict):
                 raise JevFailure("worker_failure")
-            for name in ("jev_latency_ms", "catalog_latency_ms", "worker_latency_ms"):
+            for name in ("jev_latency_ms", "catalog_latency_ms", "worker_latency_ms", "client_construction_ms"):
                 value = result.get(name)
                 if type(value) in (int, float) and 0 <= value <= 60_000:
                     self.record[name] = value
+            worker_started = result.get("worker_started")
+            if type(worker_started) in (int, float) and process_started <= worker_started <= time.perf_counter():
+                self.record["worker_startup_ms"] = (worker_started - process_started) * 1000
+            for name in ("jev_request_started", "jev_request_finished"):
+                value = result.get(name)
+                if type(value) in (int, float) and self.started <= value <= time.perf_counter():
+                    self.record[name] = value
+            self.record["jev_rtt_ms"] = self.record["jev_latency_ms"]
             if result.get("failure_category"):
                 category = result["failure_category"]
                 raise JevFailure(category if category in FAILURES else "worker_failure")
@@ -244,6 +254,16 @@ class ShadowRun:
         self.thread.join()
         if self.annotations:
             self.record.update(self.annotations)
+            # Intersect actual evaluation and useful preparation intervals. Do
+            # not label process startup, catalog I/O or cancellation as Jev RTT.
+            begin = self.record.get("jev_request_started")
+            end = self.record.get("jev_request_finished")
+            local_begin = self.record.get("local_preparation_started")
+            local_end = self.record.get("local_preparation_finished")
+            self.record["jev_overlap_ms"] = (
+                max(0.0, min(end, local_end) - max(begin, local_begin)) * 1000
+                if all(value is not None for value in (begin, end, local_begin, local_end)) else None
+            )
             self.persistence_ok = persist(self.database, self.record)
             if not self.persistence_ok:
                 _LOG.warning("Jev telemetry annotations unavailable")
@@ -308,7 +328,7 @@ def start_shadow(*, config, database, request, decision, record_id=None,
         run = ShadowRun(
             database=database, request=request, decision=decision,
             record_id=record_id, source_task_id=source_task_id,
-            authoritative_tier=authoritative_tier, timeout_ms=options.get("timeoutMs", 300),
+            authoritative_tier=authoritative_tier, timeout_ms=options.get("timeoutMs", 1500),
             state_json=state_json,
         )
         run.start()

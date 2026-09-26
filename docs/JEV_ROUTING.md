@@ -43,11 +43,17 @@ default `passthrough` mode. No OmniRoute service/configuration is changed.
 Merge this object into the existing `routing` group in private `ai.json`:
 
 ```json
-"jev": { "mode": "SHADOW", "timeoutMs": 300 }
+"jev": { "mode": "SHADOW", "timeoutMs": 1500 }
 ```
 
 Strict accepted modes: `OFF`, `SHADOW`, `COOPERATIVE`. Timeout: integer
-100–3000 ms, default 300 ms. The provider resolver reads an explicit runtime
+100–3000 ms, default 1500 ms (existing explicit settings remain unchanged).
+Optional `decisionWaitMs` is a separate 0–3000 ms dispatch budget, bounded by
+the remaining request deadline. If omitted, it retains the full request budget.
+Expiry falls back locally without cancelling the owned request or counting a
+provider failure; a late result is evidence only and cannot revise a locked
+plan. Adaptive per-consequence defaults remain unimplemented.
+The provider resolver reads an explicit runtime
 `TYPESAFE_API_KEY` override, then the existing private user
 `environment.d/60-quattro-typesafe.conf` assignment. Empty/invalid explicit
 overrides suppress the stored fallback. No manual export is required. Never put
@@ -61,7 +67,7 @@ notes. No native Codex/Pi credential store is read. See
 - **SHADOW:** classification concurrent with local routing/preparation;
   never waits at the fusion boundary and cannot modify a routing requirement.
 - **COOPERATIVE:** the same concurrent stage; eligible requests wait only for
-  the remainder of the timeout budget. Jev failures retain the deterministic
+  the remainder of the decision wait budget. Jev failures retain the deterministic
   baseline. Conclusive/protected DIRECT, explicit models/auto aliases,
   low-complexity requirements, and already-REASONING requests do not start Jev.
   Ambiguous DIRECT may receive a capability signal but cannot become an agent. This is conservative capability fusion, not probabilistic
@@ -114,6 +120,13 @@ eight-worker cap still applies. State is bounded to 128 least-recently-used
 stores, is not persisted, and is not shared across launcher processes. Suppressed
 turn evidence records `jev_suppressed=circuit_open` and `jev_requested=false`;
 local intelligence and deterministic routing continue normally.
+
+The worker's fixed-origin `http.client.HTTPSConnection` now reuses verified
+HTTP/1.1 TLS between catalog and evaluation, then closes explicitly on worker
+exit. No redirects, proxies or automatic evaluation retries are allowed. A
+broken connection fails locally; the next turn creates a fresh client. There
+is not yet a persistent session worker/client. Live transport comparisons and
+the remaining lifecycle work are in [JEV_SPECULATION.md](JEV_SPECULATION.md).
 
 Catalog and evaluation timing are separate. The overall
 child wall-clock timeout includes startup and both requests. Catalog checking
@@ -215,7 +228,18 @@ when Jev cost is unknown, not execution cost plus a fabricated zero. No
 unverified pricing constant is introduced. Official pricing verification is
 required before any estimated-cost implementation or economic promotion claim.
 
-Timing fields: `feature_extraction_ms`, `jev_latency_ms`, `catalog_latency_ms`,
+New timing fields: `jev_rtt_ms` (alias of evaluation-only `jev_latency_ms`),
+`jev_wait_ms` (actual fusion wait), `jev_overlap_ms` (intersection of actual
+evaluation and useful local preparation intervals, null if not observable),
+`local_routing_ms` (routing wall time excluding wait/fusion), and
+`routing_critical_path_ms` (canonical routing wall time). Overlap is finalized
+in the owned worker record on cleanup; the begin-time evidence snapshot cannot
+contain a future RTT. Process creation, combined interpreter/import startup,
+and HTTP client construction are measured separately. DNS/TCP/TLS phases are
+not independently attributed. The native begin wrapper has additional small
+bookkeeping overhead, reported as `routing_ms` by the live benchmark.
+
+Existing timing fields: `feature_extraction_ms`, `jev_latency_ms`, `catalog_latency_ms`,
 `worker_latency_ms`, `shadow_elapsed_ms`, `quattro_learned_ms`,
 `deterministic_ms`, `fusion_ms`, `routing_total_ms`, and
 `critical_path_wait_ms`. `dispatch_ms` is boundary-to-first direct transport,
@@ -244,8 +268,10 @@ missing stored key. Billing and routing-quality benefit remain unverified.
 Unit tests use fake credentials and must not contact the service.
 See `JEV_BENCHMARK.md` for the earlier simulated results and limits.
 
-Before global SHADOW -> COOPERATIVE promotion, require a separately reviewed
-report after rebasing onto latency-fixed main:
+Historical proposed promotion targets below are **not final performance gates**.
+The speculative-routing work requires new measured, reviewed end-to-end gates;
+routing-only results cannot establish task-success or cost improvements.
+The previous proposal was:
 
 - at least **400** representative paired tasks (**50 in each of eight types**),
   with at least **60 independently blind human-reviewed** tasks; no Jev-as-gold;
@@ -260,5 +286,5 @@ report after rebasing onto latency-fixed main:
 - independent review, full tests, and explicit rollout approval. Existing
   learned-model promotion gates are separate and remain intact.
 
-These are release gates, not automatic runtime promotion. The configuration
+These historical targets do not trigger automatic runtime promotion. The configuration
 supports controlled experiments now; it does not switch itself or deploy.

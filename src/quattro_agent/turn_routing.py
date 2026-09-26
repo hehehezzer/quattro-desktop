@@ -18,7 +18,7 @@ from .delegation import TaskDelegationDecision, classify_task_request
 from .intelligence.features import extract_decision_features, SAFE_FEATURES
 from .intelligence.telemetry import sanitize_request, redact_request_credentials
 from .jev import serialize_features
-from .jev_shadow import annotate
+from .jev_shadow import annotate, current_evidence
 from .model_registry import (
     ExecutionPlan, ModelTarget, build_execution_plan, execution_target_for_route,
     select_execution_target,
@@ -28,7 +28,7 @@ from .routing_intelligence import (
     ContextProfile, RoutingTierName, profile_task, task_profile_from_dict,
     make_pre_routing_input,
 )
-from .routing_signals import classify_with_signals
+from .routing_signals import classify_with_signals, start_signal_run
 from .errors import ConfigError
 
 CREDENTIAL_RESPONSE = (
@@ -196,8 +196,6 @@ def route_turn(*, request: str, config: Mapping, registry: Sequence[ModelTarget]
     baseline = RoutingDecision(RoutingTier(profile.tier.value), decision.reason,
                                {"FAST": "low", "STANDARD": "medium", "REASONING": "high"}[profile.tier.value],
                                task_profile=profile.to_dict())
-    accounts = (frozenset(str(row["id"]) for row in config["accounts"] if row.get("enabled", True))
-                if "accounts" in config else frozenset({account}))
     selected_model = selected_model or "auto"
     guard_started = time.perf_counter()
     guard = "eligible"
@@ -214,10 +212,24 @@ def route_turn(*, request: str, config: Mapping, registry: Sequence[ModelTarget]
     elif profile.complexity.value == "low":
         guard = "conclusive_requirements"
     guard_ms = (time.perf_counter() - guard_started) * 1000
+    # The canonical projection and privacy guards are ready. Launch before
+    # account/health/capability preparation; a failed attempt must not be retried
+    # at fusion. The existing turn scope retains cancellation ownership.
+    try:
+        run = start_signal_run(
+            config=config, database=database, execution=decision.decision,
+            state=features.state_json, baseline=baseline,
+            manual=selected_model != "auto", eligible=guard == "eligible",
+        )
+    except Exception:
+        run = None
+    annotate(local_preparation_started=time.perf_counter())
+    accounts = (frozenset(str(row["id"]) for row in config["accounts"] if row.get("enabled", True))
+                if "accounts" in config else frozenset({account}))
     constraints = unavailable_routes
     if runtime_filter and guard != "protected_local":
         constraints = frozenset(constraints) | frozenset(runtime_filter(baseline))
-    def select(proposed):
+    def select_uncached(proposed):
         candidate = task_profile_from_dict(proposed.task_profile)
         if selected_model not in {"auto", "auto/coding:cheap", "auto/coding", "auto/reasoning"}:
             target = execution_target_for_route(candidate, registry, selected_model, available_accounts=accounts)
@@ -230,11 +242,23 @@ def route_turn(*, request: str, config: Mapping, registry: Sequence[ModelTarget]
                 "auto/coding:cheap": "FAST", "auto/coding": "STANDARD", "auto/reasoning": "REASONING",
             }.get(selected_model),
         )
+    targets = {}
+    def select(proposed):
+        key = json.dumps(proposed.task_profile, sort_keys=True)
+        if key not in targets:
+            targets[key] = select_uncached(proposed)
+        return targets[key]
     def available(proposed):
         try:
             return bool(select(proposed))
         except (ConfigError, ValueError):
             return False
+    # Prepare the local candidate while Jev is in flight. Cache only successful
+    # selections for this immutable runtime snapshot; preserve ordinary errors
+    # at final selection and still permit a valid fused profile to be checked.
+    preparation_started = time.perf_counter()
+    available(baseline)
+    annotate(target_preparation_ms=(time.perf_counter() - preparation_started) * 1000)
     final = classify_with_signals(
         pre_routing_input=make_pre_routing_input(
             request=request, working_directory="", repository_present=False,
@@ -242,7 +266,7 @@ def route_turn(*, request: str, config: Mapping, registry: Sequence[ModelTarget]
             agent=agent, workflow=workflow, policy_name=policy_name,
         ), config=config, database=database, execution=decision.decision,
         baseline_override=baseline, can_select=available,
-        canonical_features=features, eligible=guard == "eligible",
+        canonical_features=features, eligible=guard == "eligible", speculative_run=(run,),
     )
     selection_started = time.perf_counter()
     target = select(final)
@@ -255,11 +279,16 @@ def route_turn(*, request: str, config: Mapping, registry: Sequence[ModelTarget]
         reasoning_effort=effort, plan_id=plan_id or str(uuid.uuid4()),
         direct=minimal_direct and decision.decision == "DIRECT", direct_fallback=direct_fallback,
     )
+    routing_elapsed_ms = (time.perf_counter() - started) * 1000
+    evidence = current_evidence()
     annotate(
+        local_routing_ms=max(0.0, routing_elapsed_ms - evidence.get("jev_wait_ms", 0.0)
+                             - evidence.get("fusion_ms", 0.0)),
         turn_id=plan.plan_id, plan_id=plan.plan_id, fast_guard_result=guard,
         feature_extraction_ms=features.extraction_ms, fast_guard_ms=guard_ms,
         target_selection_ms=(time.perf_counter() - selection_started) * 1000,
-        routing_total_ms=(time.perf_counter() - started) * 1000,
+        routing_total_ms=routing_elapsed_ms,
+        routing_critical_path_ms=routing_elapsed_ms,
         final_decision={"execution": decision.decision, "worker": decision.required_agent,
                         "provider": target.provider, "account": target.account, "model": target.model,
                         "reasoning_effort": effort},

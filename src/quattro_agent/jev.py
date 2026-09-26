@@ -1,6 +1,7 @@
 """TypeSafe System One contract. No execution policy or OmniRoute dependency."""
 from __future__ import annotations
 
+import http.client
 import json
 import math
 import re
@@ -143,12 +144,6 @@ def validate_response(body: Any) -> dict[str, Any]:
     return body
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        # A redirect must never forward the bearer to another origin.
-        return None
-
-
 class JevClient:
     """One catalog verification and one evaluation; no retries or alternate models.
 
@@ -160,9 +155,16 @@ class JevClient:
         self._key = key
         self.timings: dict[str, float] = {}
         self.timeout_seconds = timeout_seconds
-        self._opener = opener or urllib.request.build_opener(
-            urllib.request.ProxyHandler({}), _NoRedirect(),
+        self._opener = opener
+        # One worker owns one client. Reuse TLS between catalog and evaluation;
+        # no process-global pool, redirects, proxies or automatic POST retries.
+        self._connection = None if opener else http.client.HTTPSConnection(
+            "api.typesafe.ai", timeout=timeout_seconds,
         )
+
+    def close(self) -> None:
+        if self._connection is not None:
+            self._connection.close()
 
     def _request(self, path: str, payload: Mapping[str, Any] | None = None) -> Any:
         if not self._key:
@@ -176,7 +178,16 @@ class JevClient:
             method="GET" if data is None else "POST",
         )
         try:
-            with self._opener.open(request, timeout=self.timeout_seconds) as response:
+            if self._opener is not None:
+                response = self._opener.open(request, timeout=self.timeout_seconds)
+            else:
+                self._connection.request(request.get_method(), path, body=data, headers=dict(request.header_items()))
+                response = self._connection.getresponse()
+            with response:
+                if self._opener is None and response.status != 200:
+                    raise JevFailure({429: "rate_limited", 401: "authentication", 403: "authentication"}.get(
+                        response.status, "http_error",
+                    ))
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
         except urllib.error.HTTPError as error:
             status = error.code
@@ -189,7 +200,7 @@ class JevClient:
         except urllib.error.URLError as error:
             category = "timeout" if isinstance(error.reason, TimeoutError) else "connection"
             raise JevFailure(category) from None
-        except OSError:
+        except (OSError, http.client.HTTPException):
             raise JevFailure("connection") from None
         if len(raw) > MAX_RESPONSE_BYTES:
             raise JevFailure("response_too_large")
@@ -211,12 +222,14 @@ class JevClient:
             # Never silently substitute a different live identifier.
             raise JevFailure("model_unavailable")
         start = time.perf_counter()
+        self.timings["jev_request_started"] = start
         try:
             result = validate_response(self._request("/v1/systemone", {
                 "state": state, "model": MODEL, "questions": QUESTIONS,
             }))
         finally:
-            self.timings["jev_latency_ms"] = (time.perf_counter() - start) * 1000
+            self.timings["jev_request_finished"] = time.perf_counter()
+            self.timings["jev_latency_ms"] = (self.timings["jev_request_finished"] - start) * 1000
         # The authenticated catalog advertises aliases, while System One returns
         # a concrete semantic version (observed jev-latest -> jev-1.13.0).
         # Accept that narrow canonical form only after verifying our requested

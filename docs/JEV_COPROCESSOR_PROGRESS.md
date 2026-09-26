@@ -65,6 +65,26 @@ Validation of this increment: 724 full-suite tests, 5 skipped; compileall,
 Python hygiene, public artifact policy and diff checks pass. Tests explicitly
 set an empty environment override to prevent accidental use of local credentials.
 
+## Speculative scheduling and connection reuse increment
+
+Eligible Jev starts before runtime health/account preparation, with one attempt
+reused at fusion. `decisionWaitMs` separates the dispatch budget from the request
+timeout (now 1500 ms by default; explicit older values preserved). Expiry leaves
+local routing active and the request lifecycle-owned rather than recording a
+provider timeout. Timing separates evaluation RTT, actual wait, interval-based
+overlap, local routing, fusion, critical path and process/client startup.
+
+Balanced live transport experiments justified HTTP/1.1 connection reuse between
+catalog and evaluation inside the existing worker. No persistent session process
+has been introduced. Eighty final live evaluations completed without failure;
+RTT p50/p95 281.613/315.550 ms. Speculation alone produced zero measurable
+useful overlap, and full-wait eligible routing still exceeds 600 ms. Explicit
+25/100 ms wait experiments reduce routing latency but do not obtain timely Jev
+contributions; they are not promoted adaptive defaults. See
+[JEV_SPECULATION.md](JEV_SPECULATION.md) and checked-in aggregate evidence for
+exact measurements, limits and outstanding work. This is not feature completion
+or authorization to enable/deploy incomplete launcher behavior.
+
 ## Required remaining integration
 
 1. Connect one compact native-style agent/Jev selector, CLI overrides, global
