@@ -40,7 +40,7 @@ where = ["src"]
 exclude = ["quattro_desktop*"]
 
 [tool.setuptools.package-data]
-quattro_agent = ["data/*.json"]
+quattro_agent = ["data/*.json", "data/*.ts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

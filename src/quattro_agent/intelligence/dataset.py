@@ -123,6 +123,66 @@ def canonical_label_source(source: Any, *, excluded: bool = False) -> str:
     return "excluded"
 
 
+
+FRONTEND_FORCED_PROVENANCE = "frontend_forced_execution"
+
+
+def frontend_forced_execution(record: Mapping[str, Any]) -> bool:
+    """Legacy frontend task creation was not a per-turn routing decision.
+
+    A historical ``decision_applied`` flag alone is insufficient: those paths
+    created durable work before classification. New gated turns use a distinct
+    entrypoint, so this rule does not quarantine authoritative turn decisions.
+    """
+    return (
+        record.get("execution_provenance") == FRONTEND_FORCED_PROVENANCE
+        or (
+            record.get("source_kind") in {"durable_task", "historical_task"}
+            and record.get("entrypoint") in {"interactive", "resume"}
+        )
+    )
+
+
+def frontend_evidence_projection(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Quarantine forced execution evidence without changing its source record.
+
+    Independent blind human classification remains useful even when the observed
+    execution was forced. Outcome-derived, machine and exposed labels cannot
+    establish that the forced DELEGATE route was the right classification.
+    """
+    row = dict(record)
+    if not frontend_forced_execution(row):
+        return row
+    row["execution_provenance"] = FRONTEND_FORCED_PROVENANCE
+    row["production_evidence_eligible"] = False
+    row.setdefault("observed_production_decision", row.get("production_decision"))
+    row.setdefault("observed_decision_applied", row.get("decision_applied"))
+    row["production_decision"] = None
+    row["decision_applied"] = False
+    row["outcome_success"] = None
+    row["validation_status"] = None
+    row["failure_category"] = None
+    blind_gold = (
+        canonical_label_source(row.get("label_source")) == "human_gold"
+        and row.get("labeling_method") in {
+            "blind_human_review_v1", "blind_human_review_v2"
+        }
+        and bool(row.get("label_independent"))
+        and row.get("label") in {"DIRECT", "DELEGATE"}
+        and not row.get("label_conflict")
+        and row.get("review_outcome") != "EXCLUDE"
+    )
+    row["classification_evidence_eligible"] = blind_gold
+    if not blind_gold:
+        row.setdefault("reviewed_label", row.get("label"))
+        row.setdefault("reviewed_label_source", row.get("label_source"))
+        row["label"] = None
+        row["label_source"] = "excluded"
+        row["label_trust"] = "excluded"
+        row["label_independent"] = False
+        row["exclusion_reason"] = row.get("exclusion_reason") or FRONTEND_FORCED_PROVENANCE
+    return row
+
 def _request_tokens(value: Any) -> frozenset[str]:
     return frozenset(_NEAR_DUPLICATE_TOKEN.findall(str(value).lower())[:256])
 
@@ -439,6 +499,7 @@ def dataset_quality(
     thresholds: PromotionThresholds | None = None,
 ) -> dict[str, Any]:
     """Audit dataset eligibility, provenance, balance, and contamination."""
+    rows = [frontend_evidence_projection(row) for row in rows]
     policy = thresholds or DEFAULT_PROMOTION_THRESHOLDS
     policy_rows = [row for row in rows if not bool(row.get("holdout_sealed"))]
     labeled = [
@@ -832,6 +893,11 @@ def dataset_quality(
         "requirements": dict(requirements),
         "reasons": reasons,
         "totalGroupCount": len({str(row["group_fingerprint"]) for row in rows}),
+        "frontendForcedExecutionCount": sum(frontend_forced_execution(row) for row in rows),
+        "frontendForcedBlindGoldRetainedCount": sum(
+            frontend_forced_execution(row) and bool(row.get("classification_evidence_eligible"))
+            for row in rows
+        ),
         "verifiedLabelCount": len(labeled),
         "independenceProvenLabelCount": sum(
             bool(row.get("label_independent")) for row in labeled
@@ -1099,6 +1165,11 @@ def load_dataset(path: pathlib.Path) -> list[dict[str, Any]]:
         request = value.get("request_text")
         if not isinstance(request, str) or len(request) > 32_000:
             raise ValueError(f"dataset line {line_number} has invalid request text")
+        if frontend_forced_execution(value) and frontend_evidence_projection(value) != value:
+            raise ValueError(
+                f"dataset line {line_number} contains unquarantined frontend-forced "
+                "execution evidence; rebuild the immutable dataset from source evidence"
+            )
         rows.append(value)
     return rows
 
@@ -1566,6 +1637,7 @@ class DatasetBuilder:
                 "split": None,
                 "holdout_sealed": group in sealed_groups,
             })
+        prepared = [frontend_evidence_projection(row) for row in prepared]
         component_labels: dict[str, set[str]] = {}
         for row in prepared:
             if row.get("label") in {"DIRECT", "DELEGATE"}:
@@ -1586,6 +1658,7 @@ class DatasetBuilder:
             row["label_trust"] = "excluded"
             row["label_independent"] = False
             row["exclusion_reason"] = "conflicting_labels_in_connected_component"
+        prepared = [frontend_evidence_projection(row) for row in prepared]
         frozen_assignments: dict[str, str] = {}
         for row in prepared:
             group = str(row["component_fingerprint"])
@@ -1747,6 +1820,8 @@ class DatasetBuilder:
             "modelBalance": dict(sorted(Counter(
                 str(row.get("selected_model") or "unknown") for row in labeled
             ).items())),
+            "frontendForcedExecutionCount": quality["frontendForcedExecutionCount"],
+            "frontendForcedBlindGoldRetainedCount": quality["frontendForcedBlindGoldRetainedCount"],
             "productionDecisionBalance": dict(sorted(Counter(
                 str(row.get("production_decision") or "UNKNOWN") for row in rows
             ).items())),

@@ -13,6 +13,22 @@ class DelegationClassifierTests(unittest.TestCase):
             "requiredAgent": None,
         })
 
+    def test_dotted_api_questions_remain_direct(self):
+        for prompt in (
+            "Explain subprocess.run", "What does os.open do?",
+            "How does db.commit work?", "Explain pathlib.Path.open in Python",
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(classify_task_request(prompt).decision, "DIRECT")
+
+    def test_sentence_and_semicolon_execution_clauses_delegate(self):
+        for prompt in (
+            "Explain the issue. Run tests", "Explain the issue;run tests",
+            "Explain the issue; commit changes", "Explain the issue. Open a PR",
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(classify_task_request(prompt).decision, "DELEGATE")
+
     def test_repository_fix_delegates_to_codex(self):
         result = classify_task_request("Fix this React bug in my repo")
         self.assertEqual(result.decision, "DELEGATE")

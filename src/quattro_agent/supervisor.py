@@ -177,22 +177,31 @@ class ProcessSupervisor:
             # shebang interpreter, so /proc/<pid>/exe legitimately differs from
             # argv[0]. Capture the kernel-observed executable after spawn and
             # verify that stable identity for all later signalling.
-            try:
-                identity = read_process_identity(process.pid)
-            except ProcessIdentityError:
-                # Very short-lived commands can be reaped before /proc can be
-                # inspected (notably on slower CI runners). The process is
-                # already gone, so retain a non-signalable sentinel identity
-                # and let wait() record its exit normally. Never manufacture a
-                # live identity: cancellation/recovery must still fail closed.
-                if process.poll() is None:
-                    raise
-                identity = ProcessIdentity(
-                    pid=process.pid,
-                    start_ticks=-1,
-                    process_group=-1,
-                    expected_executable=executable,
-                )
+            for attempt in range(3):
+                try:
+                    identity = read_process_identity(process.pid)
+                    break
+                except ProcessIdentityError:
+                    # Linux can remove /proc/<pid>/exe just before waitpid can
+                    # report the exit. An immediate poll alone misses that
+                    # window. Briefly wait, or retry a still-live exec transition.
+                    if process.poll() is None:
+                        try:
+                            process.wait(timeout=0.02)
+                        except subprocess.TimeoutExpired:
+                            if attempt == 2:
+                                raise ProcessIdentityError(
+                                    "cannot establish child process identity"
+                                ) from None
+                            continue
+                    # Only a confirmed exit may use a non-signalable sentinel.
+                    identity = ProcessIdentity(
+                        pid=process.pid,
+                        start_ticks=-1,
+                        process_group=-1,
+                        expected_executable=executable,
+                    )
+                    break
             deadline_at = None
             if deadline_seconds is not None:
                 deadline_at = (
@@ -227,7 +236,17 @@ class ProcessSupervisor:
                 os.killpg(process.pid, signal.SIGKILL)
             except OSError:
                 pass
-            process.wait()
+            try:
+                process.wait()
+            finally:
+                # start() has not handed stream ownership to a collector yet.
+                # Releasing every pipe also covers buffered stdin BrokenPipe.
+                for stream in (process.stdin, process.stdout, process.stderr):
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
             current = self.store.get_run(run_id)
             if current["state"] in {RunState.STARTING.value, RunState.RUNNING.value}:
                 self.store.transition_run(run_id, RunState.INTERRUPTED, error_code="identity_failed")

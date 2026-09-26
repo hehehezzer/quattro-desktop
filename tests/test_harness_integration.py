@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from types import SimpleNamespace
 import io
 import os
 import pathlib
@@ -34,6 +36,7 @@ from quattro_agent.retrieval import RepositoryIndexer
 from quattro_agent.adaptive_routing import AdaptiveRoutingDecision, CapabilityNegotiation
 from quattro_agent.routing_intelligence import ModelSelection
 from quattro_agent import ExecutionTarget
+from quattro_agent.model_registry import ContextDecision, ExecutionPlan
 
 
 class StandardAdaptiveClient:
@@ -1176,6 +1179,125 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
                     agent="codex", project=self.project, prompt="invalid mode", mode="prompt",
                 )
         self.assertEqual(self.runtime.store.list_display_tasks(limit=100), [])
+
+    def _native_turn_plan(self):
+        target = ExecutionTarget(
+            mode="EXPLICIT", provider="codex", account="account-1",
+            model="gpt-5.6-terra", route="account-1/gpt-5.6-terra",
+            tier="STANDARD", reason="native turn selection", fallbacks=(),
+        )
+        return ExecutionPlan(
+            plan_id=str(uuid.uuid4()), task_category="repository_inspection",
+            task_complexity="moderate", target=target, reasoning_effort="medium",
+            context=ContextDecision("normal", 8000, 4000, 4000),
+            required_tools=("repository_read",), fallback_allowed=False,
+            fallback_targets=(),
+        )
+
+    def test_native_turn_plan_survives_task_persistence_and_dispatch(self):
+        plan = self._native_turn_plan()
+        task_id = self.runtime.create_task(
+            agent="codex", project=self.project, prompt="Inspect README.md",
+            mode="prompt", profile_name="audit-read-only", turn_execution_plan=plan,
+        )
+        task = self.runtime.store.get_task(task_id, include_private=True)
+        self.assertEqual(task["private_payload"]["executionPlan"], plan.to_dict())
+        run_id = self.runtime.store.create_run(task_id)
+        argv, _stdin, environment = self.runtime._agent_plan(
+            task, run_id, PolicyProfile.from_dict(task["policy"]),
+        )
+        self.assertIn(plan.target.route, argv)
+        self.assertIn('model_reasoning_effort="medium"', argv)
+        envelope = json.loads(environment["QUATTRO_ROUTING_ENVELOPE"])
+        self.assertEqual(envelope["plan_id"], plan.plan_id)
+        self.assertEqual(envelope["target"], plan.target.to_dict())
+        persisted = self.runtime.store.get_task(task_id, include_private=True)
+        self.assertEqual(persisted["private_payload"]["executionPlan"], plan.to_dict())
+
+    def test_native_turn_plan_with_mismatched_route_identity_fails_before_reservation(self):
+        plan = self._native_turn_plan()
+        mismatched = replace(plan, target=replace(plan.target, model="gpt-5.6-luna"))
+        with mock.patch.object(self.runtime.coordinator, "reserve") as reserve:
+            with self.assertRaisesRegex(ConfigError, "target does not match the approved registry/account"):
+                self.runtime.create_task(
+                    agent="codex", project=self.project, prompt="Inspect README.md",
+                    mode="prompt", profile_name="audit-read-only", turn_execution_plan=mismatched,
+                )
+        reserve.assert_not_called()
+        self.assertEqual(self.runtime.store.list_display_tasks(limit=100), [])
+
+    def test_native_turn_plan_skips_secondary_selection_and_unrelated_default(self):
+        plan = self._native_turn_plan()
+        with (
+            mock.patch("quattro_harness.select_execution_target",
+                       side_effect=AssertionError("turn must not select another target")) as select,
+            mock.patch("quattro_harness.build_execution_plan",
+                       side_effect=AssertionError("turn must not rebuild its plan")) as build,
+            mock.patch.object(self.runtime, "_configured_codex_model",
+                              return_value="unapproved-default/not-a-model"),
+        ):
+            task_id = self.runtime.create_task(
+                agent="codex", project=self.project, prompt="Inspect README.md",
+                mode="prompt", profile_name="audit-read-only", turn_execution_plan=plan,
+            )
+            task = self.runtime.store.get_task(task_id, include_private=True)
+            run_id = self.runtime.store.create_run(task_id)
+            argv, _stdin, _environment = self.runtime._agent_plan(
+                task, run_id, PolicyProfile.from_dict(task["policy"]),
+            )
+        select.assert_not_called()
+        build.assert_not_called()
+        self.assertEqual(task["private_payload"]["executionPlan"], plan.to_dict())
+        self.assertIn(plan.target.route, argv)
+
+    def test_pi_frontend_delegation_callback_runs_codex_with_original_plan(self):
+        from quattro_agent import native_session
+
+        plan = self._native_turn_plan()
+        turn = SimpleNamespace(plan=plan, prompt="Inspect README.md", task_id=None,
+                               frontend="pi", cancel_event=threading.Event())
+        gate = SimpleNamespace(cancel=lambda _turn: None,
+                               conversation_context=lambda _turn: "Earlier request: inspect the project documentation.")
+        transport = SimpleNamespace(url="http://127.0.0.1:9", token="synthetic-session-token",
+                                    close=lambda: None)
+        transport.start = lambda: transport
+        callback_answers = []
+        (self.root / "pi-native").mkdir()
+
+        class NativeFrontend:
+            def __init__(inner_self, command, **kwargs):
+                self.assertEqual(command[0], str(self.fake))
+                self.assertIn("-e", command)
+
+            def wait(inner_self, **kwargs):
+                callback_answers.append(gate.delegate(turn))
+                return 0
+
+            def poll(inner_self):
+                return 0
+
+        with (
+            mock.patch.object(native_session, "TurnGate", return_value=gate),
+            mock.patch.object(native_session, "TurnTransport", return_value=transport),
+            mock.patch.object(native_session, "subprocess", SimpleNamespace(
+                Popen=NativeFrontend, TimeoutExpired=subprocess.TimeoutExpired,
+            )),
+        ):
+            code = native_session.launch_routed_native(
+                agent="pi", binary=str(self.fake), command=[str(self.fake)],
+                env={"PI_CODING_AGENT_DIR": str(self.root / "pi-native")},
+                config={}, directory=self.project, session_id="synthetic-pi-session",
+                account="account-1", state_root=self.state,
+                runtime_factory=lambda: self.runtime, profile_name="audit-read-only",
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(callback_answers), 1)
+        task = self.runtime.store.get_task(turn.task_id, include_private=True)
+        self.assertEqual(task["agent"], "codex")
+        self.assertEqual(task["state"], "succeeded")
+        self.assertEqual(task["private_payload"]["executionPlan"], plan.to_dict())
+        self.assertEqual(task["private_payload"]["interactiveConversationContext"],
+                         "Earlier request: inspect the project documentation.")
 
     def test_task_routing_metadata_and_codex_effort_are_display_safe(self):
         task_id = self.runtime.create_task(

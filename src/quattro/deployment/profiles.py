@@ -21,7 +21,8 @@ CORE_DEPLOYMENT_MAPPINGS = {
             (f"src/quattro_agent/{name}", f".local/bin/quattro_agent/{name}")
         for name in (
             "__init__.py", "__main__.py", "adapters.py", "adaptive_routing.py",
-            "benchmark.py", "cli.py", "interactive.py",
+            "benchmark.py", "cli.py", "interactive.py", "codex_turn_bridge.py",
+            "native_session.py", "turn_gate.py", "turn_transport.py",
             "collaboration.py", "config.py", "containment.py", "delegation.py", "errors.py",
             "mandatory_context.py", "model_registry.py", "models.py", "omniroute.py", "paths.py", "policy.py",
             "privacy.py", "recovery.py", "retrieval.py", "routing.py",
@@ -49,6 +50,10 @@ CORE_DEPLOYMENT_MAPPINGS = {
     "core-model-policy": (
         "src/quattro_agent/data/model-policy.json",
         ".local/bin/quattro_agent/data/model-policy.json",
+    ),
+    "core-pi-turn-gate": (
+        "src/quattro_agent/data/pi-turn-gate.ts",
+        ".local/bin/quattro_agent/data/pi-turn-gate.ts",
     ),
     **{
         f"namespace-{relative.replace('/', '-').removesuffix('.py')}":
