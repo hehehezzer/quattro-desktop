@@ -191,26 +191,21 @@ class LauncherParserTests(unittest.TestCase):
         self.assertEqual(agent.SCRIPT_PATH.name, "quattro-agent")
         self.assertTrue(agent.SCRIPT_PATH.parent.name in {"src", "bin"})
 
-    def test_bare_command_has_implicit_launch_arguments(self):
+    def test_bare_command_displays_help_without_initializing_runtime(self):
         args = agent.build_parser().parse_args([])
         self.assertIsNone(args.command)
-        self.assertIsNone(args.agent)
-        self.assertIsNone(args.directory)
-
-    def test_bare_command_launches_the_configured_default_agent(self):
         with (
             mock.patch.object(agent.sys, "argv", ["quattro-agent"]),
-            mock.patch.object(agent, "ensure_state_dirs"),
-            mock.patch.object(agent, "load_config", return_value={"defaultAgent": "codex"}),
-            mock.patch.object(agent, "launch_terminal", return_value="task-123") as launch,
-            mock.patch("builtins.print") as output,
+            mock.patch.object(agent, "ensure_state_dirs") as state,
+            mock.patch.object(agent, "load_config") as config,
+            mock.patch.object(agent, "launch_terminal") as launch,
+            mock.patch.object(agent.argparse.ArgumentParser, "print_help") as help_output,
         ):
             self.assertEqual(agent.main(), 0)
-
-        launch.assert_called_once_with(
-            "codex", None, profile_name=None, confirm_full_access=False,
-        )
-        output.assert_called_once_with("task-123")
+        help_output.assert_called_once_with()
+        state.assert_not_called()
+        config.assert_not_called()
+        launch.assert_not_called()
 
     def test_explicit_launch_arguments_still_parse(self):
         args = agent.build_parser().parse_args(["launch", "pi", "/tmp"])
