@@ -207,11 +207,57 @@ class LauncherParserTests(unittest.TestCase):
             profile_name=None, confirm_full_access=False,
         )
 
-    def test_explicit_launch_arguments_still_parse(self):
+    def test_launch_without_agent_uses_chooser_before_session_creation(self):
+        with (
+            mock.patch.object(agent.sys, "argv", ["quattro-agent", "launch"]),
+            mock.patch.object(agent, "ensure_state_dirs"),
+            mock.patch.object(agent, "load_config", return_value={"defaultAgent": "pi"}),
+            mock.patch.object(agent, "safe_directory", return_value=pathlib.Path("/tmp")),
+            mock.patch.object(agent, "harness") as runtime,
+            mock.patch("quattro_agent.interactive.choose_agent", return_value="codex") as chooser,
+            mock.patch("quattro_agent.interactive.run_interactive", return_value=0) as shell,
+        ):
+            self.assertEqual(agent.main(), 0)
+        chooser.assert_called_once()
+        shell.assert_called_once_with(
+            runtime(), agent="codex", workspace=pathlib.Path("/tmp"),
+            profile_name=None, confirm_full_access=False,
+        )
+
+    def test_chooser_cancellation_creates_no_session(self):
+        with (
+            mock.patch.object(agent.sys, "argv", ["quattro-agent"]),
+            mock.patch.object(agent, "ensure_state_dirs"),
+            mock.patch.object(agent, "load_config", return_value={"defaultAgent": "codex"}),
+            mock.patch.object(agent, "safe_directory", return_value=pathlib.Path("/tmp")),
+            mock.patch.object(agent, "harness") as runtime,
+            mock.patch("quattro_agent.interactive.choose_agent", return_value=None),
+            mock.patch("quattro_agent.interactive.run_interactive") as shell,
+        ):
+            self.assertEqual(agent.main(), 0)
+        runtime.assert_not_called()
+        shell.assert_not_called()
+
+    def test_explicit_launch_arguments_bypass_chooser(self):
         args = agent.build_parser().parse_args(["launch", "pi", "/tmp"])
         self.assertEqual(args.command, "launch")
         self.assertEqual(args.agent, "pi")
         self.assertEqual(args.directory, "/tmp")
+        with (
+            mock.patch.object(agent.sys, "argv", ["quattro-agent", "launch", "pi", "/tmp"]),
+            mock.patch.object(agent, "ensure_state_dirs"),
+            mock.patch.object(agent, "load_config", return_value={"defaultAgent": "codex"}),
+            mock.patch.object(agent, "safe_directory", return_value=pathlib.Path("/tmp")),
+            mock.patch.object(agent, "harness") as runtime,
+            mock.patch("quattro_agent.interactive.choose_agent") as chooser,
+            mock.patch("quattro_agent.interactive.run_interactive", return_value=0) as shell,
+        ):
+            self.assertEqual(agent.main(), 0)
+        chooser.assert_not_called()
+        shell.assert_called_once_with(
+            runtime(), agent="pi", workspace=pathlib.Path("/tmp"),
+            profile_name=None, confirm_full_access=False,
+        )
 
     def test_terminal_launch_uses_foot_working_directory_option(self):
         directory = pathlib.Path("/tmp")

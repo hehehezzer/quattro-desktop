@@ -174,6 +174,10 @@ user-configurable.
 ## Common commands
 
 ```text
+quattro-agent                          # choose Codex or Pi on a terminal
+quattro-agent launch                   # same interactive chooser
+quattro-agent launch codex [PATH]      # launch Codex directly
+quattro-agent launch pi [PATH]         # launch bounded Pi directly
 quattro-agent doctor [--json]
 quattro-agent prompt [codex|pi] "Explain this repository"
 quattro-agent submit --agent auto --directory PATH --prompt "Implement ..."

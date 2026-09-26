@@ -30,7 +30,7 @@ from .privacy import decode_json, display_json, display_text, private_json, reda
 # The durability tables are an additive schema extension intentionally kept
 # readable by the deployed schema-v2 runtime. Existing v2 binaries ignore the
 # new tables instead of refusing to open the shared database during rollout.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SUPPORTED_AGENTS = frozenset({"codex", "pi"})
 
 
@@ -251,6 +251,7 @@ class TaskStore:
                     current_task_id TEXT REFERENCES tasks(task_id) ON DELETE SET NULL,
                     repository_path TEXT NOT NULL,
                     working_directory TEXT NOT NULL,
+                    agent TEXT NOT NULL DEFAULT 'codex' CHECK(agent IN ('codex','pi')),
                     originating_account_id TEXT,
                     last_account_id TEXT,
                     provider_id TEXT NOT NULL,
@@ -363,6 +364,33 @@ class TaskStore:
                     )
                     connection.commit()
                     version = 2
+                except BaseException:
+                    connection.rollback()
+                    raise
+            if version == 2:
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    columns = {
+                        str(item[1])
+                        for item in connection.execute("PRAGMA table_info(logical_sessions)")
+                    }
+                    if "agent" not in columns:
+                        connection.execute(
+                            "ALTER TABLE logical_sessions ADD COLUMN agent TEXT NOT NULL DEFAULT 'codex'"
+                        )
+                    connection.execute(
+                        """UPDATE logical_sessions
+                           SET agent = COALESCE(
+                               (SELECT agent FROM tasks
+                                WHERE tasks.task_id = logical_sessions.initial_task_id),
+                               'codex'
+                           )"""
+                    )
+                    connection.execute(
+                        "UPDATE schema_meta SET value = '3' WHERE key = 'schema_version'"
+                    )
+                    connection.commit()
+                    version = 3
                 except BaseException:
                     connection.rollback()
                     raise
@@ -1058,6 +1086,7 @@ class TaskStore:
         task_id: str,
         repository_path: str | os.PathLike[str],
         working_directory: str | os.PathLike[str],
+        agent: str,
         account_id: str | None,
         provider_id: str,
         initial_checkpoint: Mapping[str, Any],
@@ -1072,18 +1101,20 @@ class TaskStore:
         repository = str(Path(repository_path).expanduser().resolve(strict=False))
         workdir = str(Path(working_directory).expanduser().resolve(strict=False))
         provider = display_text(provider_id, field="provider_id", maximum=100)
+        if agent not in {"codex", "pi"}:
+            raise ValueError(f"unsupported session agent: {agent}")
         with self._transaction(immediate=True) as connection:
             self._task_row(connection, task_id)
             connection.execute(
                 """INSERT INTO logical_sessions(
                        quattro_session_id, initial_task_id, current_task_id,
-                       repository_path, working_directory, originating_account_id,
+                       repository_path, working_directory, agent, originating_account_id,
                        last_account_id, provider_id, current_codex_session_id,
                        previous_codex_session_ids_json, current_checkpoint_id,
                        session_health, recovery_state, created_at, updated_at
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    identifier, task_id, task_id, repository, workdir, account_id,
+                    identifier, task_id, task_id, repository, workdir, agent, account_id,
                     account_id, provider, native_codex_session_id, "[]", None,
                     "healthy", "active", now, now,
                 ),

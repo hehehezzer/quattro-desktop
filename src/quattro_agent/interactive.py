@@ -15,10 +15,50 @@ from quattro_agent.models import TaskState
 
 
 MAX_CONTEXT = 8_000
+SUPPORTED_AGENTS = ("codex", "pi")
 
 
-def final_answer(raw: str) -> str:
-    """Extract only the final Codex message from bounded JSONL agent output."""
+def choose_agent(
+    default_agent: str, *, input_stream: TextIO = sys.stdin, output: TextIO = sys.stdout,
+) -> str | None:
+    """Choose an agent before any durable session is created.
+
+    Non-terminal callers receive the configured default without reading stdin.
+    """
+    if default_agent not in SUPPORTED_AGENTS:
+        raise ValueError(f"unsupported configured default agent: {default_agent}")
+    if not input_stream.isatty() or not output.isatty():
+        return default_agent
+    labels = {"codex": "Codex", "pi": "Pi"}
+    while True:
+        print("Choose agent:\n", file=output)
+        for index, candidate in enumerate(SUPPORTED_AGENTS, start=1):
+            suffix = " (default)" if candidate == default_agent else ""
+            print(f"  {index}. {labels[candidate]}{suffix}", file=output)
+        try:
+            print("\nSelect [1-2, Enter=default]: ", end="", file=output, flush=True)
+            value = input_stream.readline()
+        except KeyboardInterrupt:
+            print(file=output, flush=True)
+            return None
+        if not value:
+            return None
+        selection = value.strip().lower()
+        if not selection:
+            return default_agent
+        if selection in {"q", "quit", "exit"}:
+            return None
+        if selection in {"1", "codex"}:
+            return "codex"
+        if selection in {"2", "pi"}:
+            return "pi"
+        print("Invalid selection. Choose 1 or 2.\n", file=output, flush=True)
+
+
+def final_answer(raw: str, agent: str = "codex") -> str:
+    """Extract the final message from a bounded Codex or Pi output artifact."""
+    if agent == "pi":
+        return raw.strip()
     answer = ""
     for line in raw.splitlines():
         try:
@@ -44,9 +84,13 @@ def run_interactive(
     account_id: str | None = None,
 ) -> int:
     """Keep one logical session while creating a fresh locked task per turn."""
-    if agent != "codex":
-        raise ValueError("locked interactive sessions currently require Codex")
+    if agent not in SUPPORTED_AGENTS:
+        raise ValueError(f"unsupported agent: {agent}")
     workspace = workspace.expanduser().resolve(strict=True)
+    if agent == "pi" and profile_name is None:
+        # Pi has no enforceable native sandbox. Keep its established bounded,
+        # read-only posture unless the caller explicitly selects another policy.
+        profile_name = "audit-read-only"
     if session_id is None:
         # Persist an intent/checkpoint before accepting input. This task is a
         # session anchor only and never dispatches a request or launches Foot.
@@ -69,9 +113,12 @@ def run_interactive(
     else:
         session = runtime.store.get_logical_session(session_id)
         workspace = pathlib.Path(session["working_directory"]).resolve(strict=True)
+        session_agent = str(session.get("agent") or "codex")
+        if agent != session_agent:
+            raise ValueError(f"session uses {session_agent.title()}, not {agent.title()}")
         account_id = account_id or session.get("last_account_id")
 
-    print(f"Quattro · workspace: {workspace}\nsession: {session_id}\nType exit or quit to leave.", file=output, flush=True)
+    print(f"agent: {agent.title()}\nsession: {session_id}\nType exit or quit to leave.", file=output, flush=True)
     history: list[tuple[str, str]] = []
     if session_id and session.get("current_task_id") != session.get("initial_task_id"):
         checkpoint = runtime.store.current_checkpoint(session_id, include_content=True)
@@ -116,7 +163,7 @@ def run_interactive(
             artifacts = runtime.store.artifacts_for_task(task_id)
             agent_outputs = [item for item in artifacts if item.get("kind") == "agent-output"]
             raw = pathlib.Path(agent_outputs[-1]["path"]).read_text(encoding="utf-8") if agent_outputs else ""
-            answer = final_answer(raw)
+            answer = final_answer(raw, agent)
             verified = code == 0 and task["state"] == TaskState.SUCCEEDED.value
             validation_failed = task.get("terminal_code") == "validation_failed"
             if answer and (verified or validation_failed):

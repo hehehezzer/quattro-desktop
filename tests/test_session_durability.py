@@ -180,6 +180,17 @@ class SessionDurabilityTests(unittest.TestCase):
             if row["quattroSessionId"] == logical
         )
         self.assertEqual(projected["title"], "Codex interactive · project")
+        self.assertEqual(projected["agent"], "codex")
+
+    def test_session_agent_is_authoritative_for_continuation(self):
+        _task, logical = self.create(prompt="")
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "legacy"}):
+            with self.assertRaisesRegex(ValueError, "logical session uses Codex"):
+                self.runtime.create_task(
+                    agent="pi", project=self.project, prompt="continue",
+                    mode="prompt", profile_name="audit-read-only",
+                    logical_session_id=logical,
+                )
 
     def test_codex_native_thread_name_supersedes_generic_launcher_title(self):
         _task, logical = self.create(prompt="")

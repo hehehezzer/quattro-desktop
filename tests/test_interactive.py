@@ -7,8 +7,13 @@ import tempfile
 import unittest
 from unittest import mock
 
-from quattro_agent.interactive import final_answer, run_interactive
+from quattro_agent.interactive import choose_agent, final_answer, run_interactive
 from quattro_agent.models import TaskState
+
+
+class TtyStringIO(io.StringIO):
+    def isatty(self):
+        return True
 
 
 class InteractiveTests(unittest.TestCase):
@@ -54,11 +59,58 @@ class InteractiveTests(unittest.TestCase):
             runtime.coordinator.finish.assert_called_once()
             self.assertIn("Session saved.", output.getvalue())
 
-    def test_rejects_unsupported_pi_before_creating_session(self):
-        runtime = mock.Mock()
-        with self.assertRaisesRegex(ValueError, "require Codex"):
-            run_interactive(runtime, agent="pi", workspace=pathlib.Path.cwd())
-        runtime.create_task.assert_not_called()
+    def test_agent_chooser_default_numeric_invalid_and_cancel(self):
+        for value, expected in (("\n", "pi"), ("1\n", "codex"), ("2\n", "pi")):
+            output = TtyStringIO()
+            self.assertEqual(
+                choose_agent("pi", input_stream=TtyStringIO(value), output=output), expected,
+            )
+            self.assertIn("Pi (default)", output.getvalue())
+        output = TtyStringIO()
+        self.assertEqual(
+            choose_agent("codex", input_stream=TtyStringIO("5\n2\n"), output=output), "pi",
+        )
+        self.assertIn("Invalid selection. Choose 1 or 2.", output.getvalue())
+        for value in ("q\n", "quit\n", "exit\n", ""):
+            self.assertIsNone(
+                choose_agent("codex", input_stream=TtyStringIO(value), output=TtyStringIO())
+            )
+
+    def test_non_tty_uses_configured_default_without_reading(self):
+        stream = mock.Mock()
+        stream.isatty.return_value = False
+        self.assertEqual(choose_agent("pi", input_stream=stream, output=io.StringIO()), "pi")
+        stream.readline.assert_not_called()
+
+    def test_pi_session_uses_bounded_read_only_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            artifact = root / "pi-output.txt"
+            artifact.write_text("Pi answer\n", encoding="utf-8")
+            runtime = mock.Mock()
+            runtime.create_task.side_effect = ["anchor", "turn"]
+            runtime.run_task.return_value = 0
+            runtime.store.logical_session_for_task.return_value = {
+                "quattro_session_id": "qsession_pi", "agent": "pi",
+            }
+            runtime.store.get_task.side_effect = lambda task_id, **_kwargs: (
+                {"private_payload": {}} if task_id == "anchor"
+                else {"state": TaskState.SUCCEEDED.value}
+            )
+            runtime.store.artifacts_for_task.return_value = [
+                {"path": str(artifact), "kind": "agent-output"}
+            ]
+            output = io.StringIO()
+            self.assertEqual(run_interactive(
+                runtime, agent="pi", workspace=root,
+                input_stream=io.StringIO("hello\nexit\n"), output=output,
+            ), 0)
+            self.assertTrue(all(
+                call.kwargs["profile_name"] == "audit-read-only"
+                for call in runtime.create_task.call_args_list
+            ))
+            self.assertIn("agent: Pi", output.getvalue())
+            self.assertIn("Pi answer", output.getvalue())
 
     def test_interrupt_cancels_current_task_and_preserves_session(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -2826,11 +2826,24 @@ def routing_command(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="quattro-agent", description="Quattro AI control plane")
+    parser = argparse.ArgumentParser(
+        prog="quattro-agent",
+        description="Quattro AI control plane",
+        epilog=(
+            "quattro-agent and quattro-agent launch start a new interactive session "
+            "and ask for Codex or Pi when attached to a terminal. Use "
+            "'quattro-agent launch codex' or 'quattro-agent launch pi' to choose directly."
+        ),
+    )
     parser.add_argument("--version", action="version", version=f"quattro-agent {VERSION}")
     sub = parser.add_subparsers(dest="command")
-    launch = sub.add_parser("launch")
-    launch.add_argument("agent", nargs="?", choices=("codex", "pi"))
+    launch = sub.add_parser(
+        "launch", help="start an interactive session; asks for an agent when omitted"
+    )
+    launch.add_argument(
+        "agent", nargs="?", choices=("codex", "pi"),
+        help="agent to launch directly (codex or pi)",
+    )
     launch.add_argument("directory", nargs="?")
     launch.add_argument("--policy")
     launch.add_argument("--confirm-full-access", action="store_true")
@@ -3313,11 +3326,19 @@ def main() -> int:
     config = load_config()
     command = args.command
     if command == "launch":
-        from quattro_agent.interactive import run_interactive
-        agent = args.agent or str(config["defaultAgent"])
+        from quattro_agent.interactive import choose_agent, run_interactive
+        workspace = safe_directory(args.directory)
+        print(f"Quattro\nworkspace: {workspace}\n", flush=True)
+        agent = args.agent
+        if agent is None:
+            agent = choose_agent(
+                str(config["defaultAgent"]), input_stream=sys.stdin, output=sys.stdout,
+            )
+            if agent is None:
+                return 0
         try:
             return run_interactive(
-                harness(), agent=agent, workspace=safe_directory(args.directory),
+                harness(), agent=agent, workspace=workspace,
                 profile_name=args.policy, confirm_full_access=args.confirm_full_access,
             )
         except (ConfigError, LeaseConflict, OSError, ValueError, RuntimeError) as error:
@@ -3412,8 +3433,10 @@ def main() -> int:
         if args.prompt is None:
             from quattro_agent.interactive import run_interactive
             try:
+                logical = harness().store.get_logical_session(logical_id)
                 return run_interactive(
-                    harness(), agent="codex", workspace=pathlib.Path.cwd(), session_id=logical_id,
+                    harness(), agent=str(logical.get("agent") or "codex"),
+                    workspace=pathlib.Path.cwd(), session_id=logical_id,
                     profile_name=args.policy, confirm_full_access=args.confirm_full_access,
                     account_id=args.account,
                 )

@@ -155,6 +155,30 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             route=route, tier="FAST", reason="test", fallbacks=(),
         )
 
+    def test_conversational_turn_uses_process_and_artifact_validation_only(self):
+        with mock.patch.dict(os.environ, {"OMNIROUTE_ROUTING_MODE": "legacy"}):
+            anchor = self.runtime.create_task(
+                agent="codex", project=self.project, prompt="", mode="prompt",
+                profile_name="audit-read-only",
+            )
+            logical = self.runtime.store.logical_session_for_task(anchor)
+            assert logical is not None
+            task_id = self.runtime.create_task(
+                agent="codex", project=self.project, prompt="zxc", mode="prompt",
+                profile_name="audit-read-only",
+                logical_session_id=logical["quattro_session_id"],
+            )
+            with mock.patch.object(self.runtime, "_command_validation") as command_validation:
+                self.assertEqual(self.runtime.run_task(task_id), 0)
+        command_validation.assert_not_called()
+        task = self.runtime.store.get_task(task_id)
+        self.assertEqual(task["state"], TaskState.SUCCEEDED.value)
+        event = next(
+            row for row in reversed(self.runtime.store.display_events(task_id))
+            if row["type"] == "validation.completed"
+        )
+        self.assertEqual(event["payload"]["status"], "Passed")
+
     def test_account_authentication_failure_is_bounded_and_excludes_exact_route(self):
         target = self._health_target()
         self.runtime._record_account_health_failure(target, "AUTHENTICATION_FAILED")
