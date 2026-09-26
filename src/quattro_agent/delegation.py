@@ -169,12 +169,15 @@ Codex can provide materially better context. If the policy declines delegation, 
 """
 
 
-def ensure_pi_worker_home(path: Path, *, model: str = PI_WORKER_MODEL) -> Path:
+def ensure_pi_worker_home(
+    path: Path, *, model: str = PI_WORKER_MODEL, locked_routing: bool = True,
+) -> Path:
     """Create a credential-free Pi runtime pinned to one Quattro-selected route.
 
-    Locked Pi runs pass the routing envelope through a request header. ``auto``
-    remains available only for legacy callers that do not carry an
-    ExecutionPlan; authoritative runs always provide an exact route.
+    Locked Pi runs pass the routing envelope through a request header. Native
+    persistent sessions omit that header because they cannot refresh a locked
+    ExecutionPlan per turn; they retain the configured provider/model only.
+    ``auto`` remains available only for callers without an ExecutionPlan.
     """
     path = path.expanduser().resolve(strict=False)
     if path.exists() and path.is_symlink():
@@ -186,7 +189,9 @@ def ensure_pi_worker_home(path: Path, *, model: str = PI_WORKER_MODEL) -> Path:
             PI_WORKER_PROVIDER: {
                 "baseUrl": PI_WORKER_BASE_URL,
                 "api": "openai-responses",
-                "headers": {"X-Quattro-Routing": "$QUATTRO_ROUTING_ENVELOPE"},
+                **({
+                    "headers": {"X-Quattro-Routing": "$QUATTRO_ROUTING_ENVELOPE"},
+                } if locked_routing else {}),
                 # Pi requires a non-empty value for keyless local providers. This
                 # sentinel is deliberately not a credential and must not be replaced
                 # with a real secret; the local gateway ignores it.

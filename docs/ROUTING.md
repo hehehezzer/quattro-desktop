@@ -58,8 +58,18 @@ Only routes present in that validated Quattro policy can enter authoritative
 passthrough. Catalog-only provider aliases without a Quattro account contract
 fail closed rather than handing target selection back to OmniRoute; callers
 that still need those routes must opt into `OMNIROUTE_ROUTING_MODE=legacy`.
-The older persistent `_session` launcher fails closed in passthrough. The
-standalone PR-review worker is migrated: it persists a locked plan, carries the
+The older managed `_session` worker still fails closed in passthrough. Normal
+`quattro-agent` / `launch` is deliberately a different native-persistent path:
+it execs Codex with the selected account's validated OmniRoute provider/model
+configuration, or Pi with a credential-free OmniRoute `auto` configuration,
+but does not claim an ExecutionPlan or receipt for later native turns. Neither
+native CLI currently exposes a launcher hook
+that can lock and revalidate every persistent turn. Exact per-request locking
+therefore remains limited to managed one-shot task paths. This native handoff
+does not set legacy mode; if the saved model is `auto`, OmniRoute performs its
+configured auto selection, while a concrete saved route remains concrete.
+
+The standalone PR-review worker is migrated: it persists a locked plan, carries the
 same exact envelope through the supported header transport, holds target-scoped
 capacity, and requires a matching receipt before parsing or publishing a
 review.

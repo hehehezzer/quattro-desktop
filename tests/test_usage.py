@@ -174,15 +174,32 @@ class UsageRefreshTests(unittest.TestCase):
 
 
 class CodexPermissionTests(unittest.TestCase):
-    def test_full_access_requires_explicit_config(self):
-        self.assertEqual(agent.codex_permission_args({}), ["-a", "on-request"])
+    def test_native_policy_translation_preserves_sandbox(self):
         self.assertEqual(
-            agent.codex_permission_args({"defaultPolicyProfile": "full-access-explicit"}),
+            agent.codex_permission_args({}),
+            ["-a", "on-request", "-s", "workspace-write"],
+        )
+        self.assertEqual(
+            agent.codex_permission_args({}, "audit-read-only"),
+            ["-a", "on-request", "-s", "read-only"],
+        )
+        with self.assertRaises(SystemExit):
+            agent.codex_permission_args(
+                {"defaultPolicyProfile": "full-access-explicit"},
+            )
+        self.assertEqual(
+            agent.codex_permission_args(
+                {"defaultPolicyProfile": "full-access-explicit"},
+                confirm_full_access=True,
+            ),
             ["--dangerously-bypass-approvals-and-sandbox"],
         )
 
     def test_full_access_is_boolean_only(self):
-        self.assertEqual(agent.codex_permission_args({"codexFullAccess": True}), ["-a", "on-request"])
+        self.assertEqual(
+            agent.codex_permission_args({"codexFullAccess": True}),
+            ["-a", "on-request", "-s", "workspace-write"],
+        )
 
 
 
@@ -198,12 +215,11 @@ class LauncherParserTests(unittest.TestCase):
             mock.patch.object(agent.sys, "argv", ["quattro-agent"]),
             mock.patch.object(agent, "ensure_state_dirs"),
             mock.patch.object(agent, "load_config", return_value={"defaultAgent": "codex"}),
-            mock.patch.object(agent, "harness") as runtime,
-            mock.patch("quattro_agent.interactive.run_interactive", return_value=0) as shell,
+            mock.patch.object(agent, "native_interactive_handoff") as handoff,
         ):
             self.assertEqual(agent.main(), 0)
-        shell.assert_called_once_with(
-            runtime(), agent="codex", workspace=agent.safe_directory(None),
+        handoff.assert_called_once_with(
+            "codex", agent.safe_directory(None),
             profile_name=None, confirm_full_access=False,
         )
 
@@ -213,14 +229,13 @@ class LauncherParserTests(unittest.TestCase):
             mock.patch.object(agent, "ensure_state_dirs"),
             mock.patch.object(agent, "load_config", return_value={"defaultAgent": "pi"}),
             mock.patch.object(agent, "safe_directory", return_value=pathlib.Path("/tmp")),
-            mock.patch.object(agent, "harness") as runtime,
             mock.patch("quattro_agent.interactive.choose_agent", return_value="codex") as chooser,
-            mock.patch("quattro_agent.interactive.run_interactive", return_value=0) as shell,
+            mock.patch.object(agent, "native_interactive_handoff") as handoff,
         ):
             self.assertEqual(agent.main(), 0)
         chooser.assert_called_once()
-        shell.assert_called_once_with(
-            runtime(), agent="codex", workspace=pathlib.Path("/tmp"),
+        handoff.assert_called_once_with(
+            "codex", pathlib.Path("/tmp"),
             profile_name=None, confirm_full_access=False,
         )
 
@@ -230,13 +245,11 @@ class LauncherParserTests(unittest.TestCase):
             mock.patch.object(agent, "ensure_state_dirs"),
             mock.patch.object(agent, "load_config", return_value={"defaultAgent": "codex"}),
             mock.patch.object(agent, "safe_directory", return_value=pathlib.Path("/tmp")),
-            mock.patch.object(agent, "harness") as runtime,
             mock.patch("quattro_agent.interactive.choose_agent", return_value=None),
-            mock.patch("quattro_agent.interactive.run_interactive") as shell,
+            mock.patch.object(agent, "native_interactive_handoff") as handoff,
         ):
             self.assertEqual(agent.main(), 0)
-        runtime.assert_not_called()
-        shell.assert_not_called()
+        handoff.assert_not_called()
 
     def test_explicit_launch_arguments_bypass_chooser(self):
         args = agent.build_parser().parse_args(["launch", "pi", "/tmp"])
@@ -248,14 +261,13 @@ class LauncherParserTests(unittest.TestCase):
             mock.patch.object(agent, "ensure_state_dirs"),
             mock.patch.object(agent, "load_config", return_value={"defaultAgent": "codex"}),
             mock.patch.object(agent, "safe_directory", return_value=pathlib.Path("/tmp")),
-            mock.patch.object(agent, "harness") as runtime,
             mock.patch("quattro_agent.interactive.choose_agent") as chooser,
-            mock.patch("quattro_agent.interactive.run_interactive", return_value=0) as shell,
+            mock.patch.object(agent, "native_interactive_handoff") as handoff,
         ):
             self.assertEqual(agent.main(), 0)
         chooser.assert_not_called()
-        shell.assert_called_once_with(
-            runtime(), agent="pi", workspace=pathlib.Path("/tmp"),
+        handoff.assert_called_once_with(
+            "pi", pathlib.Path("/tmp"),
             profile_name=None, confirm_full_access=False,
         )
 
@@ -277,7 +289,114 @@ class LauncherParserTests(unittest.TestCase):
         )
 
 
+class NativeHandoffTests(unittest.TestCase):
+    def setUp(self):
+        self.config = {
+            "defaultCodexAccount": "account-2",
+            "defaultPolicyProfile": "workspace-write",
+            "memory": {"enabled": False, "enforceOnLaunch": False},
+            "accounts": [],
+        }
+
+    def common(self, root: pathlib.Path):
+        runtime = root / "runtime.json"
+        return (
+            mock.patch.object(agent, "load_config", return_value=self.config),
+            mock.patch.object(agent, "memory_settings", return_value=(False, root / "memory", False)),
+            mock.patch.object(agent, "project_memory_path", return_value=root / "projects"),
+            mock.patch.object(agent, "build_mandatory_context", return_value=mock.Mock(text="policy")),
+            mock.patch.object(agent, "write_runtime", return_value=runtime),
+            mock.patch.object(agent, "update_recent"),
+        )
+
+    def test_codex_exec_handoff_preserves_terminal_workspace_account_and_policy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            codex_home = root / "codex-home"
+            patches = self.common(root)
+            with patches[0], patches[1], patches[2], patches[3], patches[4] as write_runtime, patches[5], \
+                    mock.patch.object(agent, "require", return_value="/native/codex"), \
+                    mock.patch.object(agent, "tool_environment", return_value={"TERM": "xterm"}), \
+                    mock.patch.object(agent, "prepare_codex_launch", return_value=codex_home) as prepare, \
+                    mock.patch.object(agent.os, "chdir") as chdir, \
+                    mock.patch.object(agent.os, "execvpe", side_effect=SystemExit) as execute:
+                with self.assertRaises(SystemExit):
+                    agent.native_interactive_handoff("codex", root)
+            prepare.assert_called_once_with(self.config, "account-2")
+            executable, argv, env = execute.call_args.args
+            chdir.assert_called_once_with(root)
+            self.assertEqual(executable, "/native/codex")
+            self.assertEqual(argv[0], "/native/codex")
+            self.assertEqual(argv[argv.index("-C") + 1], str(root))
+            self.assertIn("workspace-write", argv)
+            self.assertEqual(env["CODEX_HOME"], str(codex_home))
+            self.assertEqual(env["TERM"], "xterm")
+            self.assertTrue(env["QUATTRO_SESSION_ID"].startswith("qsession_"))
+            self.assertEqual(env["QUATTRO_NATIVE_ROUTING_MODE"], "native-persistent-configured-route")
+            self.assertEqual(write_runtime.call_args.args[1:4], ("codex", root, "account-2"))
+
+    def test_pi_exec_handoff_uses_real_binary_omniroute_home_and_no_tools(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            pi_home = root / "pi-home"
+            patches = self.common(root)
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+                    mock.patch.object(agent, "require", return_value="/native/pi"), \
+                    mock.patch.object(agent, "tool_environment", return_value={"TERM": "xterm"}), \
+                    mock.patch.object(agent, "ensure_pi_worker_home", return_value=pi_home) as worker_home, \
+                    mock.patch.object(agent.os, "chdir") as chdir, \
+                    mock.patch.object(agent.os, "execvpe", side_effect=SystemExit) as execute:
+                with self.assertRaises(SystemExit):
+                    agent.native_interactive_handoff("pi", root)
+            executable, argv, env = execute.call_args.args
+            chdir.assert_called_once_with(root)
+            self.assertEqual(executable, "/native/pi")
+            self.assertEqual(argv[:5], [
+                "/native/pi", "--provider", "omniroute", "--model", "auto",
+            ])
+            self.assertIn("--no-extensions", argv)
+            self.assertIn("--no-tools", argv)
+            self.assertNotIn("-p", argv)
+            self.assertEqual(env["PI_CODING_AGENT_DIR"], str(pi_home))
+            worker_home.assert_called_once_with(
+                mock.ANY, model="auto", locked_routing=False,
+            )
+
+    def test_pi_rejects_writable_native_policy_before_exec(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            patches = self.common(root)
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+                    mock.patch.object(agent.os, "execvpe") as execute:
+                with self.assertRaises(SystemExit):
+                    agent.native_interactive_handoff(
+                        "pi", root, profile_name="workspace-write",
+                    )
+            execute.assert_not_called()
+
+
 class SessionDiscoveryTests(unittest.TestCase):
+    def test_native_launch_marker_preserves_codex_account_attribution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            started = "2026-09-26T00:00:00+00:00"
+            (runtime / "qsession_test.json").write_text(json.dumps({
+                "agent": "codex", "projectPath": "/workspace",
+                "accountId": "account-2", "startedAt": started,
+            }), encoding="utf-8")
+            with mock.patch.object(agent, "STATE_ROOT", root):
+                self.assertEqual(
+                    agent._native_launch_account(
+                        "/workspace", "2026-09-26T00:00:10+00:00",
+                    ),
+                    "account-2",
+                )
+                self.assertIsNone(agent._native_launch_account(
+                    "/other", "2026-09-26T00:00:10+00:00",
+                ))
+
     def test_scan_logs_every_session_and_resolves_latest_across_accounts(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
