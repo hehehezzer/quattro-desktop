@@ -392,7 +392,9 @@ runpy.run_path(WORKER,run_name='__main__')
         self.assertEqual(handle({"id": 3, "method": "execute"}, session)["error"]["code"], -32601)
 
     def test_harness_scope_registers_only_permitted_codex_tool_and_restores(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        # The policy's '/' read root is the current volume on Windows. Keep
+        # this fixture on that volume rather than granting cross-drive access.
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
             root = Path(temporary).resolve()
             class Owner:
                 def config(self):
