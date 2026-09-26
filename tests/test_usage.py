@@ -265,10 +265,18 @@ class SessionDiscoveryTests(unittest.TestCase):
                 rows = agent.scan_codex_sessions(config)
             self.assertEqual([row["sessionId"] for row in rows], list(reversed(expected)))
             with mock.patch.object(agent, "codex_thread_titles", return_value={}):
-                target = agent.resolve_codex_resume_target(config, project)
+                with self.assertRaisesRegex(ValueError, "Multiple native sessions"):
+                    agent.resolve_codex_resume_target(config, project)
+                target = agent.resolve_codex_resume_target(
+                    config, project, session_id=expected[-1], account_id="account-2",
+                )
+                cross_account = agent.resolve_codex_resume_target(
+                    config, project, session_id=expected[-1], account_id="account-1",
+                )
             assert target is not None
             self.assertEqual(target["sessionId"], expected[-1])
             self.assertEqual(target["accountId"], "account-2")
+            self.assertEqual(cross_account["sessionId"], expected[-1])
 
     def test_scan_uses_codex_thread_name_and_persists_display_safe_title(self):
         with tempfile.TemporaryDirectory() as temporary:

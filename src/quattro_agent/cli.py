@@ -824,17 +824,16 @@ def resolve_codex_resume_target(
     session_id: str | None = None,
     account_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Resolve one exact native session across every configured Codex home."""
+    """Resolve an unambiguous native session in the shared cross-account namespace."""
     expected_path = str(directory.resolve())
-    for row in scan_codex_sessions(config):
-        if not row["resumable"]:
-            continue
-        if str(pathlib.Path(row["path"]).resolve()) != expected_path:
-            continue
-        if session_id is not None and row["sessionId"] != session_id:
-            continue
-        return row
-    return None
+    matches = [row for row in scan_codex_sessions(config) if (
+        row["resumable"]
+        and str(pathlib.Path(row["path"]).resolve()) == expected_path
+        and (session_id is None or row["sessionId"] == session_id)
+    )]
+    if len(matches) > 1:
+        raise ValueError("Multiple native sessions match this directory; specify --session")
+    return matches[0] if matches else None
 
 
 def session_worker(args: argparse.Namespace) -> int:
@@ -3376,7 +3375,7 @@ def main() -> int:
                 or args.session in (row.get("previous_codex_session_ids") or [])
             )]
             logical_id = matches[0]["quattro_session_id"] if matches else None
-        if logical_id is None and args.target:
+        if logical_id is None and (args.target or args.session):
             directory = safe_directory(args.target)
             matches = [row for row in harness().store.list_logical_sessions() if (
                 row["repository_path"] == str(directory)
@@ -3388,10 +3387,16 @@ def main() -> int:
                 logical_id = matches[0]["quattro_session_id"]
             else:
                 # Backward-compatible native-only path for legacy tasks.
+                if omniroute_routing_mode() is OmniRouteRoutingMode.PASSTHROUGH:
+                    die("Native-only legacy sessions cannot resume under locked routing; start a new Quattro session")
                 prepare_codex_launch(config, args.account or str(config["defaultCodexAccount"]))
-                native_target = resolve_codex_resume_target(
-                    config, directory, session_id=args.session, account_id=args.account
-                )
+                try:
+                    native_target = resolve_codex_resume_target(
+                        config, directory, session_id=args.session,
+                        account_id=args.account or str(config["defaultCodexAccount"]),
+                    )
+                except ValueError as error:
+                    die(str(error))
                 if native_target is None:
                     die(f"No logical or native resumable Codex session was found for {directory}")
                 print(launch_terminal(
