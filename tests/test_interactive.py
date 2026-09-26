@@ -33,15 +33,16 @@ class InteractiveTests(unittest.TestCase):
                 {"private_payload": {"coordinationSessionId": "coord"}}
                 if task_id == "anchor" else {"state": TaskState.SUCCEEDED.value}
             )
-            runtime.store.artifacts_for_task.return_value = [{"path": str(artifact)}]
+            runtime.store.artifacts_for_task.return_value = [{"path": str(artifact), "kind": "agent-output"}]
             output = io.StringIO()
             result = run_interactive(
                 runtime, agent="codex", workspace=root,
                 input_stream=io.StringIO("first\nrefer to first\nrefer to prior result\nquit\n"),
-                output=output,
+                output=output, profile_name="audit-read-only",
             )
             self.assertEqual(result, 0)
             calls = runtime.create_task.call_args_list
+            self.assertTrue(all(call.kwargs["profile_name"] == "audit-read-only" for call in calls))
             self.assertEqual(len(calls), 4)
             for call in calls[1:]:
                 self.assertEqual(call.kwargs["logical_session_id"], "qsession_test")
@@ -52,6 +53,12 @@ class InteractiveTests(unittest.TestCase):
             runtime.store.transition_task.assert_called_once()
             runtime.coordinator.finish.assert_called_once()
             self.assertIn("Session saved.", output.getvalue())
+
+    def test_rejects_unsupported_pi_before_creating_session(self):
+        runtime = mock.Mock()
+        with self.assertRaisesRegex(ValueError, "require Codex"):
+            run_interactive(runtime, agent="pi", workspace=pathlib.Path.cwd())
+        runtime.create_task.assert_not_called()
 
     def test_interrupt_cancels_current_task_and_preserves_session(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -89,6 +96,7 @@ class InteractiveTests(unittest.TestCase):
                             input_stream=io.StringIO("what was it?\nexit\n"), output=io.StringIO())
             self.assertIn("marker", runtime.create_task.call_args.kwargs["prompt"])
             self.assertEqual(runtime.create_task.call_args.kwargs["logical_session_id"], "qsession_test")
+            runtime.checkpoint_task.assert_called_once()
 
 
 if __name__ == "__main__":

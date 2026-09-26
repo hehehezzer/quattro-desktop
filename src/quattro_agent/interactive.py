@@ -39,6 +39,8 @@ def run_interactive(
     runtime: Any, *, agent: str, workspace: pathlib.Path,
     input_stream: TextIO = sys.stdin, output: TextIO = sys.stdout,
     session_id: str | None = None,
+    profile_name: str | None = None,
+    confirm_full_access: bool = False,
 ) -> int:
     """Keep one logical session while creating a fresh locked task per turn."""
     if agent != "codex":
@@ -49,7 +51,8 @@ def run_interactive(
         # session anchor only and never dispatches a request or launches Foot.
         anchor = runtime.create_task(
             agent=agent, project=workspace, prompt="", mode="prompt",
-            title="Interactive Quattro session",
+            title="Interactive Quattro session", profile_name=profile_name,
+            confirm_full_access=confirm_full_access,
         )
         session = runtime.store.logical_session_for_task(anchor)
         if session is None:
@@ -98,6 +101,7 @@ def run_interactive(
             task_id = runtime.create_task(
                 agent=agent, project=workspace, prompt=prompt, mode="prompt",
                 logical_session_id=session_id, title=message[:100],
+                profile_name=profile_name, confirm_full_access=confirm_full_access,
             )
             try:
                 code = runtime.run_task(task_id)
@@ -107,7 +111,8 @@ def run_interactive(
                 break
             task = runtime.store.get_task(task_id)
             artifacts = runtime.store.artifacts_for_task(task_id)
-            raw = pathlib.Path(artifacts[-1]["path"]).read_text(encoding="utf-8") if artifacts else ""
+            agent_outputs = [item for item in artifacts if item.get("kind") == "agent-output"]
+            raw = pathlib.Path(agent_outputs[-1]["path"]).read_text(encoding="utf-8") if agent_outputs else ""
             answer = final_answer(raw)
             verified = code == 0 and task["state"] == TaskState.SUCCEEDED.value
             validation_failed = task.get("terminal_code") == "validation_failed"
@@ -115,16 +120,21 @@ def run_interactive(
                 print(f"\n{answer}", file=output, flush=True)
             if not verified:
                 print(f"Warning: {task.get('terminal_summary') or 'turn failed'} (task {task_id}); do not treat this turn as validated.", file=output, flush=True)
-                if answer and validation_failed:
-                    history.append((message[:2_000], "[Validation failed] " + answer[:2_000]))
-                    runtime.checkpoint_task(
-                        task_id, kind="interactive-turn-unvalidated",
-                        completed=(f"User: {message[:400]} | Response: [Validation failed] {answer[:580]}",),
-                        next_action="Investigate failed validation before accepting changes.",
-                    )
+                detail = "[Validation failed] " + answer[:2_000] if validation_failed and answer else "[Turn failed] " + str(task.get("terminal_summary") or "No validated result")[:400]
+                history.append((message[:2_000], detail))
+                runtime.checkpoint_task(
+                    task_id, kind="interactive-turn-unvalidated",
+                    completed=(f"User: {message[:400]} | Response: {detail[:600]}",),
+                    next_action="Investigate failed turn before accepting changes.",
+                )
                 continue
             if not answer:
                 print(f"Error: agent returned no final message (task {task_id})", file=output, flush=True)
+                runtime.checkpoint_task(
+                    task_id, kind="interactive-turn-no-final",
+                    completed=(f"User: {message[:400]} | Response: [No final message from task {task_id}]",),
+                    next_action="Inspect the agent artifact and recover the missing final response.",
+                )
                 continue
             history.append((message[:2_000], answer[:2_000]))
             runtime.checkpoint_task(

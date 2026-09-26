@@ -3317,7 +3317,10 @@ def main() -> int:
         from quattro_agent.interactive import run_interactive
         agent = args.agent or str(config["defaultAgent"])
         try:
-            return run_interactive(harness(), agent=agent, workspace=safe_directory(args.directory))
+            return run_interactive(
+                harness(), agent=agent, workspace=safe_directory(args.directory),
+                profile_name=args.policy, confirm_full_access=args.confirm_full_access,
+            )
         except (ConfigError, LeaseConflict, OSError, ValueError, RuntimeError) as error:
             die(str(error))
     if command == "desktop":
@@ -3379,6 +3382,8 @@ def main() -> int:
                 row["repository_path"] == str(directory)
                 or row["working_directory"] == str(directory)
             )]
+            if len(matches) > 1:
+                die("Multiple logical sessions match this directory; resume by Quattro session ID")
             if matches:
                 logical_id = matches[0]["quattro_session_id"]
             else:
@@ -3402,7 +3407,10 @@ def main() -> int:
         if args.prompt is None:
             from quattro_agent.interactive import run_interactive
             try:
-                return run_interactive(harness(), agent="codex", workspace=pathlib.Path.cwd(), session_id=logical_id)
+                return run_interactive(
+                    harness(), agent="codex", workspace=pathlib.Path.cwd(), session_id=logical_id,
+                    profile_name=args.policy, confirm_full_access=args.confirm_full_access,
+                )
             except (ConfigError, LeaseConflict, OSError, ValueError, RuntimeError) as error:
                 die(str(error))
         prepare_codex_launch(config, args.account or str(config["defaultCodexAccount"]))

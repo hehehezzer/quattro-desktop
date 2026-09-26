@@ -202,7 +202,10 @@ class LauncherParserTests(unittest.TestCase):
             mock.patch("quattro_agent.interactive.run_interactive", return_value=0) as shell,
         ):
             self.assertEqual(agent.main(), 0)
-        shell.assert_called_once_with(runtime(), agent="codex", workspace=agent.safe_directory(None))
+        shell.assert_called_once_with(
+            runtime(), agent="codex", workspace=agent.safe_directory(None),
+            profile_name=None, confirm_full_access=False,
+        )
 
     def test_explicit_launch_arguments_still_parse(self):
         args = agent.build_parser().parse_args(["launch", "pi", "/tmp"])
