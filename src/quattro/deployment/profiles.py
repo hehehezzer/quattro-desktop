@@ -21,7 +21,7 @@ CORE_DEPLOYMENT_MAPPINGS = {
             (f"src/quattro_agent/{name}", f".local/bin/quattro_agent/{name}")
         for name in (
             "__init__.py", "__main__.py", "adapters.py", "adaptive_routing.py",
-            "benchmark.py", "cli.py",
+            "benchmark.py", "cli.py", "interactive.py",
             "collaboration.py", "config.py", "containment.py", "delegation.py", "errors.py",
             "mandatory_context.py", "model_registry.py", "models.py", "omniroute.py", "paths.py", "policy.py",
             "privacy.py", "recovery.py", "retrieval.py", "routing.py",

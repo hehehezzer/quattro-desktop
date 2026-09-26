@@ -3304,8 +3304,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     if args.command is None:
-        parser.print_help()
-        return 0
+        args = parser.parse_args(["launch"])
     if args.command == "ui-state":
         print(json.dumps(ui_snapshot(), ensure_ascii=False))
         return 0
@@ -3315,13 +3314,12 @@ def main() -> int:
     config = load_config()
     command = args.command
     if command == "launch":
+        from quattro_agent.interactive import run_interactive
         agent = args.agent or str(config["defaultAgent"])
-        print(launch_terminal(
-            agent, args.directory,
-            profile_name=getattr(args, "policy", None),
-            confirm_full_access=getattr(args, "confirm_full_access", False),
-        ))
-        return 0
+        try:
+            return run_interactive(harness(), agent=agent, workspace=safe_directory(args.directory))
+        except (ConfigError, LeaseConflict, OSError, ValueError, RuntimeError) as error:
+            die(str(error))
     if command == "desktop":
         print(launch_terminal("codex", str(DEFAULT_WORKSPACE)))
         return 0
@@ -3401,6 +3399,12 @@ def main() -> int:
                 return 0
         if logical_id is None:
             die("No recoverable logical Quattro session matched the request")
+        if args.prompt is None:
+            from quattro_agent.interactive import run_interactive
+            try:
+                return run_interactive(harness(), agent="codex", workspace=pathlib.Path.cwd(), session_id=logical_id)
+            except (ConfigError, LeaseConflict, OSError, ValueError, RuntimeError) as error:
+                die(str(error))
         prepare_codex_launch(config, args.account or str(config["defaultCodexAccount"]))
         native_rows = scan_codex_sessions(config)
         logical = harness().store.get_logical_session(logical_id)

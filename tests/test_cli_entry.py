@@ -32,12 +32,15 @@ class CliEntryTests(unittest.TestCase):
             for cwd in (ROOT, directory):
                 with self.subTest(cwd=cwd):
                     result = self.invoke(cwd=cwd, home=pathlib.Path(directory))
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn("usage: quattro-agent", result.stdout)
-                    self.assertIn("status", result.stdout)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn("Invalid AI configuration", result.stderr)
+                    self.assertNotIn("usage: quattro-agent", result.stdout)
                     self.assertNotIn("Traceback", result.stderr)
-                    # Help must not create runtime/config directories.
-                    self.assertEqual(list(pathlib.Path(directory).iterdir()), [])
+
+    def test_version(self):
+        result = self.invoke("--version")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("quattro-agent", result.stdout)
 
     def test_help(self):
         result = self.invoke("--help")
