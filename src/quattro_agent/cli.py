@@ -65,6 +65,7 @@ from quattro_agent.paths import (
     xdg_data_home,
 )
 from quattro_agent.config import migrate_ai_config, validate_ai_config
+from quattro_agent.delegation import ensure_pi_worker_home
 from quattro_agent.models import RunState, TaskState
 from quattro_agent.omniroute import (
     OmniRouteRoutingMode, omniroute_routing_mode, validate_omniroute_contract,
@@ -484,10 +485,18 @@ def codex_full_access(config: dict[str, Any]) -> bool:
     return config.get("defaultPolicyProfile") == "full-access-explicit"
 
 
-def codex_permission_args(config: dict[str, Any]) -> list[str]:
-    if codex_full_access(config):
+def codex_permission_args(
+    config: dict[str, Any], profile_name: str | None = None,
+    *, confirm_full_access: bool = False,
+) -> list[str]:
+    """Translate the selected Quattro policy to native Codex CLI controls."""
+    selected = profile_name or str(config.get("defaultPolicyProfile", "workspace-write"))
+    if selected == "full-access-explicit":
+        if not confirm_full_access:
+            die("full-access-explicit requires --confirm-full-access")
         return ["--dangerously-bypass-approvals-and-sandbox"]
-    return ["-a", "on-request"]
+    sandbox = "read-only" if selected in {"audit-read-only", "review-untrusted"} else "workspace-write"
+    return ["-a", "on-request", "-s", sandbox]
 
 
 def safe_directory(value: str | None) -> pathlib.Path:
@@ -566,7 +575,8 @@ def runtime_path(session_id: str) -> pathlib.Path:
 
 
 def write_runtime(session_id: str, agent: str, directory: pathlib.Path,
-                  account_id: str | None, mode: str) -> pathlib.Path:
+                  account_id: str | None, mode: str,
+                  routing_mode: str | None = None) -> pathlib.Path:
     record = {
         "schemaVersion": SCHEMA_VERSION,
         "sessionId": session_id,
@@ -576,6 +586,7 @@ def write_runtime(session_id: str, agent: str, directory: pathlib.Path,
         "projectName": directory.name or str(directory),
         "accountId": account_id,
         "mode": mode,
+        "routingMode": routing_mode,
         "startedAt": now_iso(),
         "state": "running",
     }
@@ -710,6 +721,38 @@ def codex_thread_titles(
     return result
 
 
+def _native_launch_account(cwd: str, created_at: str | None) -> str | None:
+    """Associate a native Codex rollout with one unique launcher marker."""
+    if not created_at:
+        return None
+    try:
+        created = dt.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        return None
+    matches: list[str] = []
+    for marker in (STATE_ROOT / "runtime").glob("qsession_*.json"):
+        payload = read_json(marker, {})
+        if not isinstance(payload, dict) or payload.get("agent") != "codex":
+            continue
+        if payload.get("projectPath") != cwd:
+            continue
+        account = payload.get("accountId")
+        started_at = payload.get("startedAt")
+        if not isinstance(account, str) or not isinstance(started_at, str):
+            continue
+        try:
+            started = dt.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            continue
+        if abs((created - started).total_seconds()) <= 30:
+            matches.append(account)
+    return matches[0] if len(set(matches)) == 1 else None
+
+
 def scan_codex_sessions(config: dict[str, Any]) -> list[dict[str, Any]]:
     """Read display-safe metadata for every configured native Codex session.
 
@@ -769,7 +812,7 @@ def scan_codex_sessions(config: dict[str, Any]) -> list[dict[str, Any]]:
                 registered = registry.get(session_id, {})
                 origin = registered.get("originatingAccount")
                 if not isinstance(origin, str):
-                    origin = account_id
+                    origin = _native_launch_account(cwd, created_at) or account_id
                 last_account = registered.get("mostRecentlyUsedAccount")
                 if not isinstance(last_account, str):
                     last_account = origin
@@ -801,20 +844,24 @@ def scan_codex_sessions(config: dict[str, Any]) -> list[dict[str, Any]]:
     for row in ordered:
         title = row.get("title")
         current = registry.get(row["sessionId"], {})
-        if not isinstance(title, str) or not title:
-            continue
         if (
             current.get("displayTitle") == title
+            and current.get("originatingAccount") == row.get("originatingAccount")
             and current.get("projectPath") == row["path"]
             and current.get("createdAt") == row.get("createdAt")
         ):
             continue
-        update_session_registry(CODEX_SESSION_REGISTRY, row["sessionId"], {
-            "displayTitle": title,
+        registration = {
+            "originatingAccount": row.get("originatingAccount"),
+            "mostRecentlyUsedAccount": row.get("mostRecentlyUsedAccount"),
+            "providerId": "omniroute",
             "projectPath": row["path"],
             "createdAt": row.get("createdAt"),
             "updatedAt": now_iso(),
-        })
+        }
+        if isinstance(title, str) and title:
+            registration["displayTitle"] = title
+        update_session_registry(CODEX_SESSION_REGISTRY, row["sessionId"], registration)
     return ordered
 
 
@@ -927,6 +974,103 @@ def session_worker(args: argparse.Namespace) -> int:
             path.unlink()
         except FileNotFoundError:
             pass
+
+
+def native_interactive_handoff(
+    agent: str,
+    directory: pathlib.Path,
+    *,
+    profile_name: str | None = None,
+    confirm_full_access: bool = False,
+    account_id: str | None = None,
+    resume: bool = False,
+    native_session_ref: str | None = None,
+) -> "NoReturn":
+    """Replace Quattro with the selected native interactive CLI in this terminal.
+
+    Persistent native CLIs retain configured provider/model routing, but cannot
+    receive a fresh Quattro ExecutionPlan for every subsequent turn.
+    """
+    config = load_config()
+    if agent not in {"codex", "pi"}:
+        die(f"Unsupported interactive agent: {agent}")
+    directory = directory.expanduser().resolve(strict=True)
+    memory_enabled, memory_vault, memory_enforced = memory_settings(config)
+    project_vault = project_memory_path(config)
+    if memory_enabled and memory_enforced:
+        try:
+            require_vault(memory_vault)
+            require_project_vault(project_vault)
+        except MemoryError as error:
+            die(str(error))
+    mandatory = build_mandatory_context(config, request="", cwd=directory)
+    trusted_policy = "\n\n".join(part for part in (
+        memory_policy(memory_vault, project_vault) if memory_enabled else "",
+        mandatory.text,
+    ) if part)
+    selected_account = account_id or str(config["defaultCodexAccount"])
+    session_id = f"qsession_{uuid.uuid4().hex}"
+    routing_label = "native-persistent-configured-route"
+
+    if agent == "codex":
+        binary = require("codex")
+        env = tool_environment("codex")
+        account_home = prepare_codex_launch(config, selected_account)
+        env["CODEX_HOME"] = str(account_home)
+        common = [
+            "-c", f"developer_instructions={json.dumps(trusted_policy)}",
+            *codex_permission_args(
+                config, profile_name, confirm_full_access=confirm_full_access,
+            ),
+        ]
+        command = (
+            [binary, *common, "resume", native_session_ref or "--all", "-C", str(directory)]
+            if resume else
+            [binary, *common, "-C", str(directory)]
+        )
+        if memory_enabled:
+            command[1:1] = [
+                "--add-dir", str(memory_vault), "--add-dir", str(project_vault),
+            ]
+        runtime_account = selected_account
+    else:
+        selected_profile = profile_name or "audit-read-only"
+        if selected_profile != "audit-read-only" or confirm_full_access:
+            die("native Pi sessions support only the bounded audit-read-only policy")
+        binary = require("pi")
+        env = tool_environment("pi")
+        configured_model = "auto"
+        pi_home = ensure_pi_worker_home(
+            STATE_ROOT / "private" / "native-pi" / session_id,
+            model=configured_model,
+            locked_routing=False,
+        )
+        env["PI_CODING_AGENT_DIR"] = str(pi_home)
+        command = [
+            binary,
+            "--provider", "omniroute", "--model", configured_model,
+            "--append-system-prompt", trusted_policy,
+            "--no-extensions", "--no-tools",
+            *(["--session", native_session_ref] if native_session_ref else (["-r"] if resume else [])),
+        ]
+        runtime_account = None
+
+    env["QUATTRO_SESSION_ID"] = session_id
+    env["QUATTRO_NATIVE_ROUTING_MODE"] = routing_label
+    runtime = write_runtime(
+        session_id, agent, directory, runtime_account,
+        "resume" if resume else "interactive", routing_label,
+    )
+    update_recent(directory, agent, session_id, agent == "codex")
+    try:
+        os.chdir(directory)
+        os.execvpe(binary, command, env)
+    except BaseException:
+        try:
+            runtime.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def launch_terminal(agent: str, directory_value: str | None, mode: str = "interactive",
@@ -3326,9 +3470,9 @@ def main() -> int:
     config = load_config()
     command = args.command
     if command == "launch":
-        from quattro_agent.interactive import choose_agent, run_interactive
+        from quattro_agent.interactive import choose_agent
         workspace = safe_directory(args.directory)
-        print(f"Quattro\nworkspace: {workspace}\n", flush=True)
+        print(f"Workspace: {workspace}\n", flush=True)
         agent = args.agent
         if agent is None:
             agent = choose_agent(
@@ -3337,10 +3481,12 @@ def main() -> int:
             if agent is None:
                 return 0
         try:
-            return run_interactive(
-                harness(), agent=agent, workspace=workspace,
-                profile_name=args.policy, confirm_full_access=args.confirm_full_access,
+            native_interactive_handoff(
+                agent, workspace,
+                profile_name=args.policy,
+                confirm_full_access=args.confirm_full_access,
             )
+            return 0  # reached only by test doubles; os.execvpe does not return
         except (ConfigError, LeaseConflict, OSError, ValueError, RuntimeError) as error:
             die(str(error))
     if command == "desktop":
@@ -3431,15 +3577,24 @@ def main() -> int:
         if logical_id is None:
             die("No recoverable logical Quattro session matched the request")
         if args.prompt is None:
-            from quattro_agent.interactive import run_interactive
             try:
                 logical = harness().store.get_logical_session(logical_id)
-                return run_interactive(
-                    harness(), agent=str(logical.get("agent") or "codex"),
-                    workspace=pathlib.Path.cwd(), session_id=logical_id,
-                    profile_name=args.policy, confirm_full_access=args.confirm_full_access,
-                    account_id=args.account,
+                logical_agent = str(logical.get("agent") or "codex")
+                if logical_agent == "pi":
+                    die(
+                        "native Pi resume is unavailable because managed logical sessions "
+                        "do not yet store a Pi-native session reference"
+                    )
+                native_interactive_handoff(
+                    logical_agent,
+                    pathlib.Path(str(logical["working_directory"])),
+                    profile_name=args.policy,
+                    confirm_full_access=args.confirm_full_access,
+                    account_id=args.account or logical.get("last_account_id"),
+                    resume=True,
+                    native_session_ref=logical.get("current_codex_session_id"),
                 )
+                return 0  # reached only by test doubles
             except (ConfigError, LeaseConflict, OSError, ValueError, RuntimeError) as error:
                 die(str(error))
         prepare_codex_launch(config, args.account or str(config["defaultCodexAccount"]))

@@ -958,7 +958,6 @@ class HarnessRuntime:
                     "delegation": delegation,
                     "gitStatusBefore": git_status_before,
                     "logicalSessionId": logical_session_id,
-                    "sessionContinuation": logical_session_id is not None,
                     "recoveryCheckpointId": recovery_checkpoint_id,
                     "replacementForPhysicalId": replacement_for_physical_id,
                     "coordinationSessionId": coordination.get("sessionId") if coordination else None,
@@ -4095,13 +4094,6 @@ class HarnessRuntime:
                 else "The task produced no inspectable output artifact.",
             ),
         ]
-        routing = task["private_payload"].get("routing")
-        profile_data = routing.get("task_profile") if isinstance(routing, Mapping) else None
-        conversational = (
-            task["private_payload"].get("sessionContinuation") is True
-            and isinstance(profile_data, Mapping)
-            and profile_data.get("task_type") == "conversation"
-        )
         if (project / ".git").exists() and self.command_resolver("git"):
             results.append(self._command_validation(
                 "Git diff integrity", [self.command_resolver("git") or "git", "diff", "--check"],
@@ -4112,11 +4104,7 @@ class HarnessRuntime:
                     project, task["private_payload"].get("gitStatusBefore")
                 ))
         delegated_worker = task.get("workflow") == "codex-pi-delegation"
-        if conversational:
-            # Conversational turns make no project-test claim, but the Git
-            # integrity/read-only checks above still enforce their safety boundary.
-            pass
-        elif delegated_worker:
+        if delegated_worker:
             pass
         elif project.resolve() == self.default_workspace.resolve() and (project / "tests").is_dir():
             results.append(self._command_validation(
@@ -4139,21 +4127,20 @@ class HarnessRuntime:
                 "Go tests", [self.command_resolver("go") or "go", "test", "./..."],
                 project, 600,
             ))
-        if not conversational:
-            try:
-                config = self.config()
-                enabled, vault, projects, _ = self._memory(config)
-                if enabled:
-                    healthy = vault_status(vault)["status"] == "ok" and project_vault_status(projects)["status"] == "ok"
-                    results.append(ValidationResult(
-                        "Institutional memory audit",
-                        ValidationStatus.PASSED if healthy else ValidationStatus.FAILED,
-                        "Both required memory vaults are healthy." if healthy else "A required memory vault is degraded.",
-                    ))
-            except (ConfigError, MemoryError) as error:
+        try:
+            config = self.config()
+            enabled, vault, projects, _ = self._memory(config)
+            if enabled:
+                healthy = vault_status(vault)["status"] == "ok" and project_vault_status(projects)["status"] == "ok"
                 results.append(ValidationResult(
-                    "Institutional memory audit", ValidationStatus.BLOCKED, _bounded(str(error)),
+                    "Institutional memory audit",
+                    ValidationStatus.PASSED if healthy else ValidationStatus.FAILED,
+                    "Both required memory vaults are healthy." if healthy else "A required memory vault is degraded.",
                 ))
+        except (ConfigError, MemoryError) as error:
+            results.append(ValidationResult(
+                "Institutional memory audit", ValidationStatus.BLOCKED, _bounded(str(error)),
+            ))
 
         for position, result in enumerate(results):
             step_id = self.store.create_step(

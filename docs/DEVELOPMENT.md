@@ -31,7 +31,7 @@ git diff --check
 ## Interactive agent sessions
 
 Run `quattro-agent` or `quattro-agent launch` in the intended workspace for a
-**new** interactive Quattro session. On a terminal, Quattro resolves and displays
+**new** native agent launch. On a terminal, Quattro resolves and displays
 the workspace, then asks whether to use Codex or Pi. The `defaultAgent` from
 `ai.json` is marked as the default and selected by Enter. Non-TTY launches use
 that configured default without prompting. Choose directly with
@@ -39,12 +39,30 @@ that configured default without prompting. Choose directly with
 path may follow the agent. Cancelling the chooser with `q`, `quit`, `exit`,
 Ctrl-D, or Ctrl-C exits before a durable session is created.
 
-Each turn creates its own locked, appropriately validated Quattro task within
-one persistent logical session; the CLI stays at the prompt until `exit`,
-`quit`, Ctrl-D, or Ctrl-C. Pi remains under its bounded read-only policy unless
-an explicitly requested policy is independently authorized. `quattro-agent
-resume` lists recoverable sessions and
-`quattro-agent resume QSESSION_ID` continues one. `quattro-agent --help` displays
+After selection Quattro replaces itself with the real Codex or Pi executable in
+the current terminal. Quattro does not render a chat prompt, proxy terminal
+input, or open another terminal. Native stdin/stdout/stderr, signals, resizing,
+streaming, approvals, commands, and exit behavior therefore remain intact. Pi
+uses the bounded read-only native profile with extensions and tools disabled.
+
+Native persistent sessions retain the selected Codex account home, its
+configured OmniRoute provider/model, mandatory policy context, workspace, and
+safe launcher environment. They do **not** receive a fresh locked Quattro
+ExecutionPlan per turn because neither native persistent CLI exposes that
+request boundary to the launcher. Locked per-turn guarantees remain available
+through one-shot managed commands such as `prompt` and `submit`; native launch
+does not silently claim them or force legacy routing mode.
+
+Native launch provenance is recorded in runtime/recent state under a `qsession_*`
+identifier, but it is not presented as a durable logical task session. Codex's
+native rollout is discovered afterward and associated with the launcher account
+using the unique workspace/start marker. Native Pi uses a credential-free,
+ephemeral configuration and OmniRoute `auto`; native Pi resume is explicitly
+unavailable until Quattro stores a stable Pi home and native session reference.
+
+`quattro-agent resume` lists durable recoverable sessions. Codex logical
+sessions hand the terminal to native Codex; unsupported Pi logical resume fails
+clearly. `quattro-agent --help` displays
 command help; `quattro-agent prompt` remains the one-shot scripting path.
 Launching does not create or switch Git branches or worktrees. Verify a clean
 `dev` checkout and create the intended feature branch before coding.
