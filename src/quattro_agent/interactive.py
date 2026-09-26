@@ -104,10 +104,19 @@ def run_interactive(
             artifacts = runtime.store.artifacts_for_task(task_id)
             raw = pathlib.Path(artifacts[-1]["path"]).read_text(encoding="utf-8") if artifacts else ""
             answer = final_answer(raw)
-            if answer:
+            verified = code == 0 and task["state"] == TaskState.SUCCEEDED.value
+            validation_failed = task.get("terminal_code") == "validation_failed"
+            if answer and (verified or validation_failed):
                 print(f"\n{answer}", file=output, flush=True)
-            if code != 0 or task["state"] != TaskState.SUCCEEDED.value:
+            if not verified:
                 print(f"Warning: {task.get('terminal_summary') or 'turn failed'} (task {task_id}); do not treat this turn as validated.", file=output, flush=True)
+                if answer and validation_failed:
+                    history.append((message[:2_000], "[Validation failed] " + answer[:2_000]))
+                    runtime.checkpoint_task(
+                        task_id, kind="interactive-turn-unvalidated",
+                        completed=(f"User: {message[:400]} | Response: [Validation failed] {answer[:580]}",),
+                        next_action="Investigate failed validation before accepting changes.",
+                    )
                 continue
             if not answer:
                 print(f"Error: agent returned no final message (task {task_id})", file=output, flush=True)
