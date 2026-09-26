@@ -377,10 +377,11 @@ def validate_ai_config(source: Mapping[str, Any], *, home: Path | None = None) -
         "metadata": 0.25, "benchmark": 0.50, "local": 0.25,
     })
     raw_routing.setdefault("localOutcomeMinSamples", 5)
+    raw_routing.setdefault("jev", {"mode": "OFF", "timeoutMs": 300})
     routing = _mapping(
         raw_routing,
         "$.routing",
-        {"fastReasoningEffort", "standardReasoningEffort", "reasoningReasoningEffort", "exceptionalReasoningEffort", "maxAutomaticEscalations", "maxExceptionalEscalations", "fastAutoRoute", "standardAutoRoute", "reasoningAutoRoute", "fastContextBudgetTokens", "standardContextBudgetTokens", "reasoningContextBudgetTokens", "preferenceMode", "qualityThresholds", "qualityWeights", "localOutcomeMinSamples"},
+        {"fastReasoningEffort", "standardReasoningEffort", "reasoningReasoningEffort", "exceptionalReasoningEffort", "maxAutomaticEscalations", "maxExceptionalEscalations", "fastAutoRoute", "standardAutoRoute", "reasoningAutoRoute", "fastContextBudgetTokens", "standardContextBudgetTokens", "reasoningContextBudgetTokens", "preferenceMode", "qualityThresholds", "qualityWeights", "localOutcomeMinSamples", "jev"},
     )
     routing = dict(routing)
     normal_efforts = {
@@ -440,6 +441,9 @@ def validate_ai_config(source: Mapping[str, Any], *, home: Path | None = None) -
         _fail("$.routing.qualityWeights", "weights must sum to 1")
     routing["qualityWeights"] = normalized_weights
     _integer(routing["localOutcomeMinSamples"], "$.routing.localOutcomeMinSamples", 1, 100)
+    jev = _mapping(routing["jev"], "$.routing.jev", {"mode", "timeoutMs"})
+    _enum(jev["mode"], "$.routing.jev.mode", {"OFF", "SHADOW", "COOPERATIVE"})
+    _integer(jev["timeoutMs"], "$.routing.jev.timeoutMs", 100, 3000)
     normalized["routing"] = copy.deepcopy(routing)
     normalized["workspace"] = {"projectRoot": project_root}
     normalized["defaultAgent"] = default_agent

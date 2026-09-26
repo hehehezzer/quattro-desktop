@@ -73,6 +73,10 @@ from quattro_agent.omniroute import (
     validate_omniroute_runtime_capabilities,
 )
 from quattro_agent.mandatory_context import build_mandatory_context
+from quattro_agent.jev_shadow import (
+    lifecycle as jev_lifecycle, annotate as annotate_signals, mark_dispatch, current_learned_signal,
+)
+from quattro_agent.routing_signals import classify_with_signals
 from quattro_agent.intelligence.telemetry import (
     record_routing_telemetry,
     update_execution_telemetry,
@@ -686,6 +690,7 @@ class HarnessRuntime:
         )
         return base
 
+    @jev_lifecycle
     def create_task(
         self,
         *,
@@ -1049,6 +1054,7 @@ class HarnessRuntime:
                 profile=routing.task_profile,
                 source_task_id=task_id,
                 source_kind="durable_task",
+                shadow_result=current_learned_signal(),
                 record_id="task_" + hashlib.sha256(task_id.encode("utf-8")).hexdigest()[:24],
                 entrypoint=mode,
                 decision_applied=delegation["decision"] == "DELEGATE",
@@ -1057,6 +1063,14 @@ class HarnessRuntime:
                 ).hexdigest(),
                 alternatives=(adaptive.preferred_candidates if adaptive else ()),
             )
+            annotate_signals(record_id=intelligence_record_id, source_task_id=task_id,
+                             final_decision={
+                "execution": "DELEGATE", "worker": agent,
+                "model": execution_target.model if execution_target else configured_model,
+                "provider": execution_target.provider if execution_target else None,
+                "account": execution_target.account if execution_target else selected_account,
+                "reasoning_effort": routing.reasoning_effort,
+            })
             if intelligence_record_id:
                 refreshed_private = self.store.get_task(task_id, include_private=True)[
                     "private_payload"
@@ -1145,6 +1159,7 @@ class HarnessRuntime:
             raise FileNotFoundError(f"{agent} is not available")
         return binary
 
+    @jev_lifecycle
     def direct_response(
         self,
         *,
@@ -1178,7 +1193,11 @@ class HarnessRuntime:
             policy_name=profile.name,
             agent="codex",
         )
-        routing = classify_pre_routing(pre_routing_input=boundary, config=config)
+        routing = classify_with_signals(
+            pre_routing_input=boundary, config=config,
+            database=self.intelligence_database, execution="DIRECT",
+            can_select=lambda proposed: self._signal_target_available(config, str(account["id"]), proposed),
+        )
         profile_snapshot = task_profile_from_dict(routing.task_profile)
         configured_catalog = self._configured_codex_catalog(account_home)
         registry = (
@@ -1237,9 +1256,16 @@ class HarnessRuntime:
             repository_present=(project / ".git").exists(),
             profile=profile_snapshot.to_dict(),
             source_kind="direct_response",
+            shadow_result=current_learned_signal(),
             entrypoint="prompt",
             decision_applied=True,
         )
+        annotate_signals(record_id=intelligence_record_id, final_decision={
+            "execution": "DIRECT", "worker": None, "model": model,
+            "provider": execution_target.provider if execution_target else "omniroute",
+            "account": execution_target.account if execution_target else str(account["id"]),
+            "reasoning_effort": routing.reasoning_effort,
+        })
         # Direct calls use the same contract gate as Codex execution. The
         # production decision is recorded first so preflight failures remain
         # measurable without allowing telemetry to influence the outcome.
@@ -1712,6 +1738,7 @@ class HarnessRuntime:
         self, request_body: Mapping[str, Any], *, timeout_seconds: float,
     ) -> tuple[Mapping[str, Any], dict[str, Any]]:
         """Send one exact target through OmniRoute without choosing a fallback."""
+        mark_dispatch()
         payload = json.dumps(dict(request_body)).encode("utf-8")
         request = urllib.request.Request(
             f"{self._omniroute_base_url()}/responses", data=payload,
@@ -2201,6 +2228,24 @@ class HarnessRuntime:
                 f"executed {actual.get('route')}"
             )
 
+    def _signal_target_available(self, config, selected_account, proposed) -> bool:
+        """Veto optional tier uplift unless existing Quattro filters admit a target."""
+        try:
+            home = pathlib.Path(str(self.account(config, selected_account)["codexHome"])).expanduser().resolve()
+            catalog = self._configured_codex_catalog(home)
+            if catalog is None:
+                return False
+            registry = load_model_registry(default_policy_path(), catalog)
+            select_execution_target(
+                task_profile_from_dict(proposed.task_profile), registry,
+                preferred_account=selected_account,
+                available_accounts=self._enabled_account_ids(config),
+                unavailable_routes=self._unavailable_registry_routes(None, registry),
+            )
+            return True
+        except (OSError, ValueError, RuntimeError):
+            return False
+
     def _pre_route(
         self,
         *,
@@ -2237,7 +2282,11 @@ class HarnessRuntime:
             policy_name=policy_name,
             write_scopes=write_scopes,
         )
-        routing = classify_pre_routing(pre_routing_input=boundary, config=config)
+        routing = classify_with_signals(
+            pre_routing_input=boundary, config=config,
+            database=self.intelligence_database, execution="DELEGATE",
+            can_select=lambda proposed: self._signal_target_available(config, selected_account, proposed),
+        )
         profile = task_profile_from_dict(routing.task_profile)
         adaptive = None
         if agent == "codex" and configured_model == "auto":
@@ -3230,6 +3279,7 @@ class HarnessRuntime:
             raise StateTransitionError(f"task {task_id} is not runnable from {state.value}")
         self.store.transition_task(task_id, TaskState.RUNNING)
 
+    @jev_lifecycle
     def run_task(self, task_id: str) -> int:
         task = self.store.get_task(task_id, include_private=True)
         try:

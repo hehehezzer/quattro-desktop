@@ -151,6 +151,7 @@ def record_routing_telemetry(
     entrypoint: str = "unknown",
     decision_applied: bool = True,
     run_shadow: bool = True,
+    shadow_result: Mapping[str, Any] | None = None,
     group_fingerprint: str | None = None,
     alternatives: Sequence[Mapping[str, Any] | str] = (),
     created_at: str | None = None,
@@ -160,7 +161,7 @@ def record_routing_telemetry(
         safe_request, redacted = sanitize_request(request)
         fields = _profile_fields(profile, safe_request)
         store = IntelligenceStore(database_path, busy_timeout_ms=100)
-        shadow = (
+        shadow = dict(shadow_result) if shadow_result is not None else (
             shadow_predict(
                 store,
                 request=safe_request,
