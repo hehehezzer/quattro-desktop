@@ -15,6 +15,8 @@ ENTRY = ROOT / "src" / "quattro-agent"
 class CliEntryTests(unittest.TestCase):
     def invoke(self, *arguments, cwd=ROOT, home=None):
         env = os.environ.copy()
+        env.pop("QUATTRO_CONFIG", None)
+        env.pop("QUATTRO_STATE_DIR", None)
         env["PYTHONPATH"] = str(ROOT / "src")
         if home is not None:
             env["HOME"] = str(home)
