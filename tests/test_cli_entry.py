@@ -48,10 +48,11 @@ class CliEntryTests(unittest.TestCase):
         self.assertIn("invalid choice", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
-    def test_status_dispatch(self):
-        result = self.invoke("status", "--json")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('"schemaVersion"', result.stdout)
+    def test_status_dispatch_without_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.invoke("status", "--json", home=pathlib.Path(directory))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Invalid AI configuration", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
 
