@@ -28,15 +28,21 @@ _CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
-def sanitize_request(value: str) -> tuple[str, bool]:
-    """Redact common credential shapes and bound retained training text."""
-    text = value if isinstance(value, str) else str(value)
+def redact_request_credentials(text: str) -> tuple[str, bool]:
+    """Detect secrets independently of normalization and retention limits."""
     safe, redacted = redact_secret_text(text)
     safe, url_count = _URL_CREDENTIALS.subn("https://[REDACTED]@", safe)
     safe, bearer_count = _BEARER.subn("Bearer [REDACTED]", safe)
+    return safe, bool(redacted or url_count or bearer_count)
+
+
+def sanitize_request(value: str) -> tuple[str, bool]:
+    """Redact common credential shapes and bound retained training text."""
+    text = value if isinstance(value, str) else str(value)
+    safe, redacted = redact_request_credentials(text)
     safe, control_count = _CONTROL.subn(" ", safe)
     safe = safe[:MAX_REQUEST_CHARS]
-    return safe, bool(redacted or url_count or bearer_count or control_count or len(text) > len(safe))
+    return safe, bool(redacted or control_count or len(text) > len(safe))
 
 
 def request_fingerprint(value: str) -> str:
@@ -63,9 +69,10 @@ def _enum_value(value: Any, default: str = "unknown") -> str:
     return str(candidate) if candidate is not None else default
 
 
-def _profile_fields(profile: Mapping[str, Any] | None, request: str) -> dict[str, Any]:
+def _profile_fields(profile: Mapping[str, Any] | None, request: str,
+                    decision_features: Mapping[str, Any] | None = None) -> dict[str, Any]:
     profile = profile or {}
-    safe = decision_profile(request)
+    safe = decision_features if decision_features is not None else decision_profile(request)
     task_type = str(profile.get("task_type") or profile.get("taskType") or "unknown")
     return {
         "task_type": task_type,
@@ -93,6 +100,7 @@ def shadow_predict(
     request: str,
     profile: Mapping[str, Any] | None,
     repository_present: bool,
+    model_input: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run safe advisory inference with the active shadow model."""
     active = store.active_shadow_model()
@@ -115,6 +123,7 @@ def shadow_predict(
             request,
             profile=profile or {},
             repository_present=repository_present,
+            **({"model_input": model_input} if model_input is not None else {}),
         )
     except (OSError, TypeError, ValueError, KeyError, OverflowError):
         return {
@@ -151,6 +160,8 @@ def record_routing_telemetry(
     entrypoint: str = "unknown",
     decision_applied: bool = True,
     run_shadow: bool = True,
+    shadow_result: Mapping[str, Any] | None = None,
+    decision_features: Mapping[str, Any] | None = None,
     group_fingerprint: str | None = None,
     alternatives: Sequence[Mapping[str, Any] | str] = (),
     created_at: str | None = None,
@@ -158,14 +169,15 @@ def record_routing_telemetry(
     """Record one routing decision; all errors fail open to production routing."""
     try:
         safe_request, redacted = sanitize_request(request)
-        fields = _profile_fields(profile, safe_request)
+        fields = _profile_fields(profile, safe_request, decision_features)
         store = IntelligenceStore(database_path, busy_timeout_ms=100)
-        shadow = (
+        shadow = dict(shadow_result) if shadow_result is not None else (
             shadow_predict(
                 store,
                 request=safe_request,
                 profile=fields,
                 repository_present=repository_present,
+                model_input=decision_features,
             )
             if run_shadow else {"error": "historical_backfill"}
         )

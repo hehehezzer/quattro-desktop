@@ -13,6 +13,50 @@ from .turn_gate import TurnGate
 from .turn_transport import TurnTransport
 
 
+def _codex_remote_arguments(command):
+    """Move local-only roots to the server and mirror the selected access policy."""
+    frontend, backend, roots = [command[0]], [], []
+    policy_flags = {'-s': 'sandbox_mode', '--sandbox': 'sandbox_mode',
+                    '-a': 'approval_policy', '--ask-for-approval': 'approval_policy'}
+    index = 1
+    while index < len(command):
+        arg = command[index]
+        if arg == '--':
+            frontend.extend(command[index:])
+            break
+        flag, separator, inline = arg.partition('=')
+        if flag == '--add-dir' or flag in policy_flags or flag in {'-c', '--config'}:
+            if separator:
+                value, consumed = inline, 1
+            else:
+                if index + 1 >= len(command):
+                    raise ValueError(f'{flag} requires a value')
+                value, consumed = command[index + 1], 2
+            if flag == '--add-dir':
+                if not value:
+                    raise ValueError('--add-dir requires a nonempty directory')
+                if value not in roots:
+                    roots.append(value)
+            else:
+                frontend.extend(command[index:index + consumed])
+                if flag in policy_flags:
+                    backend.extend(['-c', f'{policy_flags[flag]}={json.dumps(value, ensure_ascii=False)}'])
+                elif value.startswith('developer_instructions='):
+                    backend.extend(['-c', value])
+            index += consumed
+            continue
+        frontend.append(arg)
+        if arg == '--dangerously-bypass-approvals-and-sandbox':
+            # This flag is emitted only after the caller's explicit confirmation.
+            backend.extend(['-c', 'sandbox_mode="danger-full-access"',
+                            '-c', 'approval_policy="never"'])
+        index += 1
+    if roots:
+        backend.extend(['-c', 'sandbox_workspace_write.writable_roots=' +
+                        json.dumps(roots, ensure_ascii=False)])
+    return frontend, backend
+
+
 def launch_routed_native(*, agent, binary, command, env, config, directory,
                          session_id, account, state_root, runtime_factory,
                          profile_name=None, confirm_full_access=False):
@@ -25,16 +69,18 @@ def launch_routed_native(*, agent, binary, command, env, config, directory,
     def delegate(turn):
         # Instantiate the heavyweight harness only after the gate selected DELEGATE.
         with delegate_lock:
+            if gate.by_plan(turn.plan.plan_id) is not turn or turn.task_id is not None:
+                raise ValueError('turn plan is stale or already consumed')
             if not runtime_holder:
                 runtime_holder.append(runtime_factory())
             runtime = runtime_holder[0]
-        task_id = runtime.create_task(
-            agent='codex', project=directory, prompt=turn.prompt, mode='prompt',
-            profile_name=profile_name, account_id=turn.plan.target.account,
-            confirm_full_access=confirm_full_access,
-            turn_execution_plan=turn.plan, turn_context=gate.conversation_context(turn),
-        )
-        turn.task_id = task_id
+            task_id = runtime.create_task(
+                agent='codex', project=directory, prompt=turn.prompt, mode='prompt',
+                profile_name=profile_name, account_id=turn.plan.target.account,
+                confirm_full_access=confirm_full_access,
+                turn_execution_plan=turn.plan, turn_context=gate.conversation_context(turn),
+            )
+            turn.task_id = task_id
         if turn.cancel_event.is_set():
             runtime.request_cancel(task_id)
             raise RuntimeError('turn cancelled')
@@ -86,11 +132,8 @@ def launch_routed_native(*, agent, binary, command, env, config, directory,
                     '-c', 'otel.log_user_prompt=false',
                 ]
                 socket_path = Path(temporary) / 'rpc.sock'
-                # The frontend supplies normal policy/context via thread/start.
-                policy_overrides = []
-                for index, arg in enumerate(command[:-1]):
-                    if arg == '-c' and command[index + 1].startswith('developer_instructions='):
-                        policy_overrides.extend(['-c', command[index + 1]])
+                # Remote TUI rejects --add-dir; workspace grants belong to its server.
+                command, policy_overrides = _codex_remote_arguments(command)
                 backend = [binary, *overrides, *policy_overrides, 'app-server', '--stdio']
                 bridge = CodexTurnBridge(socket_path, backend, child_env, gate,
                                          history_root=state_root / "private" / "interactive-history")

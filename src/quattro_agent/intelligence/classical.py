@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .store import FEATURE_SCHEMA_VERSION
-from .features import MODEL_INPUT_FIELDS, project_model_input
+from .features import MODEL_INPUT_FIELDS, project_model_input, validate_model_input
 
 
 ALGORITHM = "tfidf-logistic-regression-stdlib-v1"
@@ -201,8 +201,10 @@ class DirectDelegateModel:
         *,
         profile: Mapping[str, Any] | None = None,
         repository_present: bool = False,
+        model_input: Mapping[str, Any] | None = None,
     ) -> dict[int, float]:
-        model_input = project_model_input({**(profile or {}), "request_text": text})
+        model_input = model_input if model_input is not None else project_model_input({**(profile or {}), "request_text": text})
+        validate_model_input(model_input)
         counts = Counter(_terms(
             text, model_input, feature_set=self.feature_set
         ))
@@ -228,10 +230,12 @@ class DirectDelegateModel:
         *,
         profile: Mapping[str, Any] | None = None,
         repository_present: bool = False,
+        model_input: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        model_input = project_model_input({**(profile or {}), "request_text": text})
+        model_input = model_input if model_input is not None else project_model_input({**(profile or {}), "request_text": text})
+        validate_model_input(model_input)
         vector = self.vectorize(
-            text, profile=profile, repository_present=repository_present
+            text, profile=profile, repository_present=repository_present, model_input=model_input,
         )
         score = self.intercept + sum(self.weights[index] * value for index, value in vector.items())
         delegate_probability = _sigmoid(
