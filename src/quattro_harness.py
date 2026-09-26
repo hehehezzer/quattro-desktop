@@ -4102,11 +4102,7 @@ class HarnessRuntime:
             and isinstance(profile_data, Mapping)
             and profile_data.get("task_type") == "conversation"
         )
-        if conversational:
-            # A conversational answer has no repository execution claim to
-            # validate. Process and artifact checks are its complete contract.
-            pass
-        elif (project / ".git").exists() and self.command_resolver("git"):
+        if (project / ".git").exists() and self.command_resolver("git"):
             results.append(self._command_validation(
                 "Git diff integrity", [self.command_resolver("git") or "git", "diff", "--check"],
                 project, 30,
@@ -4117,6 +4113,8 @@ class HarnessRuntime:
                 ))
         delegated_worker = task.get("workflow") == "codex-pi-delegation"
         if conversational:
+            # Conversational turns make no project-test claim, but the Git
+            # integrity/read-only checks above still enforce their safety boundary.
             pass
         elif delegated_worker:
             pass

@@ -1104,7 +1104,9 @@ class TaskStore:
         if agent not in {"codex", "pi"}:
             raise ValueError(f"unsupported session agent: {agent}")
         with self._transaction(immediate=True) as connection:
-            self._task_row(connection, task_id)
+            task = self._task_row(connection, task_id)
+            if str(task["agent"]) != agent:
+                raise ValueError("logical session agent must match its initial task")
             connection.execute(
                 """INSERT INTO logical_sessions(
                        quattro_session_id, initial_task_id, current_task_id,
