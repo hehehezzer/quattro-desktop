@@ -41,6 +41,7 @@ def run_interactive(
     session_id: str | None = None,
     profile_name: str | None = None,
     confirm_full_access: bool = False,
+    account_id: str | None = None,
 ) -> int:
     """Keep one logical session while creating a fresh locked task per turn."""
     if agent != "codex":
@@ -52,7 +53,7 @@ def run_interactive(
         anchor = runtime.create_task(
             agent=agent, project=workspace, prompt="", mode="prompt",
             title="Interactive Quattro session", profile_name=profile_name,
-            confirm_full_access=confirm_full_access,
+            confirm_full_access=confirm_full_access, account_id=account_id,
         )
         session = runtime.store.logical_session_for_task(anchor)
         if session is None:
@@ -68,6 +69,7 @@ def run_interactive(
     else:
         session = runtime.store.get_logical_session(session_id)
         workspace = pathlib.Path(session["working_directory"]).resolve(strict=True)
+        account_id = account_id or session.get("last_account_id")
 
     print(f"Quattro · workspace: {workspace}\nsession: {session_id}\nType exit or quit to leave.", file=output, flush=True)
     history: list[tuple[str, str]] = []
@@ -102,6 +104,7 @@ def run_interactive(
                 agent=agent, project=workspace, prompt=prompt, mode="prompt",
                 logical_session_id=session_id, title=message[:100],
                 profile_name=profile_name, confirm_full_access=confirm_full_access,
+                account_id=account_id,
             )
             try:
                 code = runtime.run_task(task_id)

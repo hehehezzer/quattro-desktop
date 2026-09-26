@@ -3415,6 +3415,7 @@ def main() -> int:
                 return run_interactive(
                     harness(), agent="codex", workspace=pathlib.Path.cwd(), session_id=logical_id,
                     profile_name=args.policy, confirm_full_access=args.confirm_full_access,
+                    account_id=args.account,
                 )
             except (ConfigError, LeaseConflict, OSError, ValueError, RuntimeError) as error:
                 die(str(error))

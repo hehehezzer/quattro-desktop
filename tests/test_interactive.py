@@ -78,6 +78,25 @@ class InteractiveTests(unittest.TestCase):
             runtime.request_cancel.assert_called_once_with("interrupted-turn", reason="interactive_interrupt")
             self.assertIn("Session saved.", output.getvalue())
 
+    def test_resume_retains_account_or_accepts_explicit_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = mock.Mock()
+            runtime.store.get_logical_session.return_value = {
+                "working_directory": directory, "current_task_id": "anchor",
+                "initial_task_id": "anchor", "last_account_id": "account-2",
+            }
+            runtime.create_task.return_value = "turn"
+            runtime.run_task.return_value = 1
+            runtime.store.get_task.return_value = {"state": "failed", "terminal_summary": "failed"}
+            runtime.store.artifacts_for_task.return_value = []
+            for override, expected in ((None, "account-2"), ("account-1", "account-1")):
+                run_interactive(
+                    runtime, agent="codex", workspace=pathlib.Path(directory),
+                    session_id="qsession_test", account_id=override,
+                    input_stream=io.StringIO("hello\nexit\n"), output=io.StringIO(),
+                )
+                self.assertEqual(runtime.create_task.call_args.kwargs["account_id"], expected)
+
     def test_resume_restores_checkpoint_context(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
