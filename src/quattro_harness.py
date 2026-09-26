@@ -750,6 +750,12 @@ class HarnessRuntime:
             if coordination_id:
                 coordination = self.coordinator.get(str(coordination_id))
         elif logical_session_id:
+            session = self.store.get_logical_session(logical_session_id)
+            session_agent = str(session.get("agent") or "codex")
+            if agent != session_agent:
+                raise ValueError(
+                    f"logical session uses {session_agent.title()}, not {agent.title()}"
+                )
             coordination = self.coordinator.find_by_logical_session(logical_session_id)
             if coordination and top_level:
                 coordination = self.coordinator.resume(
@@ -761,7 +767,6 @@ class HarnessRuntime:
             else:
                 # Logical sessions created before cooperative worktrees retain
                 # their original directory on first resume.
-                session = self.store.get_logical_session(logical_session_id)
                 actual_project = pathlib.Path(session["working_directory"]).resolve(strict=True)
                 coordination = self.coordinator.reserve(
                     actual_project, task_summary=coordination_summary, task_scope=ownership,
@@ -953,6 +958,7 @@ class HarnessRuntime:
                     "delegation": delegation,
                     "gitStatusBefore": git_status_before,
                     "logicalSessionId": logical_session_id,
+                    "sessionContinuation": logical_session_id is not None,
                     "recoveryCheckpointId": recovery_checkpoint_id,
                     "replacementForPhysicalId": replacement_for_physical_id,
                     "coordinationSessionId": coordination.get("sessionId") if coordination else None,
@@ -1032,6 +1038,7 @@ class HarnessRuntime:
                     task_id=task_id,
                     repository_path=canonical_repository,
                     working_directory=actual_project,
+                    agent=agent,
                     account_id=selected_account,
                     provider_id="omniroute" if agent == "codex" else "pi",
                     native_codex_session_id=native_session_ref,
@@ -3056,6 +3063,7 @@ class HarnessRuntime:
             "taskId": session["current_task_id"],
             "repository": session["repository_path"],
             "workingDirectory": session["working_directory"],
+            "agent": str(session.get("agent") or "codex"),
             "originatingAccount": session["originating_account_id"],
             "lastAccount": session["last_account_id"],
             "providerId": session["provider_id"],
@@ -3119,16 +3127,18 @@ class HarnessRuntime:
             checkpoint = self.store.current_checkpoint(quattro_session_id, include_content=True)
             assert checkpoint is not None
         packet, _differences = self.recovery_packet_for_session(quattro_session_id)
+        session_agent = str(session.get("agent") or "codex")
         return self.create_task(
-            agent="codex",
+            agent=session_agent,
             project=pathlib.Path(session["repository_path"]),
             prompt=packet,
             mode="prompt",
+            profile_name="audit-read-only" if session_agent == "pi" else None,
             account_id=account_id or session.get("last_account_id"),
             logical_session_id=quattro_session_id,
             recovery_checkpoint_id=checkpoint["checkpoint_id"],
             replacement_for_physical_id=failed_id,
-            title="Codex checkpoint recovery",
+            title=f"{session_agent.title()} checkpoint recovery",
         )
 
     def prepare_resume_task(
@@ -4085,6 +4095,13 @@ class HarnessRuntime:
                 else "The task produced no inspectable output artifact.",
             ),
         ]
+        routing = task["private_payload"].get("routing")
+        profile_data = routing.get("task_profile") if isinstance(routing, Mapping) else None
+        conversational = (
+            task["private_payload"].get("sessionContinuation") is True
+            and isinstance(profile_data, Mapping)
+            and profile_data.get("task_type") == "conversation"
+        )
         if (project / ".git").exists() and self.command_resolver("git"):
             results.append(self._command_validation(
                 "Git diff integrity", [self.command_resolver("git") or "git", "diff", "--check"],
@@ -4095,7 +4112,11 @@ class HarnessRuntime:
                     project, task["private_payload"].get("gitStatusBefore")
                 ))
         delegated_worker = task.get("workflow") == "codex-pi-delegation"
-        if delegated_worker:
+        if conversational:
+            # Conversational turns make no project-test claim, but the Git
+            # integrity/read-only checks above still enforce their safety boundary.
+            pass
+        elif delegated_worker:
             pass
         elif project.resolve() == self.default_workspace.resolve() and (project / "tests").is_dir():
             results.append(self._command_validation(
@@ -4118,20 +4139,21 @@ class HarnessRuntime:
                 "Go tests", [self.command_resolver("go") or "go", "test", "./..."],
                 project, 600,
             ))
-        try:
-            config = self.config()
-            enabled, vault, projects, _ = self._memory(config)
-            if enabled:
-                healthy = vault_status(vault)["status"] == "ok" and project_vault_status(projects)["status"] == "ok"
+        if not conversational:
+            try:
+                config = self.config()
+                enabled, vault, projects, _ = self._memory(config)
+                if enabled:
+                    healthy = vault_status(vault)["status"] == "ok" and project_vault_status(projects)["status"] == "ok"
+                    results.append(ValidationResult(
+                        "Institutional memory audit",
+                        ValidationStatus.PASSED if healthy else ValidationStatus.FAILED,
+                        "Both required memory vaults are healthy." if healthy else "A required memory vault is degraded.",
+                    ))
+            except (ConfigError, MemoryError) as error:
                 results.append(ValidationResult(
-                    "Institutional memory audit",
-                    ValidationStatus.PASSED if healthy else ValidationStatus.FAILED,
-                    "Both required memory vaults are healthy." if healthy else "A required memory vault is degraded.",
+                    "Institutional memory audit", ValidationStatus.BLOCKED, _bounded(str(error)),
                 ))
-        except (ConfigError, MemoryError) as error:
-            results.append(ValidationResult(
-                "Institutional memory audit", ValidationStatus.BLOCKED, _bounded(str(error)),
-            ))
 
         for position, result in enumerate(results):
             step_id = self.store.create_step(

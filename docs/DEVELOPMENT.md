@@ -31,11 +31,19 @@ git diff --check
 ## Interactive agent sessions
 
 Run `quattro-agent` or `quattro-agent launch` in the intended workspace for a
-**new** interactive Quattro session. The configured default agent is used unless
-an agent is specified, for example `quattro-agent launch codex /path/to/repo`.
-Each turn creates its own locked, validated Quattro task within one persistent
-logical session; the CLI stays at the prompt until `exit`, `quit`, Ctrl-D, or
-Ctrl-C. `quattro-agent resume` lists recoverable sessions and
+**new** interactive Quattro session. On a terminal, Quattro resolves and displays
+the workspace, then asks whether to use Codex or Pi. The `defaultAgent` from
+`ai.json` is marked as the default and selected by Enter. Non-TTY launches use
+that configured default without prompting. Choose directly with
+`quattro-agent launch codex` or `quattro-agent launch pi`; an optional workspace
+path may follow the agent. Cancelling the chooser with `q`, `quit`, `exit`,
+Ctrl-D, or Ctrl-C exits before a durable session is created.
+
+Each turn creates its own locked, appropriately validated Quattro task within
+one persistent logical session; the CLI stays at the prompt until `exit`,
+`quit`, Ctrl-D, or Ctrl-C. Pi remains under its bounded read-only policy unless
+an explicitly requested policy is independently authorized. `quattro-agent
+resume` lists recoverable sessions and
 `quattro-agent resume QSESSION_ID` continues one. `quattro-agent --help` displays
 command help; `quattro-agent prompt` remains the one-shot scripting path.
 Launching does not create or switch Git branches or worktrees. Verify a clean
