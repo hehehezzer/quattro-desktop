@@ -28,6 +28,19 @@ python -m py_compile src/quattro_agent/*.py
 git diff --check
 ```
 
+## Interactive agent sessions
+
+Run `quattro-agent` or `quattro-agent launch` in the intended workspace for a
+**new** interactive Quattro session. The configured default agent is used unless
+an agent is specified, for example `quattro-agent launch codex /path/to/repo`.
+Each turn creates its own locked, validated Quattro task within one persistent
+logical session; the CLI stays at the prompt until `exit`, `quit`, Ctrl-D, or
+Ctrl-C. `quattro-agent resume` lists recoverable sessions and
+`quattro-agent resume QSESSION_ID` continues one. `quattro-agent --help` displays
+command help; `quattro-agent prompt` remains the one-shot scripting path.
+Launching does not create or switch Git branches or worktrees. Verify a clean
+`dev` checkout and create the intended feature branch before coding.
+
 ## Branch and worktree policy
 
 Keep two persistent branches: `main`, which tracks the authoritative production

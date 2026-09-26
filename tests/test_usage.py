@@ -191,21 +191,21 @@ class LauncherParserTests(unittest.TestCase):
         self.assertEqual(agent.SCRIPT_PATH.name, "quattro-agent")
         self.assertTrue(agent.SCRIPT_PATH.parent.name in {"src", "bin"})
 
-    def test_bare_command_displays_help_without_initializing_runtime(self):
+    def test_bare_command_starts_new_interactive_session(self):
         args = agent.build_parser().parse_args([])
         self.assertIsNone(args.command)
         with (
             mock.patch.object(agent.sys, "argv", ["quattro-agent"]),
-            mock.patch.object(agent, "ensure_state_dirs") as state,
-            mock.patch.object(agent, "load_config") as config,
-            mock.patch.object(agent, "launch_terminal") as launch,
-            mock.patch.object(agent.argparse.ArgumentParser, "print_help") as help_output,
+            mock.patch.object(agent, "ensure_state_dirs"),
+            mock.patch.object(agent, "load_config", return_value={"defaultAgent": "codex"}),
+            mock.patch.object(agent, "harness") as runtime,
+            mock.patch("quattro_agent.interactive.run_interactive", return_value=0) as shell,
         ):
             self.assertEqual(agent.main(), 0)
-        help_output.assert_called_once_with()
-        state.assert_not_called()
-        config.assert_not_called()
-        launch.assert_not_called()
+        shell.assert_called_once_with(
+            runtime(), agent="codex", workspace=agent.safe_directory(None),
+            profile_name=None, confirm_full_access=False,
+        )
 
     def test_explicit_launch_arguments_still_parse(self):
         args = agent.build_parser().parse_args(["launch", "pi", "/tmp"])
@@ -265,10 +265,18 @@ class SessionDiscoveryTests(unittest.TestCase):
                 rows = agent.scan_codex_sessions(config)
             self.assertEqual([row["sessionId"] for row in rows], list(reversed(expected)))
             with mock.patch.object(agent, "codex_thread_titles", return_value={}):
-                target = agent.resolve_codex_resume_target(config, project)
+                with self.assertRaisesRegex(ValueError, "Multiple native sessions"):
+                    agent.resolve_codex_resume_target(config, project)
+                target = agent.resolve_codex_resume_target(
+                    config, project, session_id=expected[-1], account_id="account-2",
+                )
+                cross_account = agent.resolve_codex_resume_target(
+                    config, project, session_id=expected[-1], account_id="account-1",
+                )
             assert target is not None
             self.assertEqual(target["sessionId"], expected[-1])
             self.assertEqual(target["accountId"], "account-2")
+            self.assertEqual(cross_account["sessionId"], expected[-1])
 
     def test_scan_uses_codex_thread_name_and_persists_display_safe_title(self):
         with tempfile.TemporaryDirectory() as temporary:
