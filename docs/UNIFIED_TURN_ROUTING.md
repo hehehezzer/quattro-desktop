@@ -234,11 +234,15 @@ catalog/canonical identity, live inference, network latency, pricing, billing,
 quality and human-reviewed promotion evidence remain unverified. No production
 SHADOW/COOPERATIVE promotion is justified by simulated fixtures.
 
-No merge or installation was performed. The primary checkout remains at #29;
-installed runtime module resolution/live native-provider behavior has not been
-validated by this change. The default-shell wrapper could not resolve the
-installed Python package from `/tmp`; environment-specific launchers may supply
-its path, so this is not a claim that an existing desktop service is broken.
+No canonical-pipeline merge or installation was performed. A subsequent narrow
+installed `native_session.py` hotfix addresses Codex's remote `--add-dir`
+rejection without installing Jev/unification; see `interactive-routing.md`.
+The primary checkout remains at #29;
+live native-provider behavior has not been validated by this change. A later
+launcher investigation confirmed that installed modules live beside the script
+under `~/.local/bin/quattro_agent`; a `python -c` import probe from `/tmp` omits
+that script directory and is not a valid installed-launcher health check.
 Linux/Windows hosted CI for the new revision must be checked on the PR before
-integration. Deployment and real native smoke remain gated; existing installed
-files, services, configuration and other session worktrees were not modified.
+integration. Canonical-pipeline deployment and real native-provider smoke remain
+gated; services, configuration and other session worktrees were not modified.
+The narrow launcher hotfix is backed up locally and is not a full manifest release.

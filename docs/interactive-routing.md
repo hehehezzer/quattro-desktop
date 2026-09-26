@@ -28,6 +28,17 @@ Quattro gate → DIRECT Responses call or durable Codex harness task. Every inpu
 is consumed by the hook, including failures, so an unavailable gate cannot fall
 through to native Pi execution.
 
+## Remote launch compatibility
+
+Codex 0.157.1 rejects `--add-dir` on a `--remote` frontend. Quattro removes
+those flags from the TUI command and passes the explicitly requested roots to
+the app-server as `sandbox_workspace_write.writable_roots`. The selected
+sandbox and approval policy are mirrored on the server; read-only stays
+read-only, and full access still requires the launcher's explicit confirmation.
+Resume arguments, working directory and developer instructions are preserved.
+The root override replaces any account-configured extra writable roots; only
+explicitly supplied roots are carried over, rather than reading native config.
+
 ## Plans, budgets, and transport
 
 A session identity lasts across turns. Each turn gets a new UUID and immutable
