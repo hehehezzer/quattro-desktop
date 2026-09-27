@@ -1,5 +1,6 @@
 import Quickshell
 import Quickshell.Services.Notifications
+import Quickshell.Wayland
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -18,6 +19,8 @@ Scope {
     }
 
     PanelWindow {
+        focusable: true
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
         anchors {
             top: true
             right: true
