@@ -18,7 +18,12 @@ Item {
         1
     )
 
+    property bool choosingLocation: false
     signal requestFocus()
+    onChoosingLocationChanged: {
+        if (choosingLocation) locationPicker.begin();
+        else DesktopWeather.searchQuery = "";
+    }
 
     // ========================================================
     // DATE HELPERS
@@ -153,6 +158,7 @@ Item {
     // Used whenever the popup is closed.
     // This ensures the next open always starts on today's month.
     function resetToToday() {
+        choosingLocation = false
         currentDate = new Date()
 
         shownMonth = new Date(
@@ -181,6 +187,7 @@ Item {
     // ========================================================
 
     WheelHandler {
+        enabled: !root.choosingLocation
         target: null
 
         acceptedDevices:
@@ -202,10 +209,18 @@ Item {
     // CONTENT
     // ========================================================
 
+    WeatherLocationPicker {
+        id: locationPicker
+        anchors.fill: parent
+        visible: root.choosingLocation
+        onDone: { root.choosingLocation = false; root.requestFocus(); }
+    }
+
     ColumnLayout {
         anchors.fill: parent
+        visible: !root.choosingLocation
 
-        spacing: 14
+        spacing: 10
 
         // ====================================================
         // CURRENT DATE
@@ -584,7 +599,7 @@ Item {
             Layout.fillWidth: true
             spacing: 5
             Text {
-                text: DesktopWeather.label + (DesktopWeather.snapshot.cached ? " · cached" : "")
+                text: DesktopWeather.label + (DesktopWeather.condition ? " · " + DesktopWeather.condition : "")
                 color: QuattroTheme.Theme.textStrong
                 font.family: root.fontFamily
                 font.pixelSize: 13
@@ -596,16 +611,30 @@ Item {
                 color: DesktopWeather.error ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
                 font.pixelSize: 10
             }
+            Text {
+                text: "Location"
+                color: QuattroTheme.Theme.textMuted
+                font.pixelSize: 11
+            }
+            DesktopButton {
+                Layout.fillWidth: true
+                text: DesktopWeather.placeLabel + "  ▾"
+                Accessible.name: "Change weather location: " + DesktopWeather.placeLabel
+                ToolTip.text: DesktopWeather.placeLabel
+                onClicked: root.choosingLocation = true
+            }
+            Text {
+                Layout.fillWidth: true
+                visible: !!DesktopWeather.snapshot.defaultLocation
+                text: "Manila is the Philippines default, not your detected location."
+                wrapMode: Text.Wrap
+                color: QuattroTheme.Theme.textMuted
+                font.pixelSize: 10
+            }
             RowLayout {
                 Layout.fillWidth: true
-                DesktopField { id: latitude; Layout.fillWidth: true; placeholderText: "Latitude"; Accessible.name: "Weather latitude"; text: DesktopWeather.snapshot.location ? String(DesktopWeather.snapshot.location[0]) : "" }
-                DesktopField { id: longitude; Layout.fillWidth: true; placeholderText: "Longitude"; Accessible.name: "Weather longitude"; text: DesktopWeather.snapshot.location ? String(DesktopWeather.snapshot.location[1]) : "" }
-                DesktopButton {
-                    text: "Save"
-                    enabled: !DesktopWeather.loading && latitude.text.trim().length > 0 && longitude.text.trim().length > 0 && isFinite(Number(latitude.text)) && isFinite(Number(longitude.text))
-                    onClicked: DesktopWeather.refresh(true, latitude.text, longitude.text)
-                }
-                DesktopButton { text: "Refresh"; enabled: !DesktopWeather.loading && DesktopWeather.snapshot.configured; onClicked: DesktopWeather.refresh(true) }
+                Text { text: "Units · Celsius"; color: QuattroTheme.Theme.textMuted; font.pixelSize: 11; Layout.fillWidth: true }
+                DesktopButton { text: DesktopWeather.loading ? "Refreshing…" : "Refresh weather"; enabled: !DesktopWeather.loading; onClicked: DesktopWeather.refresh(true) }
             }
         }
 

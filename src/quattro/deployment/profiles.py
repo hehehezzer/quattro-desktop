@@ -78,6 +78,8 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
             ("src/quickshell/" + name, ".config/quickshell/" + name)
         for name in (
             "services/qmldir", "services/DesktopMedia.qml", "services/DesktopWeather.qml",
+            "services/PopupManager.qml", "components/shared/TemporaryPanel.qml",
+            "components/panels/WeatherLocationPicker.qml",
             "components/MediaStrip.qml", "components/RunningApps.qml",
             "components/shared/DesktopButton.qml", "components/shared/DesktopField.qml",
             "components/shared/DesktopCombo.qml", "components/panels/Equalizer.qml",

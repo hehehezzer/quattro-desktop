@@ -4,6 +4,8 @@ import Quickshell.Hyprland
 import QtQuick
 import QtQuick.Layouts
 import "../theme" as QuattroTheme
+import "../services"
+import "shared"
 
 Scope {
     id: root
@@ -31,6 +33,13 @@ Scope {
         if (!QuattroTheme.Theme.apply(name))
             return
         Quickshell.execDetached([root.themeCommand, "set", name])
+    }
+
+    Connections {
+        target: PopupManager
+        function onRequested(name) {
+            if (name === "menu") menuWindow.visible ? root.close() : root.open("main");
+        }
     }
 
     function openPanel(name) {
@@ -287,31 +296,13 @@ Scope {
     }
 
 
-    PanelWindow {
+    TemporaryPanel {
         id: menuWindow
-
-        visible: false
-
-        anchors {
-            top: true
-            bottom: true
-            left: true
-            right: true
-        }
-
-        aboveWindows: true
-        focusable: true
-
-        exclusionMode: ExclusionMode.Ignore
-
-        color: QuattroTheme.Theme.overlay
-
-
-        MouseArea {
-            anchors.fill: parent
-
-            onClicked: root.close()
-        }
+        panelName: "menu"
+        onDismissed: root.close()
+        implicitWidth: 520
+        implicitHeight: root.page === "main" ? 500 : 620
+        color: "transparent"
 
 
         Rectangle {
@@ -403,14 +394,7 @@ Scope {
                         }
 
 
-                        Keys.onEscapePressed: {
-                            if (root.page !== "main") {
-                                root.page = "main"
-                                search.text = ""
-                            } else {
-                                root.close()
-                            }
-                        }
+                        Keys.onEscapePressed: root.close()
                     }
                 }
 

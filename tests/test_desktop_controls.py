@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 SPEC = importlib.util.spec_from_file_location("desktop_controls", Path(__file__).parents[1] / "src/quattro_desktop_controls.py")
 desktop = importlib.util.module_from_spec(SPEC)
@@ -37,10 +37,84 @@ class DesktopControlsTests(unittest.TestCase):
         self.assertNotIn(",", graph)
         self.assertIn('"Gain 1" = 1.0', desktop.eq_config([0] * 10, "sink"))
 
-    def test_weather_missing_location_does_not_access_network(self):
-        with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp)), patch.object(desktop.urllib.request, "urlopen") as urlopen:
-            self.assertFalse(desktop.weather()["configured"])
-            urlopen.assert_not_called()
+    def test_weather_fresh_setup_uses_explicit_generic_manila(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp) / "config"), patch.object(desktop, "CACHE", Path(temp) / "cache"), patch.object(desktop.urllib.request, "urlopen", side_effect=OSError("offline")):
+            result = desktop.weather()
+            self.assertTrue(result["defaultLocation"])
+            self.assertEqual(result["place"]["name"], "Manila")
+            self.assertEqual(result["place"]["country_code"], "PH")
+            self.assertFalse(result["available"])
+            self.assertFalse((desktop.CONFIG / "weather.json").exists())
+
+    def test_geocode_worldwide_unicode_and_bounded_request(self):
+        response = MagicMock()
+        place = {**desktop.DEFAULT_LOCATION, "name": "東京", "country": "Japan", "country_code": "JP"}
+        response.__enter__.return_value.read.return_value = json.dumps({"results": [place] * 12}).encode()
+        with patch.object(desktop.urllib.request, "urlopen", return_value=response) as request:
+            result = desktop.geocode("  東京  ")
+        self.assertEqual(result["query"], "東京")
+        self.assertEqual(len(result["results"]), 8)
+        self.assertIn("Japan", result["results"][0]["label"])
+        url = request.call_args.args[0].full_url
+        self.assertTrue(url.startswith("https://geocoding-api.open-meteo.com/v1/search?"))
+        params = desktop.urllib.parse.parse_qs(desktop.urllib.parse.urlsplit(url).query)
+        self.assertEqual(params["name"], ["東京"])
+        self.assertEqual(params["count"], ["8"])
+        self.assertNotIn("countryCode", params)
+        self.assertEqual(request.call_args.kwargs["timeout"], 8)
+        response.__enter__.return_value.read.assert_called_once_with(65536)
+
+    def test_geocode_short_query_and_invalid_inputs(self):
+        with patch.object(desktop.urllib.request, "urlopen") as request:
+            self.assertEqual(desktop.geocode("x")["results"], [])
+            for query in ["x" * 101, "ab\x00cd"]:
+                with self.assertRaises(ValueError):
+                    desktop.geocode(query)
+            request.assert_not_called()
+
+    def test_geocode_empty_and_network_failure_are_distinct(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"generationtime_ms": 1}'
+        with patch.object(desktop.urllib.request, "urlopen", return_value=response):
+            self.assertEqual(desktop.geocode("nowhere")["results"], [])
+            self.assertNotIn("error", desktop.geocode("nowhere"))
+        with patch.object(desktop.urllib.request, "urlopen", side_effect=OSError("offline")):
+            self.assertIn("retry", desktop.geocode("Manila")["error"])
+
+    def test_geocode_malformed_and_out_of_range_results(self):
+        for data in [[], {"results": {}}, {"results": [{"name": "bad", "latitude": 91, "longitude": 0}]}, {"results": [None]}]:
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = json.dumps(data).encode()
+            with patch.object(desktop.urllib.request, "urlopen", return_value=response):
+                self.assertIn("error", desktop.geocode("query"))
+
+    def test_location_persistence_refresh_cache_and_timezone(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp) / "config"), patch.object(desktop, "CACHE", Path(temp) / "cache"):
+            place = {**desktop.DEFAULT_LOCATION, "name": "Tokyo", "country": "Japan", "country_code": "JP", "admin1": "Tokyo", "latitude": 35.6895, "longitude": 139.6917, "timezone": "Asia/Tokyo"}
+            saved = desktop.save_place(place)
+            self.assertEqual(saved["label"], "Tokyo, Japan")
+            self.assertEqual(desktop.load(desktop.CONFIG / "weather.json", {}), saved)
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = b'{"current":{"temperature_2m":23,"weather_code":2,"is_day":1}}'
+            with patch.object(desktop.urllib.request, "urlopen", return_value=response) as request:
+                result = desktop.weather(True)
+                self.assertFalse(result["defaultLocation"])
+                self.assertEqual(result["place"], saved)
+                self.assertEqual(result["temperature"], 23)
+                self.assertIn("timezone=Asia%2FTokyo", request.call_args.args[0].full_url)
+                self.assertTrue(desktop.weather()["cached"])
+                self.assertEqual(request.call_count, 1)
+                desktop.save_place(desktop.DEFAULT_LOCATION)
+                result = desktop.weather()
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual(result["place"]["name"], "Manila")
+
+    def test_place_metadata_is_bounded_and_not_trusted_html(self):
+        for value in [None, {**desktop.DEFAULT_LOCATION, "name": "x" * 161}, {**desktop.DEFAULT_LOCATION, "timezone": "Asia/Manila?bad"}]:
+            with self.assertRaises(ValueError):
+                desktop.normalize_place(value)
+        legacy = desktop.normalize_place({"latitude": 10, "longitude": 20})
+        self.assertEqual(legacy["label"], "Saved location")
 
     def test_weather_cached_location_and_failure(self):
         with tempfile.TemporaryDirectory() as temp:

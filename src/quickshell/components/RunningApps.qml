@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "shared"
+import "../services"
 import "../theme" as QuattroTheme
 
 DesktopButton {
@@ -34,7 +35,16 @@ DesktopButton {
         actionProcess.command = ["python3", Quickshell.env("HOME") + "/.local/bin/quattro_desktop_controls.py", "application", action, selected.address, String(selected.pid), selected.start];
         actionProcess.running = true;
     }
+    onOpenedChanged: {
+        if (!opened) {
+            contextMenu.close();
+            selected = null;
+            confirmKill = false;
+            needsForce = false;
+        }
+    }
     onClicked: {
+        PopupManager.revision++;
         opened = !opened;
         selected = null;
         confirmKill = false;
@@ -66,6 +76,7 @@ DesktopButton {
                     if (s.error)
                         root.message = s.error;
                     if (root.selected && !root.apps.some(a => a.address === root.selected.address && a.start === root.selected.start)) {
+                        contextMenu.close();
                         root.selected = null;
                         root.confirmKill = false;
                         root.needsForce = false;
@@ -91,6 +102,7 @@ DesktopButton {
             }
         }
         onExited: {
+            contextMenu.close();
             refreshDelay.restart();
             if (root.lastAction === "open")
                 root.opened = false;
@@ -122,8 +134,10 @@ DesktopButton {
             root.opened = false;
         }
     }
-    PanelWindow {
+    TemporaryPanel {
         id: popup
+        panelName: "applications"
+        onDismissed: root.opened = false
         visible: root.opened
         screen: root.barWindow.screen
         anchors {
@@ -135,18 +149,6 @@ DesktopButton {
             right: 8
         }
         exclusionMode: ExclusionMode.Ignore
-        focusable: true
-        WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-        HyprlandFocusGrab {
-            active: popup.visible
-            windows: [popup]
-            onCleared: root.opened = false
-        }
-        Shortcut {
-            sequence: "Escape"
-            enabled: popup.visible
-            onActivated: root.opened = false
-        }
         implicitWidth: 410
         implicitHeight: 430
         color: QuattroTheme.Theme.background
@@ -195,6 +197,7 @@ DesktopButton {
                         root.selected = modelData;
                         root.confirmKill = false;
                         root.needsForce = false;
+                        contextMenu.close();
                         contextMenu.popup(appRow, 8, appRow.height);
                     }
                     border.width: activeFocus ? 1 : 0
@@ -221,8 +224,10 @@ DesktopButton {
                             root.message = "";
                             if (event.button === Qt.LeftButton)
                                 root.act("open");
-                            else
+                            else {
+                                contextMenu.close();
                                 contextMenu.popup(appRow, event.x, event.y);
+                            }
                         }
                     }
                 }

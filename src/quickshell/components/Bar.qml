@@ -114,7 +114,17 @@ PanelWindow {
         )
     }
 
-    Component.onCompleted: usageProcess.running = true
+    Component.onCompleted: {
+        PopupManager.registerBar(root)
+        usageProcess.running = true
+    }
+    Component.onDestruction: PopupManager.unregisterBar(root)
+    TapHandler {
+        property int pressRevision: -1
+        acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+        onPressedChanged: if (pressed) pressRevision = PopupManager.revision
+        onTapped: PopupManager.barTapped(pressRevision)
+    }
 
     Process {
         id: usageProcess
@@ -206,13 +216,7 @@ PanelWindow {
                 cursorShape: Qt.PointingHandCursor
 
                 onClicked: {
-                    Quickshell.execDetached([
-                        "qs",
-                        "ipc",
-                        "call",
-                        "menu",
-                        "toggle"
-                    ])
+                    PopupManager.request("menu")
                 }
             }
         }
@@ -370,13 +374,7 @@ PanelWindow {
 
                 onClicked: function(mouse) {
                     if (mouse.button === Qt.LeftButton) {
-                        Quickshell.execDetached([
-                            "qs",
-                            "ipc",
-                            "call",
-                            "panel",
-                            "clock"
-                        ])
+                        PopupManager.request("clock")
 
                         return
                     }
@@ -514,7 +512,7 @@ PanelWindow {
                     if (containsMouse)
                         root.countdownNow = Date.now()
                 }
-                onClicked: Quickshell.execDetached(["qs", "ipc", "call", "agents", "toggle"])
+                onClicked: PopupManager.request("agents")
             }
         }
 
@@ -577,6 +575,7 @@ PanelWindow {
                             trayEntry.height
                         )
 
+                        PopupManager.closeActive()
                         item.display(
                             root,
                             pos.x,
@@ -624,13 +623,7 @@ PanelWindow {
             glyph: "󰂯"
 
             onClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "bluetooth"
-                ])
+                PopupManager.request("bluetooth")
             }
         }
 
@@ -638,13 +631,7 @@ PanelWindow {
             glyph: "󰖩"
 
             onClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "network"
-                ])
+                PopupManager.request("network")
             }
         }
 
@@ -663,25 +650,8 @@ PanelWindow {
                 ? "󰖀"
                 : "󰕾"
 
-            onClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "audio"
-                ])
-            }
-
-            onMiddleClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "audio"
-                ])
-            }
+            onClicked: PopupManager.request("audio")
+            onMiddleClicked: PopupManager.request("audio")
 
             onRightClicked: {
                 Quickshell.execDetached([
@@ -719,13 +689,7 @@ PanelWindow {
             glyph: "󰍹"
 
             onClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "display"
-                ])
+                PopupManager.request("display")
             }
         }
 
@@ -733,13 +697,7 @@ PanelWindow {
             glyph: ""
 
             onClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "power"
-                ])
+                PopupManager.request("power")
             }
         }
     }
@@ -747,7 +705,7 @@ PanelWindow {
     PopupWindow {
         id: systemStatsPopup
 
-        visible: root.hoveredSystemStat !== "" && root.systemStatsPopupPositioned
+        visible: !PopupManager.activePanel && root.hoveredSystemStat !== "" && root.systemStatsPopupPositioned
         color: "transparent"
         anchor.window: root
         anchor.rect.x: Math.round(root.systemStatsPopupX)
@@ -790,7 +748,7 @@ PanelWindow {
     PopupWindow {
         id: agentUsagePopup
 
-        visible: agentMouse.containsMouse
+        visible: !PopupManager.activePanel && agentMouse.containsMouse
         color: "transparent"
         anchor.window: root
         anchor.rect.x: Math.round(agentUsageButton.mapToItem(root.contentItem, 0, 0).x + agentUsageButton.width - implicitWidth)

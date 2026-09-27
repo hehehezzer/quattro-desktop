@@ -8,6 +8,8 @@ import QtQuick.Layouts
 import "../theme" as QuattroTheme
 
 import "panels"
+import "shared"
+import "../services"
 
 Scope {
     id: root
@@ -90,6 +92,17 @@ Scope {
         }
 
         return Quickshell.screens[0]
+    }
+
+    Connections {
+        target: PopupManager
+        function onRequested(name) {
+            if (name === "clock") root.toggleClock();
+            else if (["audio", "bluetooth", "network", "display", "power"].indexOf(name) >= 0) {
+                if (popupHost.visible && root.page === name) root.close();
+                else root.openPage(name);
+            }
+        }
     }
 
     function openPage(name) {
@@ -192,11 +205,10 @@ Scope {
     // RIGHT-SIDE SYSTEM PANEL HOST
     // ========================================================
 
-    PanelWindow {
+    TemporaryPanel {
         id: popupHost
-
-        HyprlandFocusGrab { active: popupHost.visible; windows: [popupHost]; onCleared: root.close() }
-        Shortcut { sequence: "Escape"; enabled: popupHost.visible; onActivated: { if (root.page !== "bluetooth" || !bluetoothPanel.handleEscape()) root.close() } }
+        panelName: root.page
+        onDismissed: root.close()
 
         visible: false
         color: "transparent"
@@ -212,9 +224,7 @@ Scope {
         }
 
         implicitWidth: 430
-        implicitHeight: root.page === "network" ? 620 : 560
-        focusable: true
-        WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        implicitHeight: Math.min(root.page === "network" ? 620 : 560, (screen ? screen.height : 1080) - 60)
 
         exclusionMode:
             ExclusionMode.Ignore
@@ -677,11 +687,10 @@ Scope {
     // CLOCK / CALENDAR POPUP
     // ========================================================
 
-    PanelWindow {
+    TemporaryPanel {
         id: clockHost
-
-        HyprlandFocusGrab { active: clockHost.visible; windows: [clockHost]; onCleared: root.closeClock() }
-        Shortcut { sequence: "Escape"; enabled: clockHost.visible; onActivated: root.closeClock() }
+        panelName: "clock"
+        onDismissed: root.closeClock()
 
         visible: false
         color: "transparent"
@@ -689,10 +698,8 @@ Scope {
         anchors { top: true }
         margins { top: 38 }
 
-        implicitHeight: Math.min(740, (screen ? screen.height : 1080) - 60)
+        implicitHeight: Math.min(800, (screen ? screen.height : 1080) - 60)
         implicitWidth: 430
-        focusable: true
-        WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
         exclusionMode:
             ExclusionMode.Ignore

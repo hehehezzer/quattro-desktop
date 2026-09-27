@@ -60,19 +60,81 @@ def atomic(path, value):
             os.unlink(temp)
 
 
+# Generic city fallback, never an inferred personal location (GeoNames 1701668).
+DEFAULT_LOCATION = {"id": 1701668, "name": "Manila", "admin1": "Metro Manila",
+                    "country": "Philippines", "country_code": "PH", "timezone": "Asia/Manila",
+                    "latitude": 14.6042, "longitude": 120.9822}
+
+
+def normalize_place(value):
+    if not isinstance(value, dict):
+        raise ValueError("Invalid weather location")
+    lat, lon = coordinates(value["latitude"], value["longitude"])
+    result = {"latitude": lat, "longitude": lon}
+    for key in ("name", "admin1", "admin2", "country", "country_code", "timezone"):
+        text = value.get(key, "")
+        if not isinstance(text, str) or len(text) > 160 or any(ord(c) < 32 for c in text):
+            raise ValueError("Invalid location metadata")
+        result[key] = text.strip()
+    if result["timezone"] and not re.fullmatch(r"[A-Za-z0-9_+./-]{1,80}", result["timezone"]):
+        raise ValueError("Invalid location timezone")
+    if isinstance(value.get("id"), int) and not isinstance(value["id"], bool):
+        result["id"] = value["id"]
+    parts = []
+    for key in ("name", "admin2", "admin1", "country"):
+        if result[key] and result[key] not in parts:
+            parts.append(result[key])
+    result["label"] = ", ".join(parts) or "Saved location"
+    return result
+
+
+def geocode(query):
+    query = query.strip()
+    if len(query) < 2:
+        return {"query": query, "results": []}
+    if len(query) > 100 or any(ord(c) < 32 for c in query):
+        raise ValueError("Search must be 2–100 characters")
+    params = urllib.parse.urlencode({"name": query, "count": 8, "language": "en", "format": "json"})
+    request = urllib.request.Request("https://geocoding-api.open-meteo.com/v1/search?" + params,
+                                     headers={"User-Agent": "QuattroDesktop/1.0"})
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            data = json.loads(response.read(65536))
+        rows = data.get("results", [])
+        if not isinstance(rows, list):
+            raise ValueError("Invalid geocoding results")
+        results = []
+        for row in rows[:8]:
+            place = normalize_place(row)
+            if place["name"]:
+                results.append(place)
+        return {"query": query, "results": results}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {"query": query, "results": [], "error": "Location search unavailable. Check your connection and retry."}
+
+
+def save_place(value):
+    place = normalize_place(value)
+    if not place["name"]:
+        raise ValueError("Select a named location")
+    atomic(CONFIG / "weather.json", json.dumps(place, ensure_ascii=False))
+    return place
+
+
 def weather(force=False):
-    location = load(CONFIG / "weather.json", {})
+    saved = load(CONFIG / "weather.json", {})
+    location = normalize_place(saved or DEFAULT_LOCATION)
+    context = {"place": location, "defaultLocation": not bool(saved), "configured": True}
     cached = load(CACHE / "weather.json", {})
-    if not location:
-        return {"available": False, "error": "Set your weather location in Calendar", "configured": False}
-    lat, lon = coordinates(location["latitude"], location["longitude"])
-    if cached.get("location") != [lat, lon]:
+    lat, lon = location["latitude"], location["longitude"]
+    timezone = location["timezone"] or "auto"
+    if cached.get("location") != [lat, lon] or cached.get("timezone", "auto") != timezone:
         cached = {}
-    if not force and time.time() - cached.get("updated", 0) < 1800:
-        return {**cached, "cached": True, "configured": True}
+    if not force and 0 <= time.time() - cached.get("updated", 0) < 1800:
+        return {**cached, **context, "cached": True}
     try:
         query = urllib.parse.urlencode({"latitude": lat, "longitude": lon,
-            "current": "temperature_2m,weather_code,is_day", "temperature_unit": "celsius"})
+            "current": "temperature_2m,weather_code,is_day", "temperature_unit": "celsius", "timezone": timezone})
         request = urllib.request.Request("https://api.open-meteo.com/v1/forecast?" + query,
                                          headers={"User-Agent": "QuattroDesktop/1.0"})
         with urllib.request.urlopen(request, timeout=12) as response:
@@ -82,11 +144,11 @@ def weather(force=False):
             raise ValueError("Invalid temperature")
         result = {"available": True, "configured": True, "temperature": temperature,
                   "code": int(data["weather_code"]), "day": bool(data["is_day"]),
-                  "updated": time.time(), "location": [lat, lon], "cached": False}
+                  "updated": time.time(), "location": [lat, lon], "timezone": timezone, "cached": False}
         atomic(CACHE / "weather.json", json.dumps(result))
-        return result
-    except (OSError, ValueError, KeyError) as error:
-        return {**cached, "available": bool(cached), "configured": True, "cached": bool(cached),
+        return {**result, **context}
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return {**cached, **context, "available": bool(cached), "cached": bool(cached),
                 "stale": True, "error": "Weather unavailable; retry later (" + type(error).__name__ + ")"}
 
 
@@ -271,7 +333,10 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     w = sub.add_parser("weather")
     w.add_argument("--refresh", action="store_true")
-    w.add_argument("--location", nargs=2, type=float)
+    w.add_argument("--location", nargs=2, type=float, help="Legacy scripting interface; use the desktop location picker")
+    w.add_argument("--place", help="Selected geocoder location as JSON")
+    search = sub.add_parser("geocode")
+    search.add_argument("query")
     sub.add_parser("applications")
     app = sub.add_parser("application")
     app.add_argument("action", choices=["open", "close", "terminate", "force"])
@@ -295,7 +360,13 @@ def main():
             if args.location:
                 lat, lon = coordinates(*args.location)
                 atomic(CONFIG / "weather.json", json.dumps({"latitude": lat, "longitude": lon}))
-            result = weather(args.refresh or bool(args.location))
+            if args.place:
+                if len(args.place) > 4096:
+                    raise ValueError("Location payload too large")
+                save_place(json.loads(args.place))
+            result = weather(args.refresh or bool(args.location) or bool(args.place))
+        elif args.command == "geocode":
+            result = geocode(args.query)
         elif args.command == "applications":
             result = applications()
         elif args.command == "application":
