@@ -50,7 +50,7 @@ class BluetoothTests(unittest.TestCase):
         with patch.object(bridge_module.threading, "Thread", ImmediateThread), patch.object(bridge_module.GLib, "idle_add"):
             self.bridge.dispatch({"action": "pair", "path": "/device"})
         calls = self.bridge.emit.call_args_list
-        self.assertTrue(any("AuthenticationFailed" in str(call.kwargs.get("error", "")) for call in calls))
+        self.assertTrue(any("Pairing was rejected" in str(call.kwargs.get("error", "")) for call in calls))
         self.assertFalse(any("message" in call.kwargs for call in calls))
         self.assertFalse(self.bridge.busy)
         self.assertEqual(self.bridge.call.call_args_list[0].kwargs["timeout"], 65000)
@@ -105,6 +105,11 @@ class BluetoothTests(unittest.TestCase):
             self.bridge.dispatch({"action": "stop", "path": "/adapter"})
         self.bridge.call.assert_not_called()
         self.assertFalse(any(call.kwargs.get("error") for call in self.bridge.emit.call_args_list))
+
+    def test_pair_timeout_has_plain_language_error(self):
+        error = bridge_module.GLib.Error("g-io-error-quark: Timeout was reached (24)")
+        self.assertEqual(bridge_module.operation_error("pair", error),
+                         "Pairing timed out. Keep the device nearby and try again.")
 
 
 if __name__ == "__main__":

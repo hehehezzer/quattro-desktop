@@ -32,6 +32,22 @@ AGENT_XML = """<node><interface name="org.bluez.Agent1">
 </interface></node>"""
 
 
+def operation_error(action, error):
+    detail = str(error)
+    lower = detail.lower()
+    if "timeout" in lower or "timed out" in lower:
+        if action == "pair":
+            return "Pairing timed out. Keep the device nearby and try again."
+        if action == "connect":
+            return "Connection timed out. Check the device and try again."
+        return "Bluetooth did not respond. Try again."
+    if action == "pair" and "authenticationfailed" in lower:
+        return "Pairing was rejected. Check the code on both devices and try again."
+    if isinstance(error, GLib.Error):
+        return "Bluetooth could not complete this action. Try again."
+    return detail[:400]
+
+
 class Bridge:
     def __init__(self):
         # Quickshell can exit without closing inherited pipe writers. Tie this
@@ -223,7 +239,7 @@ class Bridge:
                     raise ValueError("Unsupported Bluetooth operation")
                 self.emit(message="Bluetooth operation completed", error="")
             except (GLib.Error, ValueError, KeyError) as error:
-                self.emit(error=str(error)[:400])
+                self.emit(error=operation_error(action, error))
             finally:
                 self.busy = False
                 self.emit(busy=False, pendingPath="")
