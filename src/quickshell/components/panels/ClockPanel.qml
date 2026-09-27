@@ -124,6 +124,13 @@ Item {
         )
     }
 
+    function visibleWeeks() {
+        const year = shownMonth.getFullYear()
+        const month = shownMonth.getMonth()
+        const days = new Date(year, month + 1, 0).getDate()
+        return Math.ceil((mondayOffset(year, month) + days) / 7)
+    }
+
     function previousMonth() {
         shownMonth = new Date(
             shownMonth.getFullYear(),
@@ -465,7 +472,7 @@ Item {
             spacing: 6
 
             Repeater {
-                model: 6
+                model: root.visibleWeeks()
 
                 delegate: RowLayout {
                     id: weekRow
