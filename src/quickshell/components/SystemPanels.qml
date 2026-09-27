@@ -98,7 +98,7 @@ Scope {
         target: PopupManager
         function onRequested(name) {
             if (name === "clock") root.toggleClock();
-            else if (["audio", "bluetooth", "network", "display", "power"].indexOf(name) >= 0) {
+            else if (["spotify", "audio", "bluetooth", "network", "display", "power"].indexOf(name) >= 0) {
                 if (popupHost.visible && root.page === name) root.close();
                 else root.openPage(name);
             }
@@ -176,6 +176,10 @@ Scope {
             root.openPage("audio")
         }
 
+        function spotify(): void {
+            root.openPage("spotify")
+        }
+
         function bluetooth(): void {
             root.openPage("bluetooth")
         }
@@ -225,7 +229,7 @@ Scope {
         }
 
         implicitWidth: 430
-        implicitHeight: Math.min(root.page === "network" ? 620 : 560, (screen ? screen.height : 1080) - 60)
+        implicitHeight: Math.min(root.page === "spotify" ? 328 : root.page === "network" ? 620 : 560, (screen ? screen.height : 1080) - 60)
 
         exclusionMode:
             ExclusionMode.Ignore
@@ -290,7 +294,9 @@ Scope {
 
                         Text {
                             text:
-                                root.page === "audio"
+                                root.page === "spotify"
+                                ? "Spotify"
+                                : root.page === "audio"
                                 ? "Audio"
                                 : root.page === "bluetooth"
                                 ? "Bluetooth"
@@ -344,6 +350,12 @@ Scope {
                         onRequestFocus: {
                             keyScope.forceActiveFocus()
                         }
+                    }
+
+                    SpotifyPanel {
+                        visible: root.page === "spotify"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
                     }
 
                     BluetoothPanel {

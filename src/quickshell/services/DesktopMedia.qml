@@ -7,24 +7,22 @@ import QtQml.Models
 
 QtObject {
     id: root
-    property var activity: ({})
-    property string preferred: ""
     property var players: Mpris.players.values
+    // Only Spotify's own MPRIS endpoint may drive the visible control or IPC.
+    function isSpotify(p) {
+        if (!p) return false;
+        const name = String(p.dbusName || "").toLowerCase();
+        const entry = String(p.desktopEntry || "").toLowerCase();
+        return name === "org.mpris.mediaplayer2.spotify"
+            || name.startsWith("org.mpris.mediaplayer2.spotify.instance")
+            || entry === "spotify";
+    }
     property var player: {
-        const list = players.slice();
-        // After a shell restart there may be no activity history. Prefer a
-        // paused track over an empty browser MPRIS endpoint in that tie.
-        list.sort((a, b) => Number(b.isPlaying) - Number(a.isPlaying) || (activity[b.dbusName] || 0) - (activity[a.dbusName] || 0) || Number(b.dbusName === preferred) - Number(a.dbusName === preferred) || Number(!!b.trackTitle) - Number(!!a.trackTitle));
+        const list = players.filter(isSpotify);
+        list.sort((a, b) => Number(b.isPlaying) - Number(a.isPlaying) || Number(!!b.trackTitle) - Number(!!a.trackTitle));
         return list.length ? list[0] : null;
     }
     property real position: 0
-    function touch(p) {
-        if (!p.isPlaying)
-            return;
-        const next = Object.assign({}, activity);
-        next[p.dbusName] = Date.now();
-        activity = next;
-    }
     function updatePosition() {
         position = player && player.positionSupported ? Math.max(0, player.position) : 0;
     }
@@ -33,15 +31,12 @@ QtObject {
         model: Mpris.players
         delegate: QtObject {
             required property var modelData
-            Component.onCompleted: root.touch(modelData)
             property Connections connection: Connections {
                 target: modelData
                 function onIsPlayingChanged() {
-                    root.touch(modelData);
                     root.updatePosition();
                 }
                 function onTrackChanged() {
-                    root.touch(modelData);
                     root.updatePosition();
                 }
                 function onPositionChanged() {
@@ -61,7 +56,7 @@ QtObject {
                 playing: p.isPlaying,
                 position: root.position,
                 length: p.length,
-                players: root.players.map(item => item.identity)
+                players: root.players.filter(root.isSpotify).map(item => item.identity)
             } : {
                 players: []
             });

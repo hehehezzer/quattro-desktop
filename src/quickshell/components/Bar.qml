@@ -288,8 +288,9 @@ PanelWindow {
     MediaStrip {
         x: leftGroup.x + leftGroup.width + 10
         anchors.verticalCenter: parent.verticalCenter
-        width: Math.max(0, Math.min(360, clockArea.x - x - 10))
-        visible: !!player && width >= 240
+        width: Math.max(0, Math.min(player ? 360 : 140, clockArea.x - x - 10))
+        visible: width >= (player ? 240 : 130)
+        onOpenRequested: PopupManager.request("spotify")
     }
 
     Item {

@@ -131,20 +131,38 @@ Item {
         spacing: 10
         RowLayout {
             Layout.fillWidth: true
-            Text {
-                text: "Bluetooth"
-                color: QuattroTheme.Theme.textStrong
-                font.pixelSize: 18
+            spacing: 8
+            Rectangle {
+                width: 7
+                height: 7
+                color: !root.available || !root.adapter ? QuattroTheme.Theme.textDim
+                    : root.adapter.powered ? QuattroTheme.Theme.success
+                    : QuattroTheme.Theme.textMuted
+            }
+            ColumnLayout {
                 Layout.fillWidth: true
+                spacing: 1
+                Text {
+                    text: !root.available ? "Service unavailable" : !root.adapter ? "No adapter" : root.adapter.powered ? "Bluetooth on" : "Bluetooth off"
+                    color: QuattroTheme.Theme.textStrong
+                    font.family: QuattroTheme.Theme.fontFamily
+                    font.pixelSize: 13
+                    font.bold: true
+                }
+                Text {
+                    text: root.adapter && root.adapter.powered
+                        ? root.devices.filter(d => d.adapter === root.adapter.path && d.connected).length + " connected"
+                        : "Discovery and connections are paused"
+                    color: QuattroTheme.Theme.textMuted
+                    font.family: QuattroTheme.Theme.fontFamily
+                    font.pixelSize: 9
+                }
             }
             DesktopButton {
                 text: root.adapter && root.adapter.powered ? "Turn off" : "Turn on"
+                prominent: !!root.adapter && !root.adapter.powered
                 enabled: !!root.adapter && !root.busy
-                onClicked: root.send({
-                    action: "power",
-                    path: root.adapter.path,
-                    value: !root.adapter.powered
-                })
+                onClicked: root.send({ action: "power", path: root.adapter.path, value: !root.adapter.powered })
             }
         }
         DesktopCombo {
@@ -164,8 +182,12 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             Text {
-                text: root.adapter && root.adapter.scanning ? "Searching nearby…" : "Devices"
-                color: QuattroTheme.Theme.text
+                text: root.adapter && root.adapter.scanning ? "DISCOVERING" : "DEVICES"
+                color: root.adapter && root.adapter.scanning ? QuattroTheme.Theme.accent : QuattroTheme.Theme.textMuted
+                font.family: QuattroTheme.Theme.fontFamily
+                font.pixelSize: 10
+                font.bold: true
+                font.letterSpacing: 0.8
                 Layout.fillWidth: true
             }
             DesktopButton {
@@ -239,6 +261,7 @@ Item {
                     }
                     DesktopButton {
                         visible: deviceRow.modelData.paired
+                        destructive: true
                         text: root.removePath === deviceRow.modelData.path ? "Confirm remove" : "Remove"
                         enabled: !root.busy
                         onClicked: {

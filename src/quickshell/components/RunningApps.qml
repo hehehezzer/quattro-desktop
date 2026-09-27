@@ -261,6 +261,7 @@ DesktopButton {
                 }
                 DesktopButton {
                     text: root.needsForce ? "Force kill" : "Terminate"
+                    destructive: true
                     enabled: !actionProcess.running && !!root.selected && !root.selected.protected
                     onClicked: root.act(root.needsForce ? "force" : "terminate")
                 }

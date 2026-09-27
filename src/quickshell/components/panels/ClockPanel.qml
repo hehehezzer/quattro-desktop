@@ -597,44 +597,74 @@ Item {
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 5
-            Text {
-                text: DesktopWeather.label + (DesktopWeather.condition ? " · " + DesktopWeather.condition : "")
-                color: QuattroTheme.Theme.textStrong
-                font.family: root.fontFamily
-                font.pixelSize: 13
+            spacing: 7
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 10
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+                    Text {
+                        text: DesktopWeather.loading && !DesktopWeather.snapshot.temperature ? "—°" : DesktopWeather.label
+                        color: QuattroTheme.Theme.textStrong
+                        font.family: root.fontFamily
+                        font.pixelSize: 22
+                        font.bold: true
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: DesktopWeather.condition || (DesktopWeather.error ? "Weather unavailable" : "Loading conditions…")
+                        color: DesktopWeather.error ? QuattroTheme.Theme.warning : QuattroTheme.Theme.text
+                        font.family: root.fontFamily
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                    }
+                }
+                ColumnLayout {
+                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                    spacing: 1
+                    Text {
+                        text: DesktopWeather.placeLabel
+                        color: QuattroTheme.Theme.textStrong
+                        font.family: root.fontFamily
+                        font.pixelSize: 10
+                        horizontalAlignment: Text.AlignRight
+                    }
+                    Text {
+                        text: DesktopWeather.snapshot.updated
+                            ? (DesktopWeather.error ? "Cached" : "Updated") + " · " + Qt.formatDateTime(new Date(DesktopWeather.snapshot.updated * 1000), "hh:mm AP")
+                            : "Celsius"
+                        color: DesktopWeather.error ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
+                        font.family: root.fontFamily
+                        font.pixelSize: 9
+                        horizontalAlignment: Text.AlignRight
+                    }
+                }
             }
             Text {
                 Layout.fillWidth: true
-                text: DesktopWeather.error || "Open-Meteo · updated " + (DesktopWeather.snapshot.updated ? Qt.formatDateTime(new Date(DesktopWeather.snapshot.updated * 1000), "hh:mm AP") : "—")
+                visible: !!DesktopWeather.error || !!DesktopWeather.snapshot.defaultLocation
+                text: DesktopWeather.error || "Default location · choose your city for local conditions"
                 wrapMode: Text.Wrap
                 color: DesktopWeather.error ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
-                font.pixelSize: 10
-            }
-            Text {
-                text: "Location"
-                color: QuattroTheme.Theme.textMuted
-                font.pixelSize: 11
-            }
-            DesktopButton {
-                Layout.fillWidth: true
-                text: DesktopWeather.placeLabel + "  ▾"
-                Accessible.name: "Change weather location: " + DesktopWeather.placeLabel
-                ToolTip.text: DesktopWeather.placeLabel
-                onClicked: root.choosingLocation = true
-            }
-            Text {
-                Layout.fillWidth: true
-                visible: !!DesktopWeather.snapshot.defaultLocation
-                text: "Manila is the Philippines default, not your detected location."
-                wrapMode: Text.Wrap
-                color: QuattroTheme.Theme.textMuted
-                font.pixelSize: 10
+                font.pixelSize: 9
             }
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: "Units · Celsius"; color: QuattroTheme.Theme.textMuted; font.pixelSize: 11; Layout.fillWidth: true }
-                DesktopButton { text: DesktopWeather.loading ? "Refreshing…" : "Refresh weather"; enabled: !DesktopWeather.loading; onClicked: DesktopWeather.refresh(true) }
+                spacing: 6
+                DesktopButton {
+                    Layout.fillWidth: true
+                    text: "Change location"
+                    Accessible.name: "Change weather location: " + DesktopWeather.placeLabel
+                    ToolTip.text: DesktopWeather.placeLabel
+                    onClicked: root.choosingLocation = true
+                }
+                DesktopButton {
+                    text: DesktopWeather.loading ? "Refreshing…" : "Refresh"
+                    enabled: !DesktopWeather.loading
+                    Accessible.name: "Refresh weather"
+                    onClicked: DesktopWeather.refresh(true)
+                }
             }
         }
 

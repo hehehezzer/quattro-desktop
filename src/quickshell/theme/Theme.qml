@@ -15,8 +15,18 @@ QtObject {
         { "id": "avengers-doomsday", "label": "Avengers: Doomsday", "detail": "Doom green, gunmetal, and eclipse crimson" }
     ]
 
+    // Shared control-surface geometry. Panels use one calibrated rhythm rather
+    // than component-local padding and target sizes.
     readonly property int cornerRadius: 0
+    readonly property int spaceXs: 4
+    readonly property int spaceSm: 8
+    readonly property int spaceMd: 12
+    readonly property int spaceLg: 16
+    readonly property int compactTarget: 32
+    readonly property int primaryTarget: 44
+    readonly property int panelWidth: 430
     readonly property int transitionDuration: 150
+    readonly property string fontFamily: "JetBrainsMono Nerd Font"
 
     property color background: current === "avengers-doomsday" ? "#080b09"
         : current === "cyberpunk-2077" ? "#080b12"

@@ -1,0 +1,180 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import "../shared"
+import "../../services"
+import "../../theme" as QuattroTheme
+
+Item {
+    id: root
+    readonly property var player: DesktopMedia.player
+    readonly property bool hasTrack: !!player && !!player.trackTitle
+    readonly property bool hasProgress: hasTrack && player.lengthSupported && player.positionSupported && player.length > 0
+
+    function duration(seconds) {
+        const n = Math.max(0, Math.floor(seconds || 0))
+        return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0")
+    }
+
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 14
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 16
+            Item {
+                Layout.preferredWidth: Math.min(118, Math.max(78, root.width * 0.29))
+                Layout.preferredHeight: width
+                Rectangle {
+                    anchors.fill: parent
+                    color: QuattroTheme.Theme.surfaceRaised
+                    Text {
+                        anchors.centerIn: parent
+                        text: "󰓇"
+                        color: QuattroTheme.Theme.accent
+                        font.family: "JetBrainsMono Nerd Font"
+                        font.pixelSize: 35
+                    }
+                }
+                Image {
+                    anchors.fill: parent
+                    source: root.hasTrack && root.player.trackArtUrl ? root.player.trackArtUrl : ""
+                    sourceSize.width: 240
+                    sourceSize.height: 240
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    visible: status === Image.Ready
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 5
+                Text {
+                    Layout.fillWidth: true
+                    text: root.hasTrack ? root.player.trackTitle : root.player ? "Ready to play" : "Spotify is closed"
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                    color: QuattroTheme.Theme.textStrong
+                    font.family: "JetBrainsMono Nerd Font"
+                    font.pixelSize: 16
+                    font.bold: true
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: root.hasTrack ? (root.player.trackArtist || "Artist unavailable")
+                        : root.player ? "Choose a track in Spotify" : "Open Spotify to see your music here"
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                    color: QuattroTheme.Theme.text
+                    font.pixelSize: 11
+                }
+                Text {
+                    visible: root.hasTrack && !!root.player.trackAlbum
+                    Layout.fillWidth: true
+                    text: root.hasTrack ? root.player.trackAlbum : ""
+                    textFormat: Text.PlainText
+                    elide: Text.ElideRight
+                    color: QuattroTheme.Theme.textMuted
+                    font.pixelSize: 10
+                }
+                Text {
+                    text: root.player ? root.hasTrack ? root.player.isPlaying ? "PLAYING" : "PAUSED" : "IDLE" : "UNAVAILABLE"
+                    color: root.player && root.player.isPlaying ? QuattroTheme.Theme.success : QuattroTheme.Theme.textMuted
+                    font.family: "JetBrainsMono Nerd Font"
+                    font.pixelSize: 9
+                    font.letterSpacing: 1
+                }
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 5
+            Slider {
+                id: progress
+                Layout.fillWidth: true
+                Layout.preferredHeight: 24
+                from: 0
+                to: root.hasProgress ? root.player.length : 1
+                value: root.hasProgress ? Math.min(root.player.length, DesktopMedia.position) : 0
+                enabled: root.hasProgress && root.player.canSeek
+                Accessible.name: "Spotify playback position"
+                onMoved: if (root.player && root.player.canSeek) root.player.position = value
+                background: Rectangle {
+                    x: progress.leftPadding
+                    y: progress.topPadding + progress.availableHeight / 2 - height / 2
+                    width: progress.availableWidth
+                    height: 4
+                    color: QuattroTheme.Theme.border
+                    Rectangle {
+                        width: parent.width * progress.visualPosition
+                        height: parent.height
+                        color: QuattroTheme.Theme.accent
+                    }
+                }
+                handle: Rectangle {
+                    x: progress.leftPadding + progress.visualPosition * (progress.availableWidth - width)
+                    y: progress.topPadding + progress.availableHeight / 2 - height / 2
+                    width: 10
+                    height: 10
+                    color: progress.activeFocus ? QuattroTheme.Theme.textStrong : QuattroTheme.Theme.accent
+                    visible: progress.hovered || progress.pressed || progress.activeFocus
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    text: root.hasProgress ? root.duration(DesktopMedia.position) : "—:—"
+                    color: QuattroTheme.Theme.textMuted
+                    font.family: "JetBrainsMono Nerd Font"
+                    font.pixelSize: 10
+                }
+                Item { Layout.fillWidth: true }
+                Text {
+                    text: root.hasProgress ? root.duration(root.player.length) : "—:—"
+                    color: QuattroTheme.Theme.textMuted
+                    font.family: "JetBrainsMono Nerd Font"
+                    font.pixelSize: 10
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: 10
+            DesktopButton {
+                text: "󰒮"
+                implicitWidth: 40
+                implicitHeight: 40
+                Accessible.name: "Spotify previous track"
+                ToolTip.text: Accessible.name
+                enabled: root.hasTrack && root.player.canControl && root.player.canGoPrevious
+                onClicked: root.player.previous()
+            }
+            DesktopButton {
+                text: root.player && root.player.isPlaying ? "󰏤" : "󰐊"
+                implicitWidth: 48
+                implicitHeight: 44
+                Accessible.name: root.player && root.player.isPlaying ? "Pause Spotify" : "Play Spotify"
+                ToolTip.text: Accessible.name
+                enabled: root.hasTrack && root.player.canControl && root.player.canTogglePlaying
+                onClicked: root.player.togglePlaying()
+            }
+            DesktopButton {
+                text: "󰒭"
+                implicitWidth: 40
+                implicitHeight: 40
+                Accessible.name: "Spotify next track"
+                ToolTip.text: Accessible.name
+                enabled: root.hasTrack && root.player.canControl && root.player.canGoNext
+                onClicked: root.player.next()
+            }
+        }
+        Item { Layout.fillHeight: true }
+    }
+}
