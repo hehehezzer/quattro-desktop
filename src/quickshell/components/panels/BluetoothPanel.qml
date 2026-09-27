@@ -21,8 +21,15 @@ Item {
     property var prompt: null
     property string removePath: ""
     property string expandedPath: ""
+    property int visibleDeviceCount: devices.filter(d => adapter && d.adapter === adapter.path).length
+    property int preferredHeight: !adapter || !adapter.powered ? 172 : Math.min(540,
+        145 + Math.max(1, Math.min(visibleDeviceCount, 4)) * 82
+        + (expandedPath ? 38 : 0)
+        + (prompt ? (prompt.kind === "pin" || prompt.kind === "passkey" ? 145 : 90) : 0)
+        + (error ? 36 : 0)
+        + (adapters.length > 1 ? 44 : 0))
     implicitWidth: 430
-    implicitHeight: 500
+    implicitHeight: preferredHeight
 
     function send(data) {
         if (bridge.running)

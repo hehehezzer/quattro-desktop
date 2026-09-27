@@ -238,11 +238,7 @@ Scope {
 
         implicitWidth: Math.min(430, (screen ? screen.width : 1920) - 16)
         implicitHeight: Math.min(root.page === "spotify" ? 328
-            : root.page === "bluetooth" ? (!bluetoothPanel.adapter || !bluetoothPanel.adapter.powered
-                ? 210 : Math.min(540, 220
-                + Math.max(1, Math.min(bluetoothPanel.devices.length, 4)) * 76
-                + (bluetoothPanel.expandedPath ? 42 : 0)
-                + (bluetoothPanel.prompt ? 120 : 0)))
+            : root.page === "bluetooth" ? bluetoothPanel.preferredHeight
             : root.page === "display" ? 285
             : root.page === "power" ? 430
             : root.page === "network" ? (networkPanel.passwordPrompt || networkPanel.qrVisible
