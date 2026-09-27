@@ -21,6 +21,15 @@ Item {
     property bool choosingLocation: false
     property bool compactHeight: height < 650
     signal requestFocus()
+    function scrollBy(amount) {
+        if (!compactHeight || choosingLocation)
+            return false
+        calendarScroll.contentY = Math.max(0, Math.min(
+            calendarScroll.contentHeight - calendarScroll.height,
+            calendarScroll.contentY + amount
+        ))
+        return true
+    }
     onChoosingLocationChanged: {
         if (choosingLocation) locationPicker.begin();
         else DesktopWeather.searchQuery = "";

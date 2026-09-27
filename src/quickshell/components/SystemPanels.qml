@@ -758,6 +758,13 @@ Scope {
                 Keys.onEscapePressed: {
                     root.closeClock()
                 }
+
+                Keys.onPressed: function(event) {
+                    if (event.key === Qt.Key_PageDown)
+                        event.accepted = clockPanel.scrollBy(clockPanel.height * 0.8)
+                    else if (event.key === Qt.Key_PageUp)
+                        event.accepted = clockPanel.scrollBy(-clockPanel.height * 0.8)
+                }
             }
 
             Rectangle {
