@@ -160,10 +160,18 @@ ColumnLayout {
             }
         }
 
-        Item {
+        Flickable {
+            id: response
             Layout.fillWidth: true
             Layout.preferredHeight: 166
             clip: true
+            contentWidth: Math.max(width, 310)
+            contentHeight: height
+            boundsBehavior: Flickable.StopAtBounds
+
+            Item {
+                width: response.contentWidth
+                height: response.height
 
             Rectangle {
                 anchors.fill: parent
@@ -244,6 +252,7 @@ ColumnLayout {
                         }
                     }
                 }
+            }
             }
         }
         Text {

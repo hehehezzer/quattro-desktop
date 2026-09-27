@@ -228,8 +228,13 @@ Scope {
             right: 8
         }
 
-        implicitWidth: 430
-        implicitHeight: Math.min(root.page === "spotify" ? 328 : root.page === "network" ? 620 : 560, (screen ? screen.height : 1080) - 60)
+        implicitWidth: Math.min(430, (screen ? screen.width : 1920) - 16)
+        implicitHeight: Math.min(root.page === "spotify" ? 328
+            : root.page === "bluetooth" ? 420
+            : root.page === "display" ? 350
+            : root.page === "power" ? 430
+            : root.page === "network" ? 620 : 560,
+            (screen ? screen.height : 1080) - 60)
 
         exclusionMode:
             ExclusionMode.Ignore
@@ -711,8 +716,8 @@ Scope {
         anchors { top: true }
         margins { top: 38 }
 
-        implicitHeight: Math.min(800, (screen ? screen.height : 1080) - 60)
-        implicitWidth: 430
+        implicitHeight: Math.min(650, (screen ? screen.height : 1080) - 60)
+        implicitWidth: Math.min(430, (screen ? screen.width : 1920) - 16)
 
         exclusionMode:
             ExclusionMode.Ignore
