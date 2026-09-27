@@ -17,6 +17,7 @@ from gi.repository import Gio, GLib
 BLUEZ = "org.bluez"
 ADAPTER = "org.bluez.Adapter1"
 DEVICE = "org.bluez.Device1"
+SCAN_SECONDS = 60
 PROPS = "org.freedesktop.DBus.Properties"
 AGENT_PATH = "/org/quattro/desktop/agent"
 AGENT_XML = """<node><interface name="org.bluez.Agent1">
@@ -62,6 +63,7 @@ class Bridge:
         self.objects = {}
         self.busy = False
         self.scan_path = None
+        self.scan_timer = 0
         self.refresh_timer = 0
         self.pending = None
         self.request_id = 0
@@ -100,6 +102,7 @@ class Bridge:
     def vanished(self, *_):
         self.objects = {}
         self.scan_path = None
+        self.cancel_scan_timer()
         self.cancel_prompt()
         self.emit(available=False, adapters=[], devices=[], error="Bluetooth service unavailable")
 
@@ -217,11 +220,12 @@ class Bridge:
                 elif action == "scan":
                     self.call(path, ADAPTER, "StartDiscovery")
                     self.scan_path = path
-                    GLib.idle_add(lambda: (GLib.timeout_add_seconds(20, self.stop_scan), False)[1])
+                    GLib.idle_add(self.arm_scan_timer)
                 elif action == "stop":
                     if self.scan_path == path:
                         self.call(path, ADAPTER, "StopDiscovery")
                     self.scan_path = None
+                    GLib.idle_add(self.cancel_scan_timer)
                 elif action == "remove":
                     self.call(props["Adapter"], ADAPTER, "RemoveDevice", GLib.Variant("(o)", (path,)))
                 elif action in {"pair", "connect", "disconnect", "cancel"}:
@@ -249,7 +253,23 @@ class Bridge:
         threading.Thread(target=worker, daemon=True).start()
         return False
 
+    def cancel_scan_timer(self):
+        if self.scan_timer:
+            GLib.source_remove(self.scan_timer)
+            self.scan_timer = 0
+        return False
+
+    def arm_scan_timer(self):
+        self.cancel_scan_timer()
+        self.scan_timer = GLib.timeout_add_seconds(SCAN_SECONDS, self.scan_expired)
+        return False
+
+    def scan_expired(self):
+        self.scan_timer = 0
+        return self.stop_scan()
+
     def stop_scan(self):
+        self.cancel_scan_timer()
         if self.scan_path:
             path, self.scan_path = self.scan_path, None
             self.bus.call(BLUEZ, path, ADAPTER, "StopDiscovery", None, None,

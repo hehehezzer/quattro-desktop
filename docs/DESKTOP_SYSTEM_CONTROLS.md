@@ -181,7 +181,9 @@ coalesced for 150 ms. There is no `bluetoothctl` command parsing or periodic sca
 loop. Only paths currently enumerated with the expected BlueZ interface can be
 actioned. Power/trust property writes, discovery, Pair, Connect, Disconnect and
 RemoveDevice use bounded D-Bus calls and propagate actual exceptions. Discovery
-ends after 20 seconds or panel close. Removing a paired device requires a second
+ends after 60 seconds or panel close. Restarting a scan replaces its previous
+expiry so an older timer cannot stop a newer scan. BlueZ may remove unpaired
+devices from the list when discovery stops. Removing a paired device requires a second
 confirmation. Pairing does not silently trust or claim an audio connection.
 
 A registered KeyboardDisplay Agent1 handles PIN/passkey entry, displayed codes,
