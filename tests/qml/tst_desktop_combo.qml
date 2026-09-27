@@ -23,6 +23,28 @@ Item {
         name: "DesktopComboPopup"
         when: windowShown
 
+        function test_keyboard_can_open_and_escape() {
+            combo.forceActiveFocus()
+            verify(combo.activeFocus)
+            keyClick(Qt.Key_Space)
+            wait(40)
+            verify(combo.popup.visible)
+            keyClick(Qt.Key_Escape)
+            wait(40)
+            verify(!combo.popup.visible)
+        }
+
+        function test_keyboard_selects_previous_preset() {
+            combo.currentIndex = 9
+            combo.forceActiveFocus()
+            keyClick(Qt.Key_Space)
+            wait(30)
+            keyClick(Qt.Key_Up)
+            keyClick(Qt.Key_Return)
+            wait(30)
+            compare(combo.currentText, "Movie")
+        }
+
         function test_preset_list_uses_panel_surface_and_scrolls() {
             combo.popup.open()
             wait(100)
