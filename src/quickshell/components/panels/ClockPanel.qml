@@ -251,7 +251,7 @@ Item {
     ColumnLayout {
         id: calendarContent
         width: calendarScroll.width
-        height: Math.max(implicitHeight, 750, calendarScroll.height)
+        height: implicitHeight
 
         spacing: 10
 
@@ -554,10 +554,6 @@ Item {
                     }
                 }
             }
-        }
-
-        Item {
-            Layout.fillHeight: true
         }
 
         Rectangle {

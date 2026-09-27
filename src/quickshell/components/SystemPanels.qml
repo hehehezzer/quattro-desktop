@@ -723,7 +723,7 @@ Scope {
         anchors { top: true }
         margins { top: 38 }
 
-        implicitHeight: Math.min(770, (screen ? screen.height : 1080) - 60)
+        implicitHeight: Math.min(700, (screen ? screen.height : 1080) - 60)
         implicitWidth: Math.min(430, (screen ? screen.width : 1920) - 16)
 
         exclusionMode:
