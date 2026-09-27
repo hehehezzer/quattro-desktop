@@ -6,12 +6,14 @@ import "../../services"
 PanelWindow {
     id: root
     required property string panelName
+    property string dismissalId: "0-0"
+    WlrLayershell.namespace: "quattro-popup-" + dismissalId
     signal dismissed
     visible: false
     exclusionMode: ExclusionMode.Ignore
     focusable: true
-    // The native grab owns temporary focus; never leave an exclusive layer.
-    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+    // Keyboard-only focus while visible. Pointer input is never grabbed.
+    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     Connections {
         target: root
         function onVisibleChanged() {

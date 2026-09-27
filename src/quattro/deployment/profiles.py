@@ -109,6 +109,7 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
     "shell-qml": ("src/quickshell/shell.qml", ".config/quickshell/shell.qml"),
     "theme-qml": ("src/quickshell/theme/Theme.qml", ".config/quickshell/theme/Theme.qml"),
     "theme-qmldir": ("src/quickshell/theme/qmldir", ".config/quickshell/theme/qmldir"),
+    "hypr-popup-dismissal": ("src/hypr/popup-dismissal.lua", ".config/hypr/popup-dismissal.lua"),
     "hypr-bindings": ("src/hypr/bindings.lua", ".config/hypr/bindings.lua"),
     "hypr-config": ("src/hypr/hyprland.lua", ".config/hypr/hyprland.lua"),
     "foot-config": ("src/foot/foot.ini", ".config/foot/foot.ini"),

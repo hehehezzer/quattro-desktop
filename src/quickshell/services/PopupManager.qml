@@ -7,7 +7,6 @@ import Quickshell.Hyprland
 QtObject {
     id: root
     property var activePanel: null
-    property var bars: []
     property int revision: 0
     signal requested(string name)
     function request(name) {
@@ -19,22 +18,14 @@ QtObject {
             return;
         closeActive();
         revision++;
+        panel.dismissalId = String(Date.now()) + "-" + revision;
         activePanel = panel;
-        // Activate with only the panel so keyboard focus cannot land on a bar.
-        grab.windows = [panel];
-        const token = revision;
-        Qt.callLater(() => {
-            if (root.revision === token && root.activePanel === panel && panel.visible)
-                grab.active = true;
-        });
     }
     function release(panel) {
         if (activePanel !== panel)
             return;
         revision++;
-        grab.active = false;
         activePanel = null;
-        grab.windows = [];
     }
     function close(panel) {
         if (!panel || activePanel !== panel)
@@ -44,12 +35,6 @@ QtObject {
     }
     function closeActive() {
         close(activePanel);
-    }
-    function registerBar(bar) {
-        bars = bars.concat([bar]);
-    }
-    function unregisterBar(bar) {
-        bars = bars.filter(item => item !== bar);
     }
     function barTapped(token) {
         // Buttons dispatch synchronously; a blank/workspace click dismisses only
@@ -65,13 +50,6 @@ QtObject {
                 return screen;
         return Quickshell.screens[0];
     }
-    property HyprlandFocusGrab grab: HyprlandFocusGrab {
-        onActiveChanged: {
-            if (active && root.activePanel)
-                windows = [root.activePanel].concat(root.bars);
-        }
-        onCleared: root.closeActive()
-    }
     property Connections monitorEvents: Connections {
         target: Hyprland
         function onRawEvent(event) {
@@ -84,11 +62,16 @@ QtObject {
         function close(): void {
             root.closeActive();
         }
+        function dismiss(token: string): void {
+            if (root.activePanel && root.activePanel.dismissalId === token)
+                root.closeActive();
+        }
         function status(): string {
             return JSON.stringify({
                 panel: root.activePanel ? root.activePanel.panelName : "",
                 screen: root.activePanel && root.activePanel.screen ? root.activePanel.screen.name : "",
-                grabbed: grab.active
+                token: root.activePanel ? root.activePanel.dismissalId : "",
+                pointerGrab: false
             });
         }
     }

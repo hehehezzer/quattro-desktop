@@ -2,6 +2,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Pipewire
 import Quickshell.Hyprland
+import Quickshell.Wayland
 import Quickshell.Services.SystemTray
 import QtQuick
 import QtQuick.Controls
@@ -11,6 +12,7 @@ import "../services"
 
 PanelWindow {
     id: root
+    WlrLayershell.namespace: "quattro-bar"
 
     anchors {
         top: true
@@ -114,11 +116,7 @@ PanelWindow {
         )
     }
 
-    Component.onCompleted: {
-        PopupManager.registerBar(root)
-        usageProcess.running = true
-    }
-    Component.onDestruction: PopupManager.unregisterBar(root)
+    Component.onCompleted: usageProcess.running = true
     TapHandler {
         property int pressRevision: -1
         acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
