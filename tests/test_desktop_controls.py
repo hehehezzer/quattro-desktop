@@ -179,6 +179,29 @@ class DesktopControlsTests(unittest.TestCase):
             self.assertTrue(desktop.application_action("terminate", "0x123", 123, "456")["needsForce"])
             send.assert_called_once_with(7, desktop.signal.SIGTERM)
 
+    def test_force_escalation_terminates_only_the_stubborn_test_process(self):
+        child = subprocess.Popen(
+            [sys.executable, "-u", "-c", "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(30)"],
+            stdout=subprocess.PIPE, text=True,
+        )
+        try:
+            self.assertEqual(child.stdout.readline().strip(), "ready")
+            start, _ = desktop.process_identity(child.pid)
+            with patch.object(desktop, "clients", return_value=[{"address": "0x123", "pid": child.pid}]):
+                first = desktop.application_action("terminate", "0x123", child.pid, start)
+                self.assertFalse(first["ok"])
+                self.assertTrue(first["needsForce"])
+                self.assertIsNone(child.poll())
+                second = desktop.application_action("force", "0x123", child.pid, start)
+            self.assertTrue(second["ok"])
+            child.wait(timeout=3)
+            self.assertEqual(child.returncode, -desktop.signal.SIGKILL)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+            child.stdout.close()
+
 
 if __name__ == "__main__":
     unittest.main()
