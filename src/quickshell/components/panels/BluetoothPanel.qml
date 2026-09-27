@@ -173,6 +173,7 @@ Item {
             textRole: "name"
         }
         Text {
+            visible: root.adapters.length > 1 || !root.available || !root.adapter
             Layout.fillWidth: true
             text: !root.available ? "Bluetooth service unavailable" : !root.adapter ? "No Bluetooth adapter detected" : root.adapter.name + (root.adapter.powered ? " · On" : " · Off")
             color: QuattroTheme.Theme.textMuted

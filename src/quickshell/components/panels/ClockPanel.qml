@@ -624,7 +624,10 @@ Item {
                     Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
                     spacing: 1
                     Text {
+                        Layout.maximumWidth: 245
                         text: DesktopWeather.placeLabel
+                        textFormat: Text.PlainText
+                        elide: Text.ElideRight
                         color: QuattroTheme.Theme.textStrong
                         font.family: root.fontFamily
                         font.pixelSize: 10
