@@ -442,7 +442,7 @@ class TurnGate:
         turn.cancel_event.set()
         if hasattr(self, 'decisions'):
             self.observe_runtime(turn)
-            self.decisions.close()
+            self.decisions.request_close()
         if turn.socket:
             try:
                 turn.socket.shutdown(socket.SHUT_RDWR)

@@ -89,7 +89,9 @@ is no automatic approval override.
 
 `TurnGate` owns the service across ordinary turns. Cancellation/shutdown signals
 monitor-owned termination and reaping; a later turn can create a fresh service.
-The caller only signals shutdown and joins for at most five seconds, never
+Interactive turn cancellation calls `request_close()`, which signals shutdown
+without joining the monitor, so Jev cleanup cannot delay model socket interruption.
+Session teardown calls `close()` and joins for at most five seconds, never
 acquiring the worker lock or performing kill/reap/stream operations. If an OS
 wait ignores its timeout, the daemon monitor retains the process and capacity
 until death is observed, without preventing host exit. A regression explicitly
@@ -235,7 +237,7 @@ confidence. Codex observed seven model requests. Pi's delegated model-request
 count is unavailable, not zero. These are source-tree protocol probes, not
 installed-runtime, graphical TUI, resume, or production-readiness proof.
 
-### Review and promotion status
+### Original candidate review and promotion status
 
 Three independent read-only review iterations were used, reaching the authorized
 limit. Findings repaired: caller deadlines including slow cleanup; retained
@@ -252,3 +254,43 @@ hosted validation; merge; existing deployment mechanism; installed Codex/Pi
 lifecycle proof. This candidate establishes a bounded advisory integration, not
 a demonstrated faster session-wide production decision plane. No merge,
 production deployment or default enablement is implied by this document.
+
+### Exact-HEAD continuation: cancellation repair and fresh evidence
+
+Continued `ebee9ed34fbd9df6c20729e61b9e6eed37f37d4f`, without replacing the
+existing integration. Under the renewed continuation request, independent review
+found that the five-second `close()` join ran before model socket interruption.
+The repair splits non-joining `request_close()` from teardown `close()` and uses
+the former in `TurnGate.cancel()`. Monitor ownership and capacity retention are
+unchanged. A real-worker integration regression holds reaping indefinitely,
+requires cancellation/socket interruption before releasing the hold, then proves
+exactly-once capacity release. A second independent read-only review found no
+material findings within this repair's scope; this is not approval of the entire
+feature. Full local validation: 757 tests, five skipped, plus compileall, Python
+hygiene, public-artifact policy, and whitespace checks passed.
+
+Fresh evidence:
+
+- `benchmarks/jev-pr31-continuation-component.json`: one eleven-case component
+  pass on the starting HEAD, nine actual evaluations, three usable answers.
+  ON RTT median/p95 288.202/323.386 ms; blocking median/p95
+  297.895/637.100 ms (including the unsupported-type skip in blocking samples).
+  This is not task latency. Runtime overlap remains zero.
+- `benchmarks/jev-pr31-continuation-tasks.json`: real Quattro/Codex task matrix on
+  the repaired source, with an unchanged source fingerprint throughout. OFF and
+  ON both succeeded on all eleven scenarios. Total wall time sums were
+  327.630/321.894 s; medians 37.834/31.382 s. Input tokens were
+  6,678,994/6,586,514 (cached subset 6,309,376/6,206,208); output tokens
+  7,866/8,195; reasoning output tokens 1,672/1,793. ON made only one runtime
+  call, returning fallback at confidence 0.50 after 637.289 ms blocking and
+  282.724 ms RTT. No runtime advice was accepted. This run does not demonstrate
+  routine offloading, token savings, or causal latency benefit. First-token
+  latency is available only for the trivial DIRECT scenario; model turns and
+  cost remain unavailable.
+
+The objective remains incomplete: operational advice is still agent-invoked,
+standalone Pi has no runtime integration, and there is no demonstrated
+session-wide decision contribution or representative parallel-work benchmark.
+These are engineering/evidence gaps, not external authorization blockers. The
+PR stays draft and production stays unchanged/OFF. Do not merge or deploy this
+increment as fulfillment of the decision-plane objective.

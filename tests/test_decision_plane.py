@@ -265,6 +265,58 @@ runpy.run_path(WORKER,run_name='__main__')
             self.assertFalse(session.capacity_owned)
             self.assertEqual(capacity_release.call_count, 1)
 
+    @unittest.skipUnless(os.name == 'posix', 'native turn telemetry uses POSIX ownership')
+    def test_turn_cancel_interrupts_socket_without_waiting_for_jev_reaping(self):
+        from test_turn_gate import TurnGateTests
+        from quattro_agent.jev_shadow import _CAPACITY
+        fixture = TurnGateTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        gate = fixture.gate
+        session, processes = self.session(delay=2, timeout_ms=100)
+        gate.decisions = session
+        release, entered = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        original = session.popen
+
+        def blocking_wait(*args, **kwargs):
+            process = original(*args, **kwargs)
+            wait = process.wait
+
+            def blocked(*args, **kwargs):
+                entered.set()
+                release.wait()
+                return wait(*args, **kwargs)
+
+            process.wait = blocked
+            return process
+
+        session.popen = blocking_wait
+        turn = gate.begin('cancel-thread', 'Inspect the repository and run tests', 'codex')
+        turn.socket = mock.Mock()
+        turn.connection = mock.Mock()
+        with mock.patch.object(_CAPACITY, 'release', wraps=_CAPACITY.release) as capacity_release:
+            self.assertEqual(session.decide(request())['evidence'], 'timeout')
+            self.assertTrue(entered.wait(2))
+            cancelled = threading.Event()
+            thread = threading.Thread(target=lambda: (gate.cancel(turn), cancelled.set()), daemon=True)
+            thread.start()
+            try:
+                self.assertTrue(cancelled.wait(1), 'execution cancellation waited for Jev cleanup')
+                turn.socket.shutdown.assert_called_once()
+                turn.connection.close.assert_called_once()
+                self.assertTrue(session.closed.is_set())
+                self.assertTrue(session.capacity_owned)
+                self.assertEqual(session.decide(request())['evidence'], 'closed')
+                self.assertEqual(len(processes), 1)
+            finally:
+                release.set()
+                thread.join(timeout=2)
+                session.close()
+            self.assertFalse(session.capacity_owned)
+            self.assertEqual(capacity_release.call_count, 1)
+        gate.finish(turn, status='interrupted')
+
     def test_failed_wait_retains_process_until_close_reaps_it(self):
         session, processes = self.session()
         session.decide(request())

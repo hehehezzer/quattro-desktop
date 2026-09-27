@@ -157,13 +157,17 @@ class DecisionSession:
                             self.capacity_owned = False
                             _CAPACITY.release()
 
-    def close(self):
+    def request_close(self):
+        """Signal monitor-owned cleanup without joining on an execution path."""
         with self.admission_lock:
             self.closed.set()
             try:
                 self.commands.put_nowait(None)
             except queue.Full:
                 pass  # A queued request observes closed and the monitor then exits.
+
+    def close(self):
+        self.request_close()
         # Kill/reap/stream operations belong only to the monitor. Never wait
         # for its worker_lock on the calling/UI thread.
         monitor = self.monitor
