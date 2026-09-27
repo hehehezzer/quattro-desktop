@@ -17,9 +17,10 @@ from quattro_intelligence_mcp import handle
 class SharedIntelligenceTests(unittest.TestCase):
     def test_trivial_prompt_skips_database_and_context(self) -> None:
         with mock.patch.object(shared, "RetrievalStore", side_effect=AssertionError("opened")):
-            result = shared.search_knowledge("what is 2 times 3")
-        self.assertEqual(result["retrievedTokens"], 0)
-        self.assertIsNone(result["context"])
+            for query in ("what is 2 times 3", "Hi", "Thanks!"):
+                result = shared.search_knowledge(query)
+                self.assertEqual(result["retrievedTokens"], 0)
+                self.assertIsNone(result["context"])
 
     def test_search_is_bounded_and_repository_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

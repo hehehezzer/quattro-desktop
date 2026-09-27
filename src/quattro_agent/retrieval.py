@@ -212,7 +212,7 @@ class QueryRoute:
 class QueryRouter:
     """Cheap deterministic routing before any semantic computation."""
 
-    NO_RETRIEVAL = re.compile(r"(?i)^\s*(?:shorten|rewrite|summari[sz]e)\s*:|\bwhat is \d+\s*(?:times|[x*])\s*\d+\b|\bexact supplied diff\b")
+    NO_RETRIEVAL = re.compile(r"(?i)^\s*(?:shorten|rewrite|summari[sz]e)\s*:|\bwhat is \d+\s*(?:times|[x*])\s*\d+\b|\bexact supplied diff\b|^\s*(?:hi|hello|hey|thanks|thank you|ok(?:ay)?)[.!?\s]*$")
     STATE = re.compile(r"(?i)\b(current|latest|right now)\b.*\b(branch|commit|sha|tree|dirty|directory|repository|provider|model|account)\b|\bwhat branch am i on\b|\bsessions? (?:are )?running now\b|\bwhich durable tasks are (?:blocked|failed|interrupted)\b|\blatest real pi\b")
     CONTINUE = re.compile(r"(?i)\b(continue|resume|pick up|where we left)\b")
     HISTORY = re.compile(r"(?i)\b(yesterday|previous|old|last time|why (?:did|was|were|choose|share|default)|what made|failed|failure|decide|decision|history|fixed|restored|still blocked|still source-only|lack native)\b")
