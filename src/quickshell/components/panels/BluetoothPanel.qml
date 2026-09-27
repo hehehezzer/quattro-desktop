@@ -20,6 +20,7 @@ Item {
     property string message: ""
     property var prompt: null
     property string removePath: ""
+    property string expandedPath: ""
     implicitWidth: 430
     implicitHeight: 500
 
@@ -36,6 +37,7 @@ Item {
     }
     function resetTransientState() {
         removePath = "";
+        expandedPath = "";
         if (adapter && adapter.scanning)
             send({
                 action: "stop",
@@ -214,6 +216,13 @@ Item {
                 spacing: 5
                 RowLayout {
                     Layout.fillWidth: true
+                    Rectangle {
+                        Layout.preferredWidth: 3
+                        Layout.preferredHeight: 30
+                        color: deviceRow.modelData.connected ? QuattroTheme.Theme.success
+                            : root.pendingPath === deviceRow.modelData.path ? QuattroTheme.Theme.accent
+                            : "transparent"
+                    }
                     Image {
                         source: Quickshell.iconPath(deviceRow.modelData.icon, "bluetooth")
                         sourceSize.width: 24
@@ -233,7 +242,7 @@ Item {
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: root.pendingPath === deviceRow.modelData.path ? root.action + "…" : (deviceRow.modelData.connected ? "Connected" : deviceRow.modelData.paired ? "Paired · Disconnected" : "Available") + (deviceRow.modelData.rssi !== null ? " · " + deviceRow.modelData.rssi + " dBm" : "")
+                            text: root.pendingPath === deviceRow.modelData.path ? root.action + "…" : deviceRow.modelData.connected ? "Connected" : deviceRow.modelData.paired ? "Paired · Disconnected" : "Available to pair"
                             color: deviceRow.modelData.connected ? QuattroTheme.Theme.success : QuattroTheme.Theme.textMuted
                             font.pixelSize: 10
                             elide: Text.ElideRight
@@ -244,6 +253,7 @@ Item {
                     Layout.fillWidth: true
                     DesktopButton {
                         text: deviceRow.modelData.connected ? "Disconnect" : deviceRow.modelData.paired ? "Connect" : "Pair"
+                        prominent: !deviceRow.modelData.connected
                         enabled: !root.busy && !!root.adapter && root.adapter.powered
                         onClicked: root.send({
                             action: deviceRow.modelData.connected ? "disconnect" : deviceRow.modelData.paired ? "connect" : "pair",
@@ -252,6 +262,14 @@ Item {
                     }
                     DesktopButton {
                         visible: deviceRow.modelData.paired
+                        text: root.expandedPath === deviceRow.modelData.path ? "Less" : "More"
+                        onClicked: root.expandedPath = root.expandedPath === deviceRow.modelData.path ? "" : deviceRow.modelData.path
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.expandedPath === deviceRow.modelData.path && deviceRow.modelData.paired
+                    DesktopButton {
                         text: deviceRow.modelData.trusted ? "Untrust" : "Trust"
                         enabled: !root.busy
                         onClicked: root.send({
@@ -261,7 +279,6 @@ Item {
                         })
                     }
                     DesktopButton {
-                        visible: deviceRow.modelData.paired
                         destructive: true
                         text: root.removePath === deviceRow.modelData.path ? "Confirm remove" : "Remove"
                         enabled: !root.busy
