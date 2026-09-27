@@ -4,6 +4,7 @@ import Quickshell.Hyprland
 import Quickshell.Wayland
 import Quickshell.Services.Pipewire
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme" as QuattroTheme
 
@@ -26,6 +27,13 @@ Scope {
         { "id": "warm", "label": "Warm", "temperature": 4200 },
         { "id": "deep", "label": "Deep", "temperature": 3400 }
     ]
+
+    function outputSummary() {
+        const outputs = []
+        for (const display of Quickshell.screens)
+            outputs.push(display.name + " " + display.width + "×" + display.height)
+        return outputs.join(" · ") || "No active display"
+    }
 
     function consumeNightLight(text) {
         try {
@@ -235,7 +243,7 @@ Scope {
                 + Math.max(1, Math.min(bluetoothPanel.devices.length, 4)) * 76
                 + (bluetoothPanel.expandedPath ? 42 : 0)
                 + (bluetoothPanel.prompt ? 120 : 0)))
-            : root.page === "display" ? 350
+            : root.page === "display" ? 285
             : root.page === "power" ? 430
             : root.page === "network" ? (networkPanel.passwordPrompt || networkPanel.qrVisible
                 ? 500 : networkPanel.wifiEnabled
@@ -418,8 +426,7 @@ Scope {
                         }
 
                         Text {
-                            text:
-                                "DP-2 and HDMI-A-1 · 1920×1080 · scale 1.0"
+                            text: root.outputSummary()
 
                             color: QuattroTheme.Theme.textMuted
 
@@ -481,23 +488,32 @@ Scope {
                             Repeater {
                                 model: root.nightLightOptions
 
-                                delegate: Rectangle {
+                                delegate: Button {
                                     id: nightLightButton
                                     required property var modelData
                                     Layout.fillWidth: true
                                     implicitHeight: 54
-                                    color: root.nightLightPreset === modelData.id
-                                        ? QuattroTheme.Theme.accentMuted
-                                        : nightLightMouse.containsMouse
-                                        ? QuattroTheme.Theme.hover
-                                        : QuattroTheme.Theme.surface
-                                    border.width: 1
-                                    border.color: root.nightLightPreset === modelData.id
-                                        ? QuattroTheme.Theme.accent
-                                        : QuattroTheme.Theme.border
+                                    enabled: !root.nightLightBusy
+                                    hoverEnabled: true
+                                    Accessible.name: modelData.label + " night light, " + modelData.temperature + " kelvin"
+                                    ToolTip.text: Accessible.name
+                                    onClicked: root.setNightLight(modelData.id)
 
-                                    Column {
-                                        anchors.centerIn: parent
+                                    background: Rectangle {
+                                        color: root.nightLightPreset === modelData.id
+                                            ? QuattroTheme.Theme.accentMuted
+                                            : nightLightButton.hovered
+                                            ? QuattroTheme.Theme.hover
+                                            : QuattroTheme.Theme.surface
+                                        border.width: nightLightButton.activeFocus ? 2 : 1
+                                        border.color: nightLightButton.activeFocus
+                                            ? QuattroTheme.Theme.textStrong
+                                            : root.nightLightPreset === modelData.id
+                                            ? QuattroTheme.Theme.accent
+                                            : QuattroTheme.Theme.border
+                                    }
+
+                                    contentItem: Column {
                                         spacing: 2
 
                                         Text {
@@ -519,47 +535,6 @@ Scope {
                                             font.pixelSize: 8
                                         }
                                     }
-
-                                    MouseArea {
-                                        id: nightLightMouse
-                                        anchors.fill: parent
-                                        enabled: !root.nightLightBusy
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.setNightLight(nightLightButton.modelData.id)
-                                    }
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            implicitHeight: 70
-                            color: QuattroTheme.Theme.surface
-                            border.width: 1
-                            border.color: QuattroTheme.Theme.border
-
-                            Column {
-                                anchors.fill: parent
-                                anchors.margins: 10
-                                spacing: 4
-
-                                Text {
-                                    text: "SHARP OUTPUT"
-                                    color: QuattroTheme.Theme.accent
-                                    font.family: "JetBrainsMono Nerd Font"
-                                    font.pixelSize: 9
-                                    font.letterSpacing: 1
-                                    font.bold: true
-                                }
-
-                                Text {
-                                    width: parent.width
-                                    text: "Compositor blur is disabled. Night light is applied after capture, so screenshots remain neutral even while the display is warm."
-                                    color: QuattroTheme.Theme.textMuted
-                                    font.family: "JetBrainsMono Nerd Font"
-                                    font.pixelSize: 9
-                                    wrapMode: Text.Wrap
                                 }
                             }
                         }
