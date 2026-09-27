@@ -43,7 +43,7 @@ ACTIONS = {
         "agent": "Decomposition requires deep semantic reasoning.",
     },
     "validation_strategy": {
-        "targeted_first": "Start with focused tests, then run every mandatory check.",
+        "targeted_first": "Start with focused checks, then run every mandatory check.",
         "broad_first": "Start with broad regression tests; do not omit mandatory checks.",
         "agent": "Test selection needs semantic understanding.",
     },

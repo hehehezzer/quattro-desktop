@@ -419,6 +419,71 @@ runpy.run_path(WORKER,run_name='__main__')
         self.assertGreater(result["timing"]["blocking_ms"], 0)
         self.assertEqual(result["timing"]["useful_overlap_ms"], 0)
 
+    def test_stage_timing_accounts_for_blocking_without_polling_inflation(self):
+        session, _ = self.session(delay=.02)
+        for revision in range(2):
+            result = session.decide(request(revision=revision))
+            timing = result['timing']
+            self.assertFalse(result['fallback_required'])
+            parts = [timing[name] for name in ('admission_ms', 'queue_ms', 'preparation_ms', 'worker_roundtrip_ms',
+                                               'validation_ms', 'resume_ms')]
+            self.assertTrue(all(value >= 0 for value in parts))
+            self.assertAlmostEqual(sum(parts), timing['blocking_ms'], places=5)
+            timeline = timing['timeline_ms']
+            self.assertEqual(timeline['request_entered'], 0)
+            self.assertGreaterEqual(timeline['request_queued'], 0)
+            self.assertLessEqual(timeline['answer_received'], timeline['decision_validated'])
+            self.assertEqual(session.snapshot()['last_timing'], timing)
+        self.assertGreater(session.snapshot()['counts']['context_bytes'], 0)
+
+    def test_host_cancellation_predicate_interrupts_without_waiting_for_provider(self):
+        session, processes = self.session(delay=2, timeout_ms=3000)
+        cancelled = threading.Event()
+        timer = threading.Timer(.08, cancelled.set)
+        timer.start()
+        self.addCleanup(timer.join)
+        started = time.perf_counter()
+        result = session.decide(request(), cancelled=cancelled.is_set)
+        self.assertEqual(result['evidence'], 'cancelled')
+        self.assertLess(time.perf_counter() - started, .5)
+        self.assertTrue(session.closed.is_set())
+        session.close()
+        self.assertTrue(all(process.poll() is not None for process in processes))
+        self.assertFalse(session.capacity_owned)
+
+    def test_stalled_host_state_lookup_cannot_extend_the_caller_deadline(self):
+        session, processes = self.session(delay=2, timeout_ms=100)
+        entered, release = threading.Event(), threading.Event()
+        def stalled():
+            entered.set()
+            release.wait()
+            return False
+        try:
+            started = time.perf_counter()
+            result = session.decide(request(), cancelled=stalled)
+            self.assertEqual(result['evidence'], 'timeout')
+            self.assertLess(time.perf_counter() - started, .4)
+            self.assertTrue(entered.is_set())
+            self.assertTrue(session.capacity_owned)
+        finally:
+            release.set()
+            session.close()
+        self.assertFalse(session.capacity_owned)
+        self.assertTrue(all(process.poll() is not None for process in processes))
+
+    def test_cached_and_timed_out_timing_cannot_reuse_old_network_samples(self):
+        session, _ = self.session()
+        session.decide(request(), cacheable=True)
+        cached = session.decide(request(), cacheable=True)
+        self.assertIsNone(cached['timing']['rtt_ms'])
+        self.assertIsNone(cached['timing']['worker_roundtrip_ms'])
+        delayed, _ = self.session(delay=.3, timeout_ms=100)
+        timed = delayed.decide(request())
+        frozen = json.dumps(timed['timing'], sort_keys=True)
+        delayed.close()
+        self.assertEqual(frozen, json.dumps(timed['timing'], sort_keys=True))
+        self.assertIsNone(timed['timing']['validation_ms'])
+
     def test_catalog_verified_once_only_for_explicit_session_client(self):
         opener = mock.Mock()
         opener.open.side_effect = [io.BytesIO(json.dumps(body).encode()) for body in (

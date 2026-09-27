@@ -84,6 +84,8 @@ def handle(message, session):
             response["error"] = {"code": -32602, "message": "unsupported decision tool"}
         else:
             result = session.decide(params.get("arguments"))
+            result["outcome"] = "FALLBACK" if result["fallback_required"] else "ADVISORY"
+            result["agent_reasoning_avoided"] = False
             result["telemetry"] = session.snapshot()
             response["result"] = {"content": [{"type": "text", "text": json.dumps(result, allow_nan=False)}]}
     else:

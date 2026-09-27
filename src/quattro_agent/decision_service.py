@@ -185,10 +185,12 @@ class DecisionSession:
                 work = self.commands.get()
                 if work is None:
                     return
-                request, cacheable, started, abandoned, done, completed = work
+                request, cacheable, started, abandoned, done, completed, trace, cancelled = work
+                trace["monitor_started"] = time.perf_counter()
                 try:
                     completed.append(self._decide(request, cacheable=cacheable,
-                                                  started=started, abandoned=abandoned))
+                                                  started=started, abandoned=abandoned, trace=trace,
+                                                  cancelled=cancelled))
                 except Exception:
                     completed.append(self._fallback("worker_failure"))
                 finally:
@@ -214,8 +216,9 @@ class DecisionSession:
             if not self.retiring:
                 return
 
-    def decide(self, request, *, cacheable=False):
+    def decide(self, request, *, cacheable=False, cancelled=None):
         started = time.perf_counter()
+        trace = {"request_entered": started}
         self._count("requests")
         if self.closed.is_set() or self.mode != "COOPERATIVE":
             self._count("skipped")
@@ -237,7 +240,8 @@ class DecisionSession:
                     if self.monitor is None:
                         self.monitor = threading.Thread(target=self._monitor_loop, name="jev-session-monitor", daemon=True)
                         self.monitor.start()
-                    self.commands.put_nowait((request, cacheable, started, abandoned, done, completed))
+                    trace["request_queued"] = time.perf_counter()
+                    self.commands.put_nowait((request, cacheable, started, abandoned, done, completed, trace, cancelled))
             except Exception:
                 self.request_lock.release()
                 result = self._fallback("worker_failure")
@@ -252,8 +256,30 @@ class DecisionSession:
                     abandoned.set()
                     self.cache = None
                     result = self._fallback("cancelled" if self.closed.is_set() else "timeout")
-        elapsed = (time.perf_counter() - started) * 1000
-        result.setdefault("timing", {"rtt_ms": None, "useful_overlap_ms": 0.0})["blocking_ms"] = elapsed
+        resumed = time.perf_counter()
+        elapsed = (resumed - started) * 1000
+        # Freeze the caller-visible measurement. A timed-out monitor may still
+        # finish cleanup, but must not mutate published timing after resumption.
+        observed = {name: stamp for name, stamp in dict(trace).items() if stamp <= resumed}
+        observed["execution_resumed"] = resumed
+        timing = dict(result.get("timing", {}), blocking_ms=elapsed, useful_overlap_ms=0.0)
+        timing.setdefault("rtt_ms", None)
+        for name, begin, end in (
+            ("admission_ms", "request_entered", "request_queued"),
+            ("queue_ms", "request_queued", "monitor_started"),
+            ("preparation_ms", "monitor_started", "request_sent"),
+            ("worker_roundtrip_ms", "request_sent", "answer_received"),
+            ("validation_ms", "answer_received", "decision_validated"),
+            ("resume_ms", "decision_validated", "execution_resumed"),
+        ):
+            timing[name] = ((observed[end] - observed[begin]) * 1000
+                            if begin in observed and end in observed else None)
+            if timing[name] is not None:
+                self._count(name, timing[name])
+        timing["timeline_ms"] = {name: (value - started) * 1000 for name, value in observed.items()}
+        result["timing"] = timing
+        with self.metrics_lock:
+            self.last_timing = dict(timing)
         self._count("blocking_ms", elapsed)
         if result["fallback_required"]:
             self._count("fallbacks")
@@ -264,7 +290,7 @@ class DecisionSession:
             self._count("accepted")
         return result
 
-    def _decide(self, request, *, cacheable, started, abandoned):
+    def _decide(self, request, *, cacheable, started, abandoned, trace, cancelled):
         result = None
         try:
             if self.closed.is_set() or self.mode != "COOPERATIVE":
@@ -279,6 +305,7 @@ class DecisionSession:
                 self._count("skipped")
                 result = self._fallback(error.category if isinstance(error, JevFailure) else "invalid_state")
                 return result
+            self._count("context_bytes", len(encoded.encode("utf-8")))
             revision = request["execution_state"]["revision"]
             if revision < self.revision:
                 result = self._fallback("stale")
@@ -312,12 +339,24 @@ class DecisionSession:
                         raise JevFailure("closed")
                     if abandoned.is_set() or time.perf_counter() >= deadline:
                         raise JevFailure("timeout")
+                    trace["request_sent"] = time.perf_counter()
                     self.process.stdin.write(encoded.encode() + b"\n")
                     self.process.stdin.flush()
                     responses = self.responses
                 while True:
                     if self.closed.is_set():
                         raise JevFailure("cancelled")
+                    if cancelled is not None:
+                        # Host-state I/O belongs on the bounded monitor side,
+                        # just like credential lookup. A stalled SQLite reader
+                        # cannot extend the calling thread's provider deadline.
+                        try:
+                            cancellation_observed = bool(cancelled())
+                        except Exception:
+                            cancellation_observed = True
+                        if cancellation_observed:
+                            self.request_close()  # Wake caller before any reaping.
+                            raise JevFailure("cancelled")
                     remaining = deadline - time.perf_counter()
                     if remaining <= 0:
                         raise queue.Empty
@@ -326,11 +365,17 @@ class DecisionSession:
                         break
                     except queue.Empty:
                         continue
+                trace["answer_received"] = time.perf_counter()
                 if raw is None:
                     raise JevFailure("worker_failure")
                 value = decode(raw)
                 if not isinstance(value, dict):
                     raise JevFailure("worker_failure")
+                for source, target in (("jev_request_started", "provider_request_started"),
+                                       ("jev_request_finished", "provider_answer_received")):
+                    stamp = value.get(source)
+                    if type(stamp) in (int, float) and trace["request_sent"] <= stamp <= trace["answer_received"]:
+                        trace[target] = stamp
                 if value.get("failure_category"):
                     from .jev_shadow import FAILURES
                     category = value["failure_category"]
@@ -346,7 +391,6 @@ class DecisionSession:
                 self._count("output_tokens", response["usage"]["output_tokens"])
                 timing = {name: value.get(name) for name in ("jev_latency_ms", "catalog_latency_ms")}
                 with self.metrics_lock:
-                    self.last_timing = timing
                     self.last_jev_model = response["model"]
                 if not allowed_action(request, action):
                     result = self._fallback("hard_policy")
@@ -357,10 +401,12 @@ class DecisionSession:
                               "evidence": "native_choice_probabilities", "fallback_required": False,
                               "probabilities": answer["probabilities"]}
                     self.cache = (encoded, dict(result)) if cacheable else None
+                trace["decision_validated"] = time.perf_counter()
                 result["confidence"] = answer["confidence"]
                 result["probabilities"] = answer["probabilities"]
                 result["timing"] = {"rtt_ms": timing["jev_latency_ms"],
-                                    "catalog_ms": timing["catalog_latency_ms"], "useful_overlap_ms": 0.0}
+                                    "catalog_ms": timing["catalog_latency_ms"], "useful_overlap_ms": 0.0,
+                                    "request_body_bytes": value.get("request_body_bytes")}
                 return result
             except queue.Empty:
                 result = self._fallback("timeout")

@@ -1,5 +1,11 @@
 # Jev runtime decision plane — PR #31, experimental
 
+Latest continuation: [host runtime milestone experiment](JEV_RUNTIME_MILESTONES.md).
+A gated post-agent validation-order boundary now exists for managed Codex and
+standalone Pi. It does not establish useful mid-turn reasoning offload; no
+category is enabled by default and the release remains blocked. The descriptions
+and evidence below retain the earlier callable-only baseline history.
+
 This extends, rather than replaces, [JEV_SPECULATION.md](JEV_SPECULATION.md).
 The release is **not ready**. Production configuration remains unchanged/OFF.
 MCP discovery is not proof of use, and useful advice is not proof of faster or

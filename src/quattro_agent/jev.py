@@ -173,6 +173,8 @@ class JevClient:
         data = None if payload is None else json.dumps(
             payload, sort_keys=True, separators=(",", ":"), allow_nan=False,
         ).encode()
+        if data is not None:
+            self.timings["request_body_bytes"] = len(data)
         request = urllib.request.Request(
             BASE_URL + path, data=data,
             headers={"Authorization": "Bearer " + self._key, "Content-Type": "application/json"},

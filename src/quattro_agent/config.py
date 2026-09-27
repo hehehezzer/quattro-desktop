@@ -441,12 +441,14 @@ def validate_ai_config(source: Mapping[str, Any], *, home: Path | None = None) -
         _fail("$.routing.qualityWeights", "weights must sum to 1")
     routing["qualityWeights"] = normalized_weights
     _integer(routing["localOutcomeMinSamples"], "$.routing.localOutcomeMinSamples", 1, 100)
-    jev = _mapping(routing["jev"], "$.routing.jev", {"mode", "timeoutMs", "decisionWaitMs"},
+    jev = _mapping(routing["jev"], "$.routing.jev", {"mode", "timeoutMs", "decisionWaitMs", "experimentalValidationOrder"},
                    required={"mode", "timeoutMs"})
     _enum(jev["mode"], "$.routing.jev.mode", {"OFF", "SHADOW", "COOPERATIVE"})
     _integer(jev["timeoutMs"], "$.routing.jev.timeoutMs", 100, 3000)
     if "decisionWaitMs" in jev:
         _integer(jev["decisionWaitMs"], "$.routing.jev.decisionWaitMs", 0, 3000)
+    if "experimentalValidationOrder" in jev:
+        _bool(jev["experimentalValidationOrder"], "$.routing.jev.experimentalValidationOrder")
     normalized["routing"] = copy.deepcopy(routing)
     normalized["workspace"] = {"projectRoot": project_root}
     normalized["defaultAgent"] = default_agent

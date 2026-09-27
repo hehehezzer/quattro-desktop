@@ -1,0 +1,53 @@
+{
+  "base_revision": "766c391d257a3eea29a5191c2c8ba2642e5c5fe3",
+  "source_sha256": "a482ca40f072d0aa2f26ed14af4154c7bff933f5baf98ba98e55d58375ac7550",
+  "measurement": "Final matched 11-case source-runtime matrix; not a causal speedup claim",
+  "task_artifact": "jev-pr31-milestone-final-tasks.json",
+  "probe_artifact": "jev-pr31-milestone-final-probes.json",
+  "previous_artifact": "jev-pr31-continuation-tasks.json",
+  "release_gate_passed": false,
+  "default_automatic_categories": [],
+  "performance": {
+    "OFF_fresh": {"total_latency_seconds": 305.4710908778943, "input_tokens": 6028841, "output_tokens": 7000, "task_successes": 11, "tasks": 11},
+    "PREVIOUS_ON": {"total_latency_seconds": 321.894, "input_tokens": 6586514, "output_tokens": 8195, "task_successes": 11, "tasks": 11},
+    "NEW_ON": {"total_latency_seconds": 319.54252706700936, "input_tokens": 6452930, "output_tokens": 7765, "task_successes": 11, "tasks": 11},
+    "historical_OFF_reference": {"total_latency_seconds": 327.630, "input_tokens": 6678994, "output_tokens": 7866, "task_successes": 11, "tasks": 11}
+  },
+  "runtime_matrix": {
+    "OFF": {"milestones_observed": 10, "milestones_eligible": 10, "jev_calls": 0, "OFFLOADED": 0, "ADVISORY": 0, "FALLBACK": 0, "PASSTHROUGH": 10},
+    "PREVIOUS_ON": {"milestones_observed": null, "milestones_eligible": null, "jev_calls": 1, "OFFLOADED": 0, "ADVISORY": 0, "FALLBACK": 1},
+    "NEW_ON": {"milestones_observed": 10, "milestones_eligible": 10, "automatic_jev_calls": 10, "callable_jev_calls": 0, "jev_calls": 10, "completed_evaluations": 10, "OFFLOADED": 0, "ADVISORY": 0, "FALLBACK": 10, "uncertain": 10, "timeouts": 0, "cache_hits": 0, "model_turns_avoided_proven": 0}
+  },
+  "new_on_latency_ms": {
+    "attempts": 10,
+    "rtt_observed_samples": 10,
+    "rtt_median": 293.20319602265954,
+    "catalog_median": 312.47863051248714,
+    "queue_median": 0.011556956451386213,
+    "validation_observed_samples": 10,
+    "validation_median": 0.07204251596704125,
+    "blocking_median": 655.8912634500302,
+    "blocking_sum": 6475.20700097084,
+    "useful_overlap_sum": 0,
+    "automatic_blocking_sum": 6475.20700097084
+  },
+  "automatic_context_bytes": {"state_projection": 361, "observed_provider_post_body": 993},
+  "decision_types": [
+    {"decision": "Sequencing", "automatic_default": false, "calls": 0, "offloaded": 0, "advisory": 0, "fallback": 0, "blocking_ms": 0, "roi": "UNPROVEN"},
+    {"decision": "Validation", "automatic_default": false, "experimental_automatic_calls": 10, "calls": 10, "offloaded": 0, "advisory": 0, "fallback": 10, "blocking_ms": 6475.20700097084, "roi": "NEGATIVE"},
+    {"decision": "Retry", "automatic_default": false, "calls": 0, "offloaded": 0, "advisory": 0, "fallback": 0, "blocking_ms": 0, "roi": "UNPROVEN"},
+    {"decision": "Context", "automatic_default": false, "calls": 0, "offloaded": 0, "advisory": 0, "fallback": 0, "blocking_ms": 0, "roi": "UNPROVEN"},
+    {"decision": "Progress", "automatic_default": false, "calls": 0, "offloaded": 0, "advisory": 0, "fallback": 0, "blocking_ms": 0, "roi": "UNPROVEN"}
+  ],
+  "separate_live_probes": {"tasks": 4, "task_successes": 4, "automatic_calls": 2, "OFFLOADED": 0, "ADVISORY": 0, "FALLBACK": 2, "uncertain": 2, "timeouts": 0, "runtimes": ["managed_codex", "standalone_managed_pi"]},
+  "limits": [
+    "Fresh OFF is paired with NEW_ON; PREVIOUS_ON and historical_OFF are earlier measurements.",
+    "Runtime call counts are supervised attempts, excluding initial routing and direct component evaluations. All ten attempts in this final matrix completed an evaluation; timeout RTT is otherwise unavailable, never zero.",
+    "The two separate live-probe calls are not included in the ten-call matrix totals.",
+    "Integration fixtures demonstrate accepted host application using scripted provider answers; they are not live provider successes.",
+    "Host ordering replaces a deterministic host choice, not baseline agent reasoning; no useful live offloading demonstrated. Callable advisory adherence is unmeasured when present.",
+    "Decision ROI describes automatic candidates, not an overall Jev ranking or a conclusion about every possible callable advice use.",
+    "One pair per scenario, provider load/caching and unavailable model-turn/cost attribution preclude causal speedup claims.",
+    "Earlier non-final milestone artifacts are retained as pre-repair exploratory evidence, not current-source validation."
+  ]
+}

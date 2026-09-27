@@ -21,6 +21,7 @@ import time
 SOURCE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE / 'src'))
 from quattro_agent.config import load_ai_config
+from quattro_agent.decision_taxonomy import ACTIONS
 from quattro_agent.paths import config_path, state_root
 from quattro_agent.models import TaskState, TERMINAL_TASK_STATES
 from quattro_agent.turn_gate import TurnGate
@@ -103,26 +104,30 @@ def parse_output(path):
             answer = item.get('text', '')  # Ephemeral fixture assertion; never exported.
         if item.get('type') == 'mcp_tool_call' and item.get('server') == 'quattro_decisions':
             observation = {'status': item.get('status')}
+            arguments = item.get('arguments')
+            if isinstance(arguments, dict) and arguments.get('decision_type') in ACTIONS:
+                observation['decision_type'] = arguments['decision_type']
             for part in (item.get('result') or {}).get('content', []):
                 if part.get('type') == 'text':
                     try:
                         result = json.loads(part['text'])
                         observation.update({name: result.get(name) for name in
-                                            ('selected_action', 'confidence', 'fallback_required', 'timing')})
+                                            ('selected_action', 'confidence', 'fallback_required', 'timing', 'outcome')})
                     except (ValueError, AttributeError):
                         pass
             decisions.append(observation)
     return usage, decisions, answer, reasoning
 
 
-def run_case(base, mode, case, root, timeout):
+def run_case(base, mode, case, root, timeout, *, experimental_validation_order=False):
     project = root / 'fixture'
     project.mkdir()
     fixture(project, case)
     config = json.loads(json.dumps(base))
     config['memory'].update(enabled=False, enforceOnLaunch=False)
     config['delegation']['enabled'] = False
-    config['routing']['jev'] = {'mode': mode, 'timeoutMs': 1500}
+    config['routing']['jev'] = {'mode': mode, 'timeoutMs': 1500,
+                              'experimentalValidationOrder': experimental_validation_order}
     path = root / 'ai.json'
     path.write_text(json.dumps(config))
     os.chmod(path, 0o600)
@@ -165,7 +170,10 @@ def run_case(base, mode, case, root, timeout):
     if case in READ_ONLY:
         success = success and READ_ONLY[case].lower() in answer.lower()
         success = success and not subprocess.check_output(['git', '-C', str(project), 'diff', '--name-only']).strip()
+    milestones = [event['payload'] for event in runtime.store.display_events(task)
+                  if event['type'] == 'runtime.milestone']
     return {'case': case, 'mode': mode, 'total_task_ms': wall, 'task_success': success,
+            'runtime_milestones': milestones,
             'exit_code': code, 'state_before_cleanup': state['state'],
             'validation_success': tested, 'terminal_code': state.get('terminal_code'),
             'first_token_ms': None, 'usage': usage, 'runtime_decisions': decisions,
@@ -179,6 +187,8 @@ def main():
     parser.add_argument('--task-timeout', type=int, default=180,
                         help='Safety ceiling; exploratory successful pilot maximum was 86 seconds')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--experimental-validation-order', action='store_true',
+                        help='Opt into the unpromoted post-agent validation-order experiment')
     args = parser.parse_args()
     if not args.live:
         parser.error('--live is required; real models and native task stores are used')
@@ -189,13 +199,15 @@ def main():
     rows = []
     output = {'measurement': 'LIVE synthetic task smoke matrix; one pair per scenario, not statistical quality evidence',
               'source_sha256': digest, 'source_unchanged': None, 'rows': rows,
+              'experimental_validation_order': args.experimental_validation_order,
               'limits': ['No price data or model-turn counter.', 'No causal speed attribution; provider caching and load vary.',
                          'Subagent candidate respects the one-worker hard budget; it does not benchmark spawning.']}
     for index, case in enumerate(args.case or CASES):
         for mode in (('OFF', 'COOPERATIVE') if index % 2 == 0 else ('COOPERATIVE', 'OFF')):
             with tempfile.TemporaryDirectory(prefix='quattro-task-benchmark-') as temporary:
                 try:
-                    rows.append(run_case(base, mode, case, Path(temporary), args.task_timeout))
+                    rows.append(run_case(base, mode, case, Path(temporary), args.task_timeout,
+                                         experimental_validation_order=args.experimental_validation_order))
                 except Exception as error:
                     trace = error.__traceback__
                     while trace is not None and trace.tb_next is not None:
