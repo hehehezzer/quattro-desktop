@@ -621,8 +621,8 @@ Item {
                     }
                 }
                 ColumnLayout {
-                    Layout.preferredWidth: 245
-                    Layout.maximumWidth: 245
+                    Layout.preferredWidth: 210
+                    Layout.maximumWidth: 210
                     Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
                     spacing: 1
                     Text {
