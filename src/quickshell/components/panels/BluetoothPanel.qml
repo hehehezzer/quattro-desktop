@@ -101,6 +101,25 @@ Item {
                     value: enabled
                 });
         }
+        function pair(address: string): void {
+            const device = root.devices.find(d => d.address.toUpperCase() === address.toUpperCase());
+            if (device && !device.paired)
+                root.send({ action: "pair", path: device.path });
+        }
+        function connect(address: string): void {
+            const device = root.devices.find(d => d.address.toUpperCase() === address.toUpperCase());
+            if (device && device.paired && !device.connected)
+                root.send({ action: "connect", path: device.path });
+        }
+        function disconnect(address: string): void {
+            const device = root.devices.find(d => d.address.toUpperCase() === address.toUpperCase());
+            if (device && device.connected)
+                root.send({ action: "disconnect", path: device.path });
+        }
+        function respond(id: int, accept: bool, value: string): void {
+            if (root.prompt && root.prompt.id === id)
+                root.send({ action: "respond", id: id, accept: accept, value: value });
+        }
     }
     Process {
         id: bridge
