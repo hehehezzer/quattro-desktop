@@ -233,7 +233,10 @@ Scope {
             : root.page === "bluetooth" ? 420
             : root.page === "display" ? 350
             : root.page === "power" ? 430
-            : root.page === "network" ? 620 : 560,
+            : root.page === "network" ? (networkPanel.passwordPrompt || networkPanel.qrVisible
+                ? 500 : networkPanel.wifiEnabled
+                    ? Math.min(620, 290 + Math.min(networkPanel.wifiNetworks.length, 6) * 48)
+                    : 250) : 560,
             (screen ? screen.height : 1080) - 60)
 
         exclusionMode:
