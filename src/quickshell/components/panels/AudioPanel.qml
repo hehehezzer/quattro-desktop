@@ -348,59 +348,6 @@ Item {
             spacing: 0
 
             // ====================================================
-            // HEADER
-            // ====================================================
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.leftMargin: 18
-                Layout.rightMargin: 18
-                Layout.topMargin: 16
-                Layout.bottomMargin: 14
-
-                spacing: 10
-
-                Text {
-                    text: "Audio"
-
-                    color: QuattroTheme.Theme.text
-
-                    font.family:
-                        "JetBrainsMono Nerd Font"
-
-                    font.pixelSize: 17
-                    font.weight: Font.DemiBold
-                }
-
-                Item {
-                    Layout.fillWidth: true
-                }
-
-                Text {
-                    text:
-                        Pipewire.ready
-                            ? "PipeWire"
-                            : "Connecting…"
-
-                    color: QuattroTheme.Theme.textMuted
-
-                    font.family:
-                        "JetBrainsMono Nerd Font"
-
-                    font.pixelSize: 10
-                }
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.leftMargin: 14
-                Layout.rightMargin: 14
-
-                height: 1
-                color: QuattroTheme.Theme.border
-            }
-
-            // ====================================================
             // OUTPUT
             // ====================================================
 
@@ -412,16 +359,22 @@ Item {
 
                 spacing: 10
 
-                Text {
-                    text: "OUTPUT"
-
-                    color: QuattroTheme.Theme.textMuted
-
-                    font.family:
-                        "JetBrainsMono Nerd Font"
-
-                    font.pixelSize: 10
-                    font.weight: Font.DemiBold
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "OUTPUT"
+                        color: QuattroTheme.Theme.textMuted
+                        font.family: "JetBrainsMono Nerd Font"
+                        font.pixelSize: 10
+                        font.weight: Font.DemiBold
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        text: Pipewire.ready ? "READY" : "CONNECTING…"
+                        color: Pipewire.ready ? QuattroTheme.Theme.success : QuattroTheme.Theme.warning
+                        font.family: "JetBrainsMono Nerd Font"
+                        font.pixelSize: 9
+                    }
                 }
 
                 RowLayout {
