@@ -22,8 +22,9 @@ PanelWindow {
     visible: false
     exclusionMode: ExclusionMode.Ignore
     focusable: true
-    // Keyboard-only focus while visible. Pointer input is never grabbed.
-    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    // Exclusive layers also capture outside pointer input on Hyprland.
+    // OnDemand plus passive compositor dismissal leaves app clicks untouched.
+    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
     Component.onDestruction: PopupManager.release(root)
     Shortcut {
         sequence: "Escape"

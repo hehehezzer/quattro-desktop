@@ -28,6 +28,27 @@ local function dismissOutside()
     end
 end
 
+local function dismissAll()
+    for _, layer in ipairs(hl.get_layers()) do
+        local token = layer.mapped and layer.namespace:match("^quattro%-popup%-(%d+%-%d+)$")
+        if token then hl.exec_cmd("qs ipc call popups dismiss " .. token) end
+    end
+end
+
+-- OnDemand allows focus to follow the mouse. Escape still closes the temporary
+-- panel, but must not consume application Escape keys when no panel is open.
+local escape = hl.bind("Escape", dismissAll, {description = "Close temporary Quattro panel"})
+local function updateEscape()
+    local active = false
+    for _, layer in ipairs(hl.get_layers()) do
+        if layer.mapped and layer.namespace:match("^quattro%-popup%-%d+%-%d+$") then active = true end
+    end
+    escape:set_enabled(active)
+end
+hl.on("layer.opened", updateEscape)
+hl.on("layer.closed", updateEscape)
+updateEscape()
+
 for _, button in ipairs({272, 273, 274}) do
     hl.bind("mouse:" .. button, dismissOutside, {
         non_consuming = true,
