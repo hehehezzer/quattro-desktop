@@ -1,0 +1,12 @@
+[Unit]
+Description=Quattro ten-band PipeWire equalizer
+After=pipewire.service wireplumber.service
+Requires=pipewire.service
+
+[Service]
+ExecStart=/usr/bin/pipewire -c %h/.config/quattro/equalizer.conf
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
