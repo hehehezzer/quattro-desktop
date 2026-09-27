@@ -1,6 +1,7 @@
 import Quickshell
 import Quickshell.Io
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import "../../theme" as QuattroTheme
 
