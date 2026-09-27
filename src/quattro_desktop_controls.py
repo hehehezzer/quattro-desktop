@@ -147,9 +147,10 @@ def weather(force=False):
                   "updated": time.time(), "location": [lat, lon], "timezone": timezone, "cached": False}
         atomic(CACHE / "weather.json", json.dumps(result))
         return {**result, **context}
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError):
         return {**cached, **context, "available": bool(cached), "cached": bool(cached),
-                "stale": True, "error": "Weather unavailable; retry later (" + type(error).__name__ + ")"}
+                "stale": True, "error": "Showing saved conditions. Refresh when online."
+                if cached else "Weather is unavailable. Check your connection and refresh."}
 
 
 def coordinates(latitude, longitude):

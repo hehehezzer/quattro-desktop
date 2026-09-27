@@ -59,7 +59,7 @@ QtObject {
             return "󰖘";
         return "󰖖";
     }
-    readonly property string label: snapshot.available ? glyph + " " + Number(snapshot.temperature).toFixed(1) + "°C" + (snapshot.stale ? " *" : "") : loading ? "Weather…" : "Weather —"
+    readonly property string label: snapshot.available ? glyph + " " + Number(snapshot.temperature).toFixed(1) + "°C" : loading ? "Weather…" : "Weather —"
     function refresh(force) {
         pendingRefresh = true;
         pendingForce = pendingForce || !!force;

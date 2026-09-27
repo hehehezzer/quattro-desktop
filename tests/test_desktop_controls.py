@@ -129,8 +129,11 @@ class DesktopControlsTests(unittest.TestCase):
                     stale = desktop.weather(force=True)
                     self.assertTrue(stale["stale"])
                     self.assertTrue(stale["cached"])
+                    self.assertEqual(stale["error"], "Showing saved conditions. Refresh when online.")
                     desktop.atomic(desktop.CONFIG / "weather.json", json.dumps({"latitude": 30, "longitude": 20}))
-                    self.assertFalse(desktop.weather(force=True)["available"])
+                    unavailable = desktop.weather(force=True)
+                    self.assertFalse(unavailable["available"])
+                    self.assertEqual(unavailable["error"], "Weather is unavailable. Check your connection and refresh.")
 
     def test_atomic_mode(self):
         with tempfile.TemporaryDirectory() as temp:
