@@ -44,7 +44,7 @@ Rectangle {
             }
             Image {
                 anchors.fill: parent
-                source: root.hasTrack && root.player.trackArtUrl ? root.player.trackArtUrl : ""
+                source: DesktopMedia.artwork
                 sourceSize.width: 48
                 sourceSize.height: 48
                 fillMode: Image.PreserveAspectCrop

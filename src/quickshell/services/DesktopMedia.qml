@@ -8,6 +8,34 @@ import QtQml.Models
 QtObject {
     id: root
     property var players: Mpris.players.values
+    property string artwork: ""
+    readonly property string artworkUrl: player && player.trackArtUrl ? String(player.trackArtUrl) : ""
+    onArtworkUrlChanged: {
+        artwork = ""
+        if (artworkUrl && !artWorker.running)
+            startArtwork()
+    }
+    function startArtwork() {
+        if (!artworkUrl || artWorker.running)
+            return
+        artWorker.requestUrl = artworkUrl
+        artWorker.command = ["python3", Quickshell.env("HOME") + "/.local/bin/quattro_spotify_art.py", artworkUrl]
+        artWorker.running = true
+    }
+    Component.onCompleted: startArtwork()
+    property Process artWorker: Process {
+        property string requestUrl: ""
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (artWorker.requestUrl === root.artworkUrl)
+                    root.artwork = text.trim()
+            }
+        }
+        onExited: {
+            if (artWorker.requestUrl !== root.artworkUrl)
+                Qt.callLater(root.startArtwork)
+        }
+    }
     // Only Spotify's own MPRIS endpoint may drive the visible control or IPC.
     function isSpotify(p) {
         if (!p) return false;

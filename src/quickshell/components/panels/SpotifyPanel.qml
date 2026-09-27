@@ -39,7 +39,7 @@ Item {
                 }
                 Image {
                     anchors.fill: parent
-                    source: root.hasTrack && root.player.trackArtUrl ? root.player.trackArtUrl : ""
+                    source: DesktopMedia.artwork
                     sourceSize.width: 240
                     sourceSize.height: 240
                     fillMode: Image.PreserveAspectCrop
