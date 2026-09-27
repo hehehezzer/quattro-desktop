@@ -40,10 +40,8 @@ QtObject {
     function isSpotify(p) {
         if (!p) return false;
         const name = String(p.dbusName || "").toLowerCase();
-        const entry = String(p.desktopEntry || "").toLowerCase();
         return name === "org.mpris.mediaplayer2.spotify"
-            || name.startsWith("org.mpris.mediaplayer2.spotify.instance")
-            || entry === "spotify";
+            || name.startsWith("org.mpris.mediaplayer2.spotify.instance");
     }
     property var player: {
         const list = players.filter(isSpotify);
