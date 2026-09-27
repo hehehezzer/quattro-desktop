@@ -1,0 +1,103 @@
+{
+  "measurement": "LIVE transport-only; catalog verified every evaluation; no execution calls",
+  "dns_tcp_tls": "combined connect measurement; phases not separately attributed",
+  "modes": {
+    "urllib_fresh": {
+      "wall_ms": {
+        "n": 10,
+        "p50": 665.944,
+        "p95": 680.467,
+        "max": 680.467
+      },
+      "jev_rtt_ms": {
+        "n": 10,
+        "p50": 364.293,
+        "p95": 385.711,
+        "max": 385.711
+      },
+      "catalog_ms": {
+        "n": 10,
+        "p50": 301.28,
+        "p95": 312.843,
+        "max": 312.843
+      },
+      "connect_ms": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "new_connections": null,
+      "http_versions": [],
+      "models": [
+        "jev-1.13.0"
+      ]
+    },
+    "https_per_turn": {
+      "wall_ms": {
+        "n": 10,
+        "p50": 569.714,
+        "p95": 595.928,
+        "max": 595.928
+      },
+      "jev_rtt_ms": {
+        "n": 10,
+        "p50": 270.804,
+        "p95": 289.238,
+        "max": 289.238
+      },
+      "catalog_ms": {
+        "n": 10,
+        "p50": 298.306,
+        "p95": 307.525,
+        "max": 307.525
+      },
+      "connect_ms": {
+        "n": 10,
+        "p50": 72.927,
+        "p95": 76.922,
+        "max": 76.922
+      },
+      "new_connections": 10,
+      "http_versions": [
+        11
+      ],
+      "models": [
+        "jev-1.13.0"
+      ]
+    },
+    "https_session": {
+      "wall_ms": {
+        "n": 10,
+        "p50": 510.172,
+        "p95": 565.284,
+        "max": 565.284
+      },
+      "jev_rtt_ms": {
+        "n": 10,
+        "p50": 283.759,
+        "p95": 320.108,
+        "max": 320.108
+      },
+      "catalog_ms": {
+        "n": 10,
+        "p50": 220.385,
+        "p95": 295.579,
+        "max": 295.579
+      },
+      "connect_ms": {
+        "n": 1,
+        "p50": 69.448,
+        "p95": 69.448,
+        "max": 69.448
+      },
+      "new_connections": 1,
+      "http_versions": [
+        11
+      ],
+      "models": [
+        "jev-1.13.0"
+      ]
+    }
+  }
+}

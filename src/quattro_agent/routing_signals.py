@@ -74,9 +74,19 @@ def fuse(baseline: RoutingDecision, *, execution: str, manual: bool,
     }[target], task_profile=profile, reason="Quattro policy raised capability floor from corroborated task signals"), "capability_floor_raised"
 
 
+def start_signal_run(*, config, database, execution, state, baseline, manual=False, eligible=True):
+    """Start once before independent runtime preparation; None is a completed attempt."""
+    if (config.get("routing", {}).get("jev", {}).get("mode", "OFF") == "OFF"
+            or not eligible or manual or baseline.tier is RoutingTier.REASONING
+            or json.loads(state)["complexity"] == "low"):
+        return None
+    return start_shadow(config=config, database=database.with_name("jev-shadow.sqlite3"),
+                        request="", state_json=state, decision=execution)
+
+
 def _classify_with_signals(*, pre_routing_input, config, database: Path, execution: str,
                            can_select=None, baseline_override=None, canonical_features=None,
-                           eligible=True) -> RoutingDecision:
+                           eligible=True, speculative_run=()) -> RoutingDecision:
     """Jev runs concurrently with deterministic and learned analysis.
 
     SHADOW never waits at the fusion boundary. COOPERATIVE waits only for the
@@ -86,12 +96,12 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
     if not eligible:
         annotate(mode=mode, jev_eligible=False, jev_requested=False,
                  learned_signal={"error": "fast_guard"},
-                 quattro_learned_ms=0.0, fusion_ms=0.0, critical_path_wait_ms=0.0,
+                 quattro_learned_ms=0.0, fusion_ms=0.0, critical_path_wait_ms=0.0, jev_wait_ms=0.0,
                  fusion_reason="fast_guard")
         return baseline_override or classify_pre_routing(pre_routing_input=pre_routing_input, config=config)
     if mode == "OFF":
         annotate(mode=mode, jev_eligible=True, jev_requested=False, learned_signal={"error": "off"},
-                 quattro_learned_ms=0.0, fusion_ms=0.0, critical_path_wait_ms=0.0, fusion_reason="off")
+                 quattro_learned_ms=0.0, fusion_ms=0.0, critical_path_wait_ms=0.0, jev_wait_ms=0.0, fusion_reason="off")
         return baseline_override or classify_pre_routing(pre_routing_input=pre_routing_input, config=config)
     started = time.perf_counter()
     state = canonical_features.state_json if canonical_features else serialize_state(pre_routing_input.request)
@@ -105,22 +115,29 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
         and pre_routing_input.explicit_model == "auto"
         and baseline.tier is not RoutingTier.REASONING
     )
-    run = start_shadow(
-        config=config, database=database.with_name("jev-shadow.sqlite3"),
-        request="", state_json=state, decision=execution,
-    ) if eligible else None
+    run = (speculative_run[0] if speculative_run else start_signal_run(
+        config=config, database=database, execution=execution, state=state,
+        baseline=baseline, manual=pre_routing_input.explicit_model != "auto", eligible=eligible,
+    ))
     local_started = time.perf_counter()
     learned = (learned_signal(database, pre_routing_input.request, canonical_features.local_projection())
                if canonical_features else learned_signal(database, pre_routing_input.request))
     learned_ms = (time.perf_counter() - local_started) * 1000
     jev = None
     wait_started = time.perf_counter()
+    annotate(local_preparation_finished=wait_started)
     if mode == "COOPERATIVE" and run is not None and eligible:
-        remaining = max(0, run.timeout_ms / 1000 - (time.perf_counter() - started))
+        budget_ms = min(run.timeout_ms, config.get("routing", {}).get("jev", {}).get(
+            "decisionWaitMs", run.timeout_ms,
+        ))
+        remaining = max(0, budget_ms / 1000 - (time.perf_counter() - run.started))
         completed_in_budget = run.done.wait(remaining)
         if not completed_in_budget:
-            annotate(routing_deadline_exceeded=True)
-            run.close(reason="timeout")
+            annotate(routing_deadline_exceeded=True, jev_wait_budget_expired=True)
+            # A dispatch budget is not a provider failure. Keep the evaluation
+            # owned by the turn for evidence; finish/cancel/shutdown still reap
+            # it. A late answer can never mutate the immutable dispatched plan.
+        annotate(jev_decision_wait_budget_ms=budget_ms)
         if completed_in_budget and run.record["status"] == "success":
             jev = {"answers": run.record["answers"]}
     added_wait_ms = (time.perf_counter() - wait_started) * 1000
@@ -144,19 +161,19 @@ def _classify_with_signals(*, pre_routing_input, config, database: Path, executi
         feature_extraction_ms=feature_ms, quattro_learned_ms=learned_ms,
         deterministic_ms=deterministic_ms, fusion_ms=fusion_ms,
         routing_total_ms=(time.perf_counter() - started) * 1000,
-        critical_path_wait_ms=added_wait_ms,
+        critical_path_wait_ms=added_wait_ms, jev_wait_ms=added_wait_ms,
     )
     return final
 
 
 def classify_with_signals(*, pre_routing_input, config, database: Path, execution: str,
                           can_select=None, baseline_override=None, canonical_features=None,
-                          eligible=True) -> RoutingDecision:
+                          eligible=True, speculative_run=()) -> RoutingDecision:
     try:
         return _classify_with_signals(
             pre_routing_input=pre_routing_input, config=config, database=database,
             execution=execution, can_select=can_select, baseline_override=baseline_override,
-            canonical_features=canonical_features, eligible=eligible,
+            canonical_features=canonical_features, eligible=eligible, speculative_run=speculative_run,
         )
     except Exception:
         # Optional intelligence must never replace the authoritative exception

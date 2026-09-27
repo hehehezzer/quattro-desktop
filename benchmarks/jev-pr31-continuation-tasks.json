@@ -1,0 +1,469 @@
+{
+  "measurement": "LIVE synthetic task smoke matrix; one pair per scenario, not statistical quality evidence",
+  "source_sha256": "84731b7684a290b8cae1563af1afb7f91a6cdd286660afeb0349f2bdc5442861",
+  "source_unchanged": true,
+  "rows": [
+    {
+      "case": "trivial_question",
+      "mode": "OFF",
+      "total_task_ms": 2628.3102510496974,
+      "task_success": true,
+      "validation_success": null,
+      "first_token_ms_from_dispatch": 2427.352390019223,
+      "usage": null,
+      "runtime_decisions": [],
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "trivial_question",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 2010.4946470819414,
+      "task_success": true,
+      "validation_success": null,
+      "first_token_ms_from_dispatch": 1868.1817899923772,
+      "usage": null,
+      "runtime_decisions": [],
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "simple_coding",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 37776.20357798878,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 905321,
+        "cached_input_tokens": 645888,
+        "output_tokens": 983,
+        "reasoning_output_tokens": 225
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 6,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "simple_coding",
+      "mode": "OFF",
+      "total_task_ms": 44960.3481029626,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 900481,
+        "cached_input_tokens": 641792,
+        "output_tokens": 987,
+        "reasoning_output_tokens": 183
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 6,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "repository_inspection",
+      "mode": "OFF",
+      "total_task_ms": 10829.570229980163,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 253478,
+        "cached_input_tokens": 244224,
+        "output_tokens": 153,
+        "reasoning_output_tokens": 19
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 1,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "repository_inspection",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 13521.342171938159,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 254831,
+        "cached_input_tokens": 244224,
+        "output_tokens": 198,
+        "reasoning_output_tokens": 50
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 1,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "debugging",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 46018.35734001361,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 906579,
+        "cached_input_tokens": 891136,
+        "output_tokens": 1245,
+        "reasoning_output_tokens": 272
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 6,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "debugging",
+      "mode": "OFF",
+      "total_task_ms": 41695.267600007355,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 769598,
+        "cached_input_tokens": 756224,
+        "output_tokens": 1017,
+        "reasoning_output_tokens": 178
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 5,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "multi_file_implementation",
+      "mode": "OFF",
+      "total_task_ms": 37833.64796999376,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 771631,
+        "cached_input_tokens": 758272,
+        "output_tokens": 930,
+        "reasoning_output_tokens": 176
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 5,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "multi_file_implementation",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 23593.17586303223,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 514697,
+        "cached_input_tokens": 501760,
+        "output_tokens": 673,
+        "reasoning_output_tokens": 102
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 3,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "tool_heavy",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 12662.138886982575,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 254802,
+        "cached_input_tokens": 244224,
+        "output_tokens": 215,
+        "reasoning_output_tokens": 41
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 1,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "tool_heavy",
+      "mode": "OFF",
+      "total_task_ms": 11043.828233028762,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 253463,
+        "cached_input_tokens": 244224,
+        "output_tokens": 182,
+        "reasoning_output_tokens": 17
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 1,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "skill_heavy",
+      "mode": "OFF",
+      "total_task_ms": 38081.7441039253,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 771256,
+        "cached_input_tokens": 758272,
+        "output_tokens": 944,
+        "reasoning_output_tokens": 192
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 5,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "skill_heavy",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 31382.088334066793,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 774291,
+        "cached_input_tokens": 760320,
+        "output_tokens": 855,
+        "reasoning_output_tokens": 177
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 5,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "subagent_candidate",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 60616.93621298764,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 1040237,
+        "cached_input_tokens": 1022976,
+        "output_tokens": 1524,
+        "reasoning_output_tokens": 394
+      },
+      "runtime_decisions": [
+        {
+          "status": "completed",
+          "selected_action": null,
+          "confidence": 0.5,
+          "fallback_required": true,
+          "timing": {
+            "rtt_ms": 282.72440505679697,
+            "catalog_ms": 312.82226007897407,
+            "useful_overlap_ms": 0.0,
+            "blocking_ms": 637.2888990445063
+          }
+        }
+      ],
+      "observed_reasoning_items": 7,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "subagent_candidate",
+      "mode": "OFF",
+      "total_task_ms": 49006.42386893742,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 1033630,
+        "cached_input_tokens": 1017856,
+        "output_tokens": 1324,
+        "reasoning_output_tokens": 395
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 7,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "failing_test_repair",
+      "mode": "OFF",
+      "total_task_ms": 37416.96884401608,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 900722,
+        "cached_input_tokens": 886016,
+        "output_tokens": 975,
+        "reasoning_output_tokens": 210
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 6,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "failing_test_repair",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 42669.38266600482,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 905406,
+        "cached_input_tokens": 890112,
+        "output_tokens": 1106,
+        "reasoning_output_tokens": 287
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 6,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "research_retrieval",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 12923.670410993509,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 254797,
+        "cached_input_tokens": 244224,
+        "output_tokens": 204,
+        "reasoning_output_tokens": 43
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 1,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "research_retrieval",
+      "mode": "OFF",
+      "total_task_ms": 14341.269400902092,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 253469,
+        "cached_input_tokens": 244224,
+        "output_tokens": 225,
+        "reasoning_output_tokens": 64
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 1,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "validation_heavy",
+      "mode": "OFF",
+      "total_task_ms": 39792.96016204171,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 771266,
+        "cached_input_tokens": 758272,
+        "output_tokens": 1129,
+        "reasoning_output_tokens": 238
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 5,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "validation_heavy",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 38720.468205050565,
+      "task_success": true,
+      "exit_code": 0,
+      "state_before_cleanup": "succeeded",
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 775553,
+        "cached_input_tokens": 761344,
+        "output_tokens": 1192,
+        "reasoning_output_tokens": 202
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 5,
+      "model_turns": null,
+      "cost": null
+    }
+  ],
+  "limits": [
+    "No price data or model-turn counter.",
+    "No causal speed attribution; provider caching and load vary.",
+    "Subagent candidate respects the one-worker hard budget; it does not benchmark spawning."
+  ]
+}

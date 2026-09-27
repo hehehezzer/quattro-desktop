@@ -1,0 +1,1785 @@
+{
+  "measurement": "LIVE TypeSafe; native routing only; no execution-model requests",
+  "timeout_ms": 1500,
+  "decision_wait_ms": null,
+  "ordering": "alternating OFF/ON and ON/OFF pairs",
+  "first_token_ms": null,
+  "execution_total_ms": null,
+  "cost": null,
+  "modes": {
+    "OFF": {
+      "jev_wait_ms": {
+        "n": 280,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "jev_overlap_ms": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "local_routing_ms": {
+        "n": 280,
+        "p50": 0.345,
+        "p95": 0.495,
+        "max": 2.136
+      },
+      "process_creation_ms": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "worker_startup_ms": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "client_construction_ms": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "routing_ms": {
+        "n": 280,
+        "p50": 0.381,
+        "p95": 0.542,
+        "max": 2.173
+      },
+      "fusion_ms": {
+        "n": 280,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "jev_calls_per_turn": {
+        "n": 280,
+        "p50": 0.0,
+        "p95": 0,
+        "max": 0
+      },
+      "jev_rtt_ms": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "catalog_rtt_ms": {
+        "n": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "models": {},
+      "failures": {},
+      "input_usage": 0,
+      "output_usage": 0,
+      "cases": {
+        "trivial_direct": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.246,
+            "p95": 0.363,
+            "max": 1.805
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.215,
+            "p95": 0.324,
+            "max": 1.763
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.215,
+            "p95": 0.324,
+            "max": 1.763
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "explanation": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.313,
+            "p95": 0.361,
+            "max": 0.379
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.281,
+            "p95": 0.322,
+            "max": 0.325
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.281,
+            "p95": 0.322,
+            "max": 0.325
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "ambiguous_direct": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.509,
+            "p95": 0.552,
+            "max": 0.729
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.467,
+            "p95": 0.514,
+            "max": 0.67
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.467,
+            "p95": 0.514,
+            "max": 0.67
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "simple_coding": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.423,
+            "p95": 0.529,
+            "max": 0.543
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.381,
+            "p95": 0.473,
+            "max": 0.495
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.381,
+            "p95": 0.473,
+            "max": 0.495
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "repository_inspection": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.332,
+            "p95": 0.459,
+            "max": 0.467
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.298,
+            "p95": 0.42,
+            "max": 0.428
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.298,
+            "p95": 0.42,
+            "max": 0.428
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "repository_modification": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.285,
+            "p95": 0.418,
+            "max": 0.825
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.257,
+            "p95": 0.378,
+            "max": 0.797
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.257,
+            "p95": 0.378,
+            "max": 0.797
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "debugging": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.421,
+            "p95": 0.906,
+            "max": 1.019
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.38,
+            "p95": 0.867,
+            "max": 0.961
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.38,
+            "p95": 0.867,
+            "max": 0.961
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "frontend": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.47,
+            "p95": 1.047,
+            "max": 2.173
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.43,
+            "p95": 1.003,
+            "max": 2.136
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.43,
+            "p95": 1.003,
+            "max": 2.136
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "backend": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.471,
+            "p95": 0.494,
+            "max": 0.494
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.43,
+            "p95": 0.451,
+            "max": 0.464
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.43,
+            "p95": 0.451,
+            "max": 0.464
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "research": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.47,
+            "p95": 0.582,
+            "max": 0.586
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.43,
+            "p95": 0.534,
+            "max": 0.542
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.43,
+            "p95": 0.534,
+            "max": 0.542
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "complex_coding": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.381,
+            "p95": 0.445,
+            "max": 0.504
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.345,
+            "p95": 0.396,
+            "max": 0.466
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.345,
+            "p95": 0.396,
+            "max": 0.466
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-sol"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "sequence_direct_before": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.288,
+            "p95": 0.331,
+            "max": 0.438
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.258,
+            "p95": 0.301,
+            "max": 0.39
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.258,
+            "p95": 0.301,
+            "max": 0.39
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "sequence_delegate": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.416,
+            "p95": 0.494,
+            "max": 0.621
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.379,
+            "p95": 0.447,
+            "max": 0.566
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.379,
+            "p95": 0.447,
+            "max": 0.566
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "sequence_direct_after": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.372,
+            "p95": 0.461,
+            "max": 0.49
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.333,
+            "p95": 0.416,
+            "max": 0.44
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.333,
+            "p95": 0.416,
+            "max": 0.44
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        }
+      }
+    },
+    "COOPERATIVE": {
+      "jev_wait_ms": {
+        "n": 280,
+        "p50": 0.0,
+        "p95": 653.407,
+        "max": 703.537
+      },
+      "jev_overlap_ms": {
+        "n": 80,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "local_routing_ms": {
+        "n": 280,
+        "p50": 0.356,
+        "p95": 0.643,
+        "max": 0.732
+      },
+      "process_creation_ms": {
+        "n": 80,
+        "p50": 0.218,
+        "p95": 0.258,
+        "max": 0.272
+      },
+      "worker_startup_ms": {
+        "n": 80,
+        "p50": 35.13,
+        "p95": 37.175,
+        "max": 41.023
+      },
+      "client_construction_ms": {
+        "n": 80,
+        "p50": 3.86,
+        "p95": 4.148,
+        "max": 5.562
+      },
+      "routing_ms": {
+        "n": 280,
+        "p50": 0.393,
+        "p95": 654.068,
+        "max": 704.136
+      },
+      "fusion_ms": {
+        "n": 280,
+        "p50": 0.0,
+        "p95": 0.008,
+        "max": 0.035
+      },
+      "jev_calls_per_turn": {
+        "n": 280,
+        "p50": 0.0,
+        "p95": 1,
+        "max": 1
+      },
+      "jev_rtt_ms": {
+        "n": 80,
+        "p50": 281.613,
+        "p95": 315.55,
+        "max": 353.759
+      },
+      "catalog_rtt_ms": {
+        "n": 80,
+        "p50": 298.284,
+        "p95": 309.551,
+        "max": 325.367
+      },
+      "models": {
+        "jev-1.13.0": 80
+      },
+      "failures": {},
+      "input_usage": 57480,
+      "output_usage": 16780,
+      "cases": {
+        "trivial_direct": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.248,
+            "p95": 0.344,
+            "max": 0.383
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.217,
+            "p95": 0.303,
+            "max": 0.332
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.217,
+            "p95": 0.303,
+            "max": 0.332
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "explanation": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.314,
+            "p95": 0.399,
+            "max": 0.459
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.282,
+            "p95": 0.358,
+            "max": 0.415
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.282,
+            "p95": 0.358,
+            "max": 0.415
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "ambiguous_direct": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 623.552,
+            "p95": 671.108,
+            "max": 673.789
+          },
+          "jev_latency_ms": {
+            "n": 20,
+            "p50": 275.327,
+            "p95": 316.035,
+            "max": 329.316
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 622.83,
+            "p95": 670.439,
+            "max": 673.054
+          },
+          "jev_overlap_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.643,
+            "p95": 0.719,
+            "max": 0.732
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.007,
+            "p95": 0.009,
+            "max": 0.011
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 623.502,
+            "p95": 671.065,
+            "max": 673.746
+          },
+          "calls": {
+            "n": 20,
+            "p50": 1.0,
+            "p95": 1,
+            "max": 1
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "simple_coding": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.398,
+            "p95": 0.469,
+            "max": 0.56
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.357,
+            "p95": 0.432,
+            "max": 0.514
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.357,
+            "p95": 0.432,
+            "max": 0.514
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "repository_inspection": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.328,
+            "p95": 0.467,
+            "max": 0.479
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.297,
+            "p95": 0.424,
+            "max": 0.435
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.297,
+            "p95": 0.424,
+            "max": 0.435
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "repository_modification": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.285,
+            "p95": 0.365,
+            "max": 0.396
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.257,
+            "p95": 0.32,
+            "max": 0.359
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.257,
+            "p95": 0.32,
+            "max": 0.359
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "debugging": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 633.494,
+            "p95": 674.956,
+            "max": 704.136
+          },
+          "jev_latency_ms": {
+            "n": 20,
+            "p50": 283.478,
+            "p95": 318.288,
+            "max": 353.759
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 632.933,
+            "p95": 674.353,
+            "max": 703.537
+          },
+          "jev_overlap_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.549,
+            "p95": 0.597,
+            "max": 0.7
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.007,
+            "p95": 0.008,
+            "max": 0.01
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 633.458,
+            "p95": 674.913,
+            "max": 704.098
+          },
+          "calls": {
+            "n": 20,
+            "p50": 1.0,
+            "p95": 1,
+            "max": 1
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "frontend": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.426,
+            "p95": 0.487,
+            "max": 0.503
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.393,
+            "p95": 0.453,
+            "max": 0.469
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.393,
+            "p95": 0.453,
+            "max": 0.469
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "backend": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 633.141,
+            "p95": 659.092,
+            "max": 660.369
+          },
+          "jev_latency_ms": {
+            "n": 20,
+            "p50": 286.754,
+            "p95": 314.023,
+            "max": 315.55
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 632.505,
+            "p95": 658.421,
+            "max": 659.736
+          },
+          "jev_overlap_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.595,
+            "p95": 0.618,
+            "max": 0.619
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.008,
+            "p95": 0.01,
+            "max": 0.035
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 633.102,
+            "p95": 659.049,
+            "max": 660.327
+          },
+          "calls": {
+            "n": 20,
+            "p50": 1.0,
+            "p95": 1,
+            "max": 1
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "research": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.424,
+            "p95": 0.458,
+            "max": 0.543
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.39,
+            "p95": 0.425,
+            "max": 0.492
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.39,
+            "p95": 0.425,
+            "max": 0.492
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "complex_coding": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.381,
+            "p95": 0.497,
+            "max": 0.507
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.346,
+            "p95": 0.451,
+            "max": 0.473
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.346,
+            "p95": 0.451,
+            "max": 0.473
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-sol"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "sequence_direct_before": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.29,
+            "p95": 0.343,
+            "max": 0.346
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.26,
+            "p95": 0.301,
+            "max": 0.317
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.26,
+            "p95": 0.301,
+            "max": 0.317
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "sequence_delegate": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 627.254,
+            "p95": 655.863,
+            "max": 662.247
+          },
+          "jev_latency_ms": {
+            "n": 20,
+            "p50": 274.669,
+            "p95": 306.929,
+            "max": 312.183
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 626.608,
+            "p95": 655.276,
+            "max": 661.526
+          },
+          "jev_overlap_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.549,
+            "p95": 0.665,
+            "max": 0.731
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.007,
+            "p95": 0.008,
+            "max": 0.009
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 627.209,
+            "p95": 655.824,
+            "max": 662.194
+          },
+          "calls": {
+            "n": 20,
+            "p50": 1.0,
+            "p95": 1,
+            "max": 1
+          },
+          "routes": [
+            "account-1/gpt-5.6-terra"
+          ],
+          "execution": [
+            "DELEGATE"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        },
+        "sequence_direct_after": {
+          "routing_ms": {
+            "n": 20,
+            "p50": 0.326,
+            "p95": 0.385,
+            "max": 0.471
+          },
+          "jev_latency_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "jev_wait_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "jev_overlap_ms": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "local_routing_ms": {
+            "n": 20,
+            "p50": 0.292,
+            "p95": 0.347,
+            "max": 0.428
+          },
+          "fusion_ms": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0.0,
+            "max": 0.0
+          },
+          "routing_critical_path_ms": {
+            "n": 20,
+            "p50": 0.292,
+            "p95": 0.347,
+            "max": 0.428
+          },
+          "calls": {
+            "n": 20,
+            "p50": 0.0,
+            "p95": 0,
+            "max": 0
+          },
+          "routes": [
+            "account-1/gpt-5.6-luna"
+          ],
+          "execution": [
+            "DIRECT"
+          ],
+          "first_token_ms": null,
+          "total_turn_ms": null
+        }
+      }
+    }
+  }
+}

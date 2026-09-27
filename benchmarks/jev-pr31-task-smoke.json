@@ -1,0 +1,427 @@
+{
+  "measurement": "LIVE synthetic task smoke matrix; one pair per scenario, not statistical quality evidence",
+  "source_sha256": "a38c71002c61054ed001c04febfe638c480b43ec3d3a32978762ad58de27e998",
+  "source_unchanged": true,
+  "rows": [
+    {
+      "case": "trivial_question",
+      "mode": "OFF",
+      "total_task_ms": 1547.2339320695028,
+      "task_success": true,
+      "validation_success": null,
+      "first_token_ms_from_dispatch": 1394.7855159640312,
+      "usage": null,
+      "runtime_decisions": [],
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "trivial_question",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 1478.3383840695024,
+      "task_success": true,
+      "validation_success": null,
+      "first_token_ms_from_dispatch": 1289.993126061745,
+      "usage": null,
+      "runtime_decisions": [],
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "simple_coding",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 44219.49720697012,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 1034819,
+        "cached_input_tokens": 1019904,
+        "output_tokens": 971,
+        "reasoning_output_tokens": 247
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 7,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "simple_coding",
+      "mode": "OFF",
+      "total_task_ms": 22283.34566799458,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 511742,
+        "cached_input_tokens": 500736,
+        "output_tokens": 658,
+        "reasoning_output_tokens": 147
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 3,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "repository_inspection",
+      "mode": "OFF",
+      "total_task_ms": 11496.285032015294,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 253369,
+        "cached_input_tokens": 244224,
+        "output_tokens": 196,
+        "reasoning_output_tokens": 66
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 1,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "repository_inspection",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 11010.864134994335,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 254765,
+        "cached_input_tokens": 244224,
+        "output_tokens": 167,
+        "reasoning_output_tokens": 36
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 1,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "debugging",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 37040.205019991845,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 775497,
+        "cached_input_tokens": 761344,
+        "output_tokens": 1076,
+        "reasoning_output_tokens": 188
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 5,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "debugging",
+      "mode": "OFF",
+      "total_task_ms": 31153.2002389431,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 641916,
+        "cached_input_tokens": 629504,
+        "output_tokens": 942,
+        "reasoning_output_tokens": 185
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 4,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "multi_file_implementation",
+      "mode": "OFF",
+      "total_task_ms": 38583.35399301723,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 1027999,
+        "cached_input_tokens": 1013760,
+        "output_tokens": 1043,
+        "reasoning_output_tokens": 173
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 6,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "multi_file_implementation",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 34508.08369903825,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 775643,
+        "cached_input_tokens": 761344,
+        "output_tokens": 989,
+        "reasoning_output_tokens": 312
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 6,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "tool_heavy",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 15875.774762011133,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 384405,
+        "cached_input_tokens": 249344,
+        "output_tokens": 300,
+        "reasoning_output_tokens": 59
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 2,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "tool_heavy",
+      "mode": "OFF",
+      "total_task_ms": 16874.189489055425,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 382219,
+        "cached_input_tokens": 251392,
+        "output_tokens": 299,
+        "reasoning_output_tokens": 64
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 2,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "skill_heavy",
+      "mode": "OFF",
+      "failure_category": "scheduler_failed",
+      "state_before_cleanup": "ready",
+      "cleanup_requested": true,
+      "total_task_ms": 802.1814250387251,
+      "task_success": false,
+      "validation_success": false,
+      "terminal_code": null,
+      "first_token_ms": null,
+      "usage": null,
+      "runtime_decisions": [],
+      "observed_reasoning_items": 0,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "skill_heavy",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 26616.687860921957,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 643705,
+        "cached_input_tokens": 630528,
+        "output_tokens": 741,
+        "reasoning_output_tokens": 151
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 4,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "subagent_candidate",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 31850.610082037747,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 646625,
+        "cached_input_tokens": 632576,
+        "output_tokens": 883,
+        "reasoning_output_tokens": 157
+      },
+      "runtime_decisions": [
+        {
+          "status": "completed",
+          "selected_action": "sequential",
+          "confidence": 0.94,
+          "fallback_required": false,
+          "timing": {
+            "rtt_ms": 262.1246740454808,
+            "catalog_ms": 342.1529809711501,
+            "useful_overlap_ms": 0.0,
+            "blocking_ms": 644.6211240254343
+          }
+        }
+      ],
+      "observed_reasoning_items": 3,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "subagent_candidate",
+      "mode": "OFF",
+      "total_task_ms": 39242.3190070549,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 902762,
+        "cached_input_tokens": 764416,
+        "output_tokens": 1212,
+        "reasoning_output_tokens": 314
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 6,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "failing_test_repair",
+      "mode": "OFF",
+      "total_task_ms": 37938.91749798786,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 899788,
+        "cached_input_tokens": 886016,
+        "output_tokens": 954,
+        "reasoning_output_tokens": 171
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 5,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "failing_test_repair",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 36623.53605090175,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 905563,
+        "cached_input_tokens": 769536,
+        "output_tokens": 1109,
+        "reasoning_output_tokens": 306
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 6,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "research_retrieval",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 11917.363813961856,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 254769,
+        "cached_input_tokens": 244224,
+        "output_tokens": 242,
+        "reasoning_output_tokens": 62
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 1,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "research_retrieval",
+      "mode": "OFF",
+      "total_task_ms": 13209.526006947272,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 253336,
+        "cached_input_tokens": 244224,
+        "output_tokens": 208,
+        "reasoning_output_tokens": 48
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 1,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "validation_heavy",
+      "mode": "OFF",
+      "total_task_ms": 31585.918218945153,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 641241,
+        "cached_input_tokens": 629504,
+        "output_tokens": 946,
+        "reasoning_output_tokens": 214
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 5,
+      "model_turns": null,
+      "cost": null
+    },
+    {
+      "case": "validation_heavy",
+      "mode": "COOPERATIVE",
+      "total_task_ms": 62165.17136897892,
+      "task_success": true,
+      "validation_success": true,
+      "terminal_code": "completed",
+      "first_token_ms": null,
+      "usage": {
+        "input_tokens": 1040034,
+        "cached_input_tokens": 1022976,
+        "output_tokens": 2226,
+        "reasoning_output_tokens": 889
+      },
+      "runtime_decisions": [],
+      "observed_reasoning_items": 8,
+      "model_turns": null,
+      "cost": null
+    }
+  ],
+  "limits": [
+    "No price data or model-turn counter.",
+    "No causal speed attribution; provider caching and load vary.",
+    "Subagent candidate respects the one-worker hard budget; it does not benchmark spawning."
+  ]
+}

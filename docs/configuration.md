@@ -46,8 +46,12 @@ by mandatory-context resolution.
 - `cooperation`: global and per-repository top-level session limits.
 - `routing`: Quattro's three tiers, effort, route labels, and context budgets.
   Optional `jev: {"mode": "OFF", "timeoutMs": 300}` enables direct TypeSafe
-  classification in `SHADOW` or controlled `COOPERATIVE` mode. Credentials come
-  only from runtime `TYPESAFE_API_KEY`; see [Jev routing](JEV_ROUTING.md).
+  classification in `SHADOW` or controlled `COOPERATIVE` mode. Credentials use
+  the existing TypeSafe resolver; see [Jev routing](JEV_ROUTING.md).
+  `experimentalValidationOrder: true` inside `jev` opts into the gated
+  [host validation-order experiment](JEV_RUNTIME_MILESTONES.md), only in
+  `COOPERATIVE` mode. It is absent/disabled by default and has not demonstrated
+  useful agent-reasoning offload; do not enable it in production.
 - `prReview`: review-only by default; publication requires an explicit CLI flag.
 
 Unknown fields, unsafe account paths, disabled default accounts, invalid route

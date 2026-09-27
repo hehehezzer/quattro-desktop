@@ -1,0 +1,244 @@
+{
+  "measurement": "LIVE managed completion boundary; no mid-turn interception claim",
+  "source_sha256": "225e83c7b490139d12314a90653afb088ea890c14667550fdf5a9355967ae0e4",
+  "source_unchanged": true,
+  "rows": [
+    {
+      "agent": "codex",
+      "mode": "OFF",
+      "elapsed_ms": 6097.7081740275025,
+      "exit_code": 0,
+      "task_state": "succeeded",
+      "marker_present": true,
+      "task_success": true,
+      "milestones": [
+        {
+          "advisory_context_emitted": false,
+          "agent": "codex",
+          "agent_reasoning_avoided": false,
+          "cache_hits": 0,
+          "context_bytes": 0,
+          "decision_type": "validation_strategy",
+          "eligible": 1,
+          "execution_changed": false,
+          "jev_calls": 0,
+          "milestone": "VALIDATION",
+          "model_turns_avoided": 0,
+          "observed": 1,
+          "outcome": "FALLBACK",
+          "reason": "disabled",
+          "schema_version": "quattro-runtime-milestone-v1",
+          "timeouts": 0,
+          "timing": {
+            "blocking_ms": 0.0,
+            "decision_applied_ms": null,
+            "execution_resumed_ms": 0.005971989594399929,
+            "milestone_detected_ms": 0.0,
+            "milestone_wait_ms": 0.004919944331049919,
+            "queue_ms": null,
+            "rtt_ms": null,
+            "useful_overlap_ms": 0.0,
+            "validation_ms": null
+          },
+          "uncertain": 0
+        }
+      ],
+      "validation": [
+        {
+          "blocked": 0,
+          "failed": 0,
+          "notRun": 0,
+          "passed": 5,
+          "status": "Passed"
+        }
+      ]
+    },
+    {
+      "agent": "codex",
+      "mode": "COOPERATIVE",
+      "elapsed_ms": 5684.958926052786,
+      "exit_code": 0,
+      "task_state": "succeeded",
+      "marker_present": true,
+      "task_success": true,
+      "milestones": [
+        {
+          "advisory_context_emitted": false,
+          "agent": "codex",
+          "agent_reasoning_avoided": false,
+          "cache_hits": 0,
+          "context_bytes": 361,
+          "decision_type": "validation_strategy",
+          "eligible": 1,
+          "execution_changed": false,
+          "jev_calls": 1,
+          "milestone": "VALIDATION",
+          "model_turns_avoided": 0,
+          "observed": 1,
+          "outcome": "FALLBACK",
+          "reason": "uncertain",
+          "schema_version": "quattro-runtime-milestone-v1",
+          "timeouts": 0,
+          "timing": {
+            "blocking_ms": 614.837804925628,
+            "catalog_ms": 307.9955589491874,
+            "decision_applied_ms": null,
+            "execution_resumed_ms": 619.2936879815534,
+            "milestone_detected_ms": 0.0,
+            "milestone_wait_ms": 618.2896390091628,
+            "preparation_ms": 0.3827980253845453,
+            "queue_ms": 0.08698494639247656,
+            "request_body_bytes": 993,
+            "request_queued_ms": 1.0615289211273193,
+            "resume_ms": 0.030638999305665493,
+            "rtt_ms": 272.7641899837181,
+            "timeline_ms": {
+              "answer_received": 614.5772089948878,
+              "decision_validated": 614.8071659263223,
+              "execution_resumed": 614.837804925628,
+              "monitor_started": 0.08698494639247656,
+              "provider_answer_received": 614.4050019793212,
+              "provider_request_started": 341.64081199560314,
+              "request_queued": 0.0,
+              "request_sent": 0.4697829717770219
+            },
+            "useful_overlap_ms": 0.0,
+            "validation_ms": 0.22995693143457174,
+            "worker_roundtrip_ms": 614.1074260231107
+          },
+          "uncertain": 1
+        }
+      ],
+      "validation": [
+        {
+          "blocked": 0,
+          "failed": 0,
+          "notRun": 0,
+          "passed": 5,
+          "status": "Passed"
+        }
+      ]
+    },
+    {
+      "agent": "pi",
+      "mode": "COOPERATIVE",
+      "elapsed_ms": 4697.030899929814,
+      "exit_code": 0,
+      "task_state": "succeeded",
+      "marker_present": true,
+      "task_success": true,
+      "milestones": [
+        {
+          "advisory_context_emitted": false,
+          "agent": "pi",
+          "agent_reasoning_avoided": false,
+          "cache_hits": 0,
+          "context_bytes": 361,
+          "decision_type": "validation_strategy",
+          "eligible": 1,
+          "execution_changed": false,
+          "jev_calls": 1,
+          "milestone": "VALIDATION",
+          "model_turns_avoided": 0,
+          "observed": 1,
+          "outcome": "FALLBACK",
+          "reason": "uncertain",
+          "schema_version": "quattro-runtime-milestone-v1",
+          "timeouts": 0,
+          "timing": {
+            "blocking_ms": 634.4527309993282,
+            "catalog_ms": 304.7566100722179,
+            "decision_applied_ms": null,
+            "execution_resumed_ms": 636.67243195232,
+            "milestone_detected_ms": 0.0,
+            "milestone_wait_ms": 636.2254120176658,
+            "preparation_ms": 0.3425210015848279,
+            "queue_ms": 0.08808693382889032,
+            "request_body_bytes": 993,
+            "request_queued_ms": 0.5575099494308233,
+            "resume_ms": 0.02133101224899292,
+            "rtt_ms": 295.2537820674479,
+            "timeline_ms": {
+              "answer_received": 634.3582809204236,
+              "decision_validated": 634.4313999870792,
+              "execution_resumed": 634.4527309993282,
+              "monitor_started": 0.08808693382889032,
+              "provider_answer_received": 634.2401870060712,
+              "provider_request_started": 338.9864049386233,
+              "request_queued": 0.0,
+              "request_sent": 0.4306079354137182
+            },
+            "useful_overlap_ms": 0.0,
+            "validation_ms": 0.07311906665563583,
+            "worker_roundtrip_ms": 633.9276729850098
+          },
+          "uncertain": 1
+        }
+      ],
+      "validation": [
+        {
+          "blocked": 0,
+          "failed": 0,
+          "notRun": 0,
+          "passed": 5,
+          "status": "Passed"
+        }
+      ]
+    },
+    {
+      "agent": "pi",
+      "mode": "OFF",
+      "elapsed_ms": 3594.8383489158005,
+      "exit_code": 0,
+      "task_state": "succeeded",
+      "marker_present": true,
+      "task_success": true,
+      "milestones": [
+        {
+          "advisory_context_emitted": false,
+          "agent": "pi",
+          "agent_reasoning_avoided": false,
+          "cache_hits": 0,
+          "context_bytes": 0,
+          "decision_type": "validation_strategy",
+          "eligible": 1,
+          "execution_changed": false,
+          "jev_calls": 0,
+          "milestone": "VALIDATION",
+          "model_turns_avoided": 0,
+          "observed": 1,
+          "outcome": "FALLBACK",
+          "reason": "disabled",
+          "schema_version": "quattro-runtime-milestone-v1",
+          "timeouts": 0,
+          "timing": {
+            "blocking_ms": 0.0,
+            "decision_applied_ms": null,
+            "execution_resumed_ms": 0.004870002157986164,
+            "milestone_detected_ms": 0.0,
+            "milestone_wait_ms": 0.004107947461307049,
+            "queue_ms": null,
+            "rtt_ms": null,
+            "useful_overlap_ms": 0.0,
+            "validation_ms": null
+          },
+          "uncertain": 0
+        }
+      ],
+      "validation": [
+        {
+          "blocked": 0,
+          "failed": 0,
+          "notRun": 0,
+          "passed": 5,
+          "status": "Passed"
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Marker task, not an implementation benchmark.",
+    "Host validation ordering does not eliminate baseline agent reasoning.",
+    "Standalone Pi uses PiAdapter, not the routed-Pi Codex delegate."
+  ]
+}
