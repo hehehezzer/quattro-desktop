@@ -49,3 +49,5 @@ credentials.json
 generated-images/
 backups/
 reviews/
+
+.impeccable/review/
