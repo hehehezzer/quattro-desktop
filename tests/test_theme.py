@@ -4,6 +4,7 @@ import importlib.machinery
 import importlib.util
 import json
 import pathlib
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -19,6 +20,30 @@ LOADER.exec_module(theme)
 
 
 class ThemeTests(unittest.TestCase):
+    def test_small_text_tokens_keep_readable_contrast_on_raised_surfaces(self):
+        qml = (SRC / "quickshell/theme/Theme.qml").read_text(encoding="utf-8")
+
+        def colors(token):
+            match = re.search(
+                rf"property color {token}:([\s\S]*?)(?=\n\s*(?:property|readonly property) color |\n\s*Behavior on )",
+                qml,
+            )
+            self.assertIsNotNone(match, token)
+            values = re.findall(r'"(#[0-9a-fA-F]{6})"', match.group(1))
+            self.assertEqual(len(values), 5, token)
+            return values
+
+        def luminance(hex_color):
+            channels = [int(hex_color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+            linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
+            return sum(value * weight for value, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+
+        for surface, dim, muted in zip(colors("hover"), colors("textDim"), colors("textMuted")):
+            with self.subTest(surface=surface):
+                for text_color in (dim, muted):
+                    light, dark = sorted((luminance(surface), luminance(text_color)), reverse=True)
+                    self.assertGreaterEqual((light + 0.05) / (dark + 0.05), 4.5)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.config = pathlib.Path(self.temp.name) / "theme.json"
