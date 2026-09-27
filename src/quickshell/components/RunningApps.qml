@@ -126,6 +126,15 @@ DesktopButton {
     }
     IpcHandler {
         target: "applications-" + root.barWindow.screen.name
+        function status(): string {
+            return JSON.stringify({
+                opened: root.opened,
+                menuOpen: contextMenu.visible,
+                selectedPid: root.selected ? root.selected.pid : 0,
+                confirming: root.confirmKill,
+                needsForce: root.needsForce
+            });
+        }
         function open(): void {
             root.opened = true;
             root.refresh();
