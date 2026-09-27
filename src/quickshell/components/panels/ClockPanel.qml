@@ -235,7 +235,7 @@ Item {
     ColumnLayout {
         id: calendarContent
         width: calendarScroll.width
-        height: Math.max(implicitHeight, calendarScroll.height)
+        height: Math.max(implicitHeight, 650, calendarScroll.height)
 
         spacing: 10
 
