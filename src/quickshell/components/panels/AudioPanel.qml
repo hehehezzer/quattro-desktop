@@ -1,4 +1,5 @@
 import Quickshell
+import Quickshell.Io
 import Quickshell.Services.Pipewire
 import QtQuick
 import QtQuick.Controls
@@ -55,7 +56,19 @@ Item {
     // ============================================================
 
     function refreshAudio() {
-        // PipeWire updates live.
+        equalizer.execute(["status"])
+    }
+
+    IpcHandler {
+        target: "audio"
+        function status(): string {
+            return JSON.stringify({output: root.sink ? root.sink.name : "", input: root.source ? root.source.name : "",
+                volume: root.sinkVolume, muted: root.sinkMuted, microphoneVolume: root.sourceVolume,
+                microphoneMuted: root.sourceMuted, eq: equalizer.snapshot})
+        }
+        function volume(percent: int): void { root.setSinkVolume(percent / 100) }
+        function mute(muted: bool): void { if (root.sink && root.sink.audio) root.sink.audio.muted = muted }
+        function showEqualizer(): void { equalizer.expanded = true }
     }
 
     function resetTransientState() {
@@ -869,8 +882,10 @@ Item {
                                 cursorShape: Qt.PointingHandCursor
 
                                 onClicked: {
-                                    Pipewire.preferredDefaultAudioSink =
-                                        outputDeviceRow.modelData
+                                    if (equalizer.active && outputDeviceRow.modelData.name !== "quattro_eq")
+                                        equalizer.selectOutput(outputDeviceRow.modelData.name)
+                                    else
+                                        Pipewire.preferredDefaultAudioSink = outputDeviceRow.modelData
 
                                     root.outputExpanded = false
                                 }
@@ -888,6 +903,15 @@ Item {
 
                 height: 1
                 color: QuattroTheme.Theme.border
+            }
+
+            Equalizer {
+                id: equalizer
+                Layout.fillWidth: true
+                Layout.leftMargin: 18
+                Layout.rightMargin: 18
+                Layout.topMargin: 16
+                outputName: root.sink ? root.sink.name : ""
             }
 
             // ====================================================

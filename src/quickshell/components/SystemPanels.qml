@@ -1,6 +1,7 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
+import Quickshell.Wayland
 import Quickshell.Services.Pipewire
 import QtQuick
 import QtQuick.Layouts
@@ -194,6 +195,9 @@ Scope {
     PanelWindow {
         id: popupHost
 
+        HyprlandFocusGrab { active: popupHost.visible; windows: [popupHost]; onCleared: root.close() }
+        Shortcut { sequence: "Escape"; enabled: popupHost.visible; onActivated: { if (root.page !== "bluetooth" || !bluetoothPanel.handleEscape()) root.close() } }
+
         visible: false
         color: "transparent"
 
@@ -207,44 +211,18 @@ Scope {
             right: 8
         }
 
-        implicitWidth: 1
-        implicitHeight: 1
+        implicitWidth: 430
+        implicitHeight: root.page === "network" ? 620 : 560
+        focusable: true
+        WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
         exclusionMode:
             ExclusionMode.Ignore
 
-        PopupWindow {
+        Item {
             id: popup
-
-            visible:
-                popupHost.visible
-
-            color: "transparent"
-
-            anchor.window:
-                popupHost
-
-            anchor.rect.x:
-                root.page === "bluetooth"
-                ? -560
-                : root.page === "network"
-                ? -529
-                : root.page === "audio"
-                ? -498
-                : root.page === "display"
-                ? -467
-                : -436
-
-            anchor.rect.y: 6
-
-            width: 430
-
-            height:
-                root.page === "network"
-                ? 620
-                : 520
-
-            grabFocus: true
+            anchors.fill: parent
+            visible: popupHost.visible
 
             onVisibleChanged: {
                 if (!visible && popupHost.visible)
@@ -702,20 +680,19 @@ Scope {
     PanelWindow {
         id: clockHost
 
+        HyprlandFocusGrab { active: clockHost.visible; windows: [clockHost]; onCleared: root.closeClock() }
+        Shortcut { sequence: "Escape"; enabled: clockHost.visible; onActivated: root.closeClock() }
+
         visible: false
         color: "transparent"
 
-        anchors {
-            top: true
-            left: true
-            right: true
-        }
+        anchors { top: true }
+        margins { top: 38 }
 
-        margins {
-            top: 32
-        }
-
-        implicitHeight: 1
+        implicitHeight: Math.min(740, (screen ? screen.height : 1080) - 60)
+        implicitWidth: 430
+        focusable: true
+        WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
         exclusionMode:
             ExclusionMode.Ignore
@@ -727,32 +704,10 @@ Scope {
             }
         }
 
-        PopupWindow {
+        Item {
             id: clockPopup
-
-            visible:
-                clockHost.visible
-
-            color: "transparent"
-
-            anchor.window:
-                clockHost
-
-            anchor.rect.x:
-                Math.round(
-                    (
-                        clockHost.width
-                        - clockPopup.width
-                    )
-                    / 2
-                )
-
-            anchor.rect.y: 6
-
-            width: 430
-            height: 560
-
-            grabFocus: true
+            anchors.fill: parent
+            visible: clockHost.visible
 
             onVisibleChanged: {
                 if (!visible) {

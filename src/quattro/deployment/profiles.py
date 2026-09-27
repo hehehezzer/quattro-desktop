@@ -70,6 +70,19 @@ CORE_DEPLOYMENT_MAPPINGS = {
 }
 
 DESKTOP_DEPLOYMENT_MAPPINGS = {
+    "desktop-helper": ("src/quattro_desktop_controls.py", ".local/bin/quattro_desktop_controls.py"),
+    "bluetooth-helper": ("src/quattro_bluetooth.py", ".local/bin/quattro_bluetooth.py"),
+    "equalizer-service": ("src/systemd/quattro-equalizer.service", ".config/systemd/user/quattro-equalizer.service"),
+    **{
+        "desktop-" + name.replace("/", "-").replace(".", "-"):
+            ("src/quickshell/" + name, ".config/quickshell/" + name)
+        for name in (
+            "services/qmldir", "services/DesktopMedia.qml", "services/DesktopWeather.qml",
+            "components/MediaStrip.qml", "components/RunningApps.qml",
+            "components/shared/DesktopButton.qml", "components/shared/DesktopField.qml",
+            "components/shared/DesktopCombo.qml", "components/panels/Equalizer.qml",
+        )
+    },
     "menu-helper": ("src/quattro-menu", ".local/bin/quattro-menu"),
     "session-helper": ("src/quattro-session", ".local/bin/quattro-session"),
     "theme-helper": ("src/quattro-theme", ".local/bin/quattro-theme"),

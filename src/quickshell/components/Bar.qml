@@ -7,6 +7,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme" as QuattroTheme
+import "../services"
 
 PanelWindow {
     id: root
@@ -148,7 +149,7 @@ PanelWindow {
         clock.text = Qt.formatDateTime(
             new Date(),
             alternateClockFormat
-                ? "ddd MMM d  hh:mm AP"
+                ? (root.width >= 1500 ? "dddd, MMM d  hh:mm:ss AP" : "MMM d  hh:mm:ss AP")
                 : "HH:mm"
         )
     }
@@ -166,6 +167,7 @@ PanelWindow {
     // ========================================================
 
     RowLayout {
+        id: leftGroup
         anchors {
             left: parent.left
             verticalCenter: parent.verticalCenter
@@ -281,8 +283,17 @@ PanelWindow {
     // CENTER CLOCK
     // ========================================================
 
+    MediaStrip {
+        x: leftGroup.x + leftGroup.width + 10
+        anchors.verticalCenter: parent.verticalCenter
+        width: Math.max(0, Math.min(360, clockArea.x - x - 10))
+        visible: !!player && width >= 240
+    }
+
     Item {
-        anchors.centerIn: parent
+        id: clockArea
+        x: Math.max(leftGroup.x + leftGroup.width + 8, Math.min((root.width - width) / 2, rightGroup.x - width - 10))
+        anchors.verticalCenter: parent.verticalCenter
 
         width: clockButton.implicitWidth
         height: 32
@@ -292,7 +303,7 @@ PanelWindow {
 
             anchors.centerIn: parent
 
-            implicitWidth: clock.implicitWidth + 14
+            implicitWidth: clock.implicitWidth + weatherLabel.implicitWidth + 26
             implicitHeight: 26
 
             radius: QuattroTheme.Theme.cornerRadius
@@ -305,12 +316,14 @@ PanelWindow {
             Text {
                 id: clock
 
-                anchors.centerIn: parent
+                anchors.left: parent.left
+                anchors.leftMargin: 7
+                anchors.verticalCenter: parent.verticalCenter
 
                 text: Qt.formatDateTime(
                     new Date(),
                     root.alternateClockFormat
-                        ? "ddd MMM d  hh:mm AP"
+                        ? (root.width >= 1500 ? "dddd, MMM d  hh:mm:ss AP" : "MMM d  hh:mm:ss AP")
                         : "HH:mm"
                 )
 
@@ -318,6 +331,17 @@ PanelWindow {
 
                 font.family: root.fontFamily
                 font.pixelSize: 13
+            }
+
+            Text {
+                id: weatherLabel
+                anchors.right: parent.right
+                anchors.rightMargin: 7
+                anchors.verticalCenter: parent.verticalCenter
+                text: DesktopWeather.label
+                color: DesktopWeather.snapshot.stale ? QuattroTheme.Theme.warning : QuattroTheme.Theme.text
+                font.family: root.fontFamily
+                font.pixelSize: 11
             }
 
             Timer {
@@ -376,6 +400,7 @@ PanelWindow {
     // ========================================================
 
     RowLayout {
+        id: rightGroup
         anchors {
             right: parent.right
             verticalCenter: parent.verticalCenter
@@ -384,8 +409,11 @@ PanelWindow {
 
         spacing: 5
 
+        RunningApps { barWindow: root }
+
         Rectangle {
             id: systemStatsButton
+            visible: root.width >= 1000
             implicitWidth: systemStatsRow.implicitWidth + 14
             implicitHeight: 26
             radius: QuattroTheme.Theme.cornerRadius
@@ -448,6 +476,7 @@ PanelWindow {
 
         Rectangle {
             id: agentUsageButton
+            visible: root.width >= 1200
             implicitWidth: agentLabel.implicitWidth + 14
             implicitHeight: 26
             radius: QuattroTheme.Theme.cornerRadius

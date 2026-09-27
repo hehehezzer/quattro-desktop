@@ -1,0 +1,2 @@
+singleton DesktopMedia 1.0 DesktopMedia.qml
+singleton DesktopWeather 1.0 DesktopWeather.qml

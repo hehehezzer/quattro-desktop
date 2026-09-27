@@ -1,5 +1,8 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls
+import "../shared"
+import "../../services"
 import "../../theme" as QuattroTheme
 
 Item {
@@ -575,6 +578,35 @@ Item {
             implicitHeight: 1
 
             color: QuattroTheme.Theme.border
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 5
+            Text {
+                text: DesktopWeather.label + (DesktopWeather.snapshot.cached ? " · cached" : "")
+                color: QuattroTheme.Theme.textStrong
+                font.family: root.fontFamily
+                font.pixelSize: 13
+            }
+            Text {
+                Layout.fillWidth: true
+                text: DesktopWeather.error || "Open-Meteo · updated " + (DesktopWeather.snapshot.updated ? Qt.formatDateTime(new Date(DesktopWeather.snapshot.updated * 1000), "hh:mm AP") : "—")
+                wrapMode: Text.Wrap
+                color: DesktopWeather.error ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
+                font.pixelSize: 10
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                DesktopField { id: latitude; Layout.fillWidth: true; placeholderText: "Latitude"; Accessible.name: "Weather latitude"; text: DesktopWeather.snapshot.location ? String(DesktopWeather.snapshot.location[0]) : "" }
+                DesktopField { id: longitude; Layout.fillWidth: true; placeholderText: "Longitude"; Accessible.name: "Weather longitude"; text: DesktopWeather.snapshot.location ? String(DesktopWeather.snapshot.location[1]) : "" }
+                DesktopButton {
+                    text: "Save"
+                    enabled: !DesktopWeather.loading && latitude.text.trim().length > 0 && longitude.text.trim().length > 0 && isFinite(Number(latitude.text)) && isFinite(Number(longitude.text))
+                    onClicked: DesktopWeather.refresh(true, latitude.text, longitude.text)
+                }
+                DesktopButton { text: "Refresh"; enabled: !DesktopWeather.loading && DesktopWeather.snapshot.configured; onClicked: DesktopWeather.refresh(true) }
+            }
         }
 
         // ====================================================
