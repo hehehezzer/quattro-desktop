@@ -19,7 +19,7 @@ Item {
     )
 
     property bool choosingLocation: false
-    property bool compactHeight: height < 650
+    property bool compactHeight: calendarScroll.contentHeight > calendarScroll.height + 1
     signal requestFocus()
     function scrollBy(amount) {
         if (!compactHeight || choosingLocation)
@@ -251,7 +251,7 @@ Item {
     ColumnLayout {
         id: calendarContent
         width: calendarScroll.width
-        height: Math.max(implicitHeight, 650, calendarScroll.height)
+        height: Math.max(implicitHeight, 750, calendarScroll.height)
 
         spacing: 10
 
