@@ -203,7 +203,8 @@ class Bridge:
                     self.scan_path = path
                     GLib.idle_add(lambda: (GLib.timeout_add_seconds(20, self.stop_scan), False)[1])
                 elif action == "stop":
-                    self.call(path, ADAPTER, "StopDiscovery")
+                    if self.scan_path == path:
+                        self.call(path, ADAPTER, "StopDiscovery")
                     self.scan_path = None
                 elif action == "remove":
                     self.call(props["Adapter"], ADAPTER, "RemoveDevice", GLib.Variant("(o)", (path,)))

@@ -94,6 +94,18 @@ class BluetoothTests(unittest.TestCase):
         self.bridge.bus.call.assert_called_once()
         self.assertIn(5000, self.bridge.bus.call.call_args.args)
 
+    def test_repeated_stop_request_does_not_report_discovery_error(self):
+        self.bridge.objects = {"/adapter": {bridge_module.ADAPTER: {}}}
+        class ImmediateThread:
+            def __init__(self, target, **kwargs):
+                self.target = target
+            def start(self):
+                self.target()
+        with patch.object(bridge_module.threading, "Thread", ImmediateThread), patch.object(bridge_module.GLib, "idle_add"):
+            self.bridge.dispatch({"action": "stop", "path": "/adapter"})
+        self.bridge.call.assert_not_called()
+        self.assertFalse(any(call.kwargs.get("error") for call in self.bridge.emit.call_args_list))
+
 
 if __name__ == "__main__":
     unittest.main()
