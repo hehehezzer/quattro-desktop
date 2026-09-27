@@ -25,6 +25,7 @@ CORE_DEPLOYMENT_MAPPINGS = {
             "native_session.py", "turn_gate.py", "turn_transport.py", "turn_routing.py",
             "jev.py", "jev_shadow.py", "jev_worker.py", "jev_preferences.py", "provider_access.py",
             "decision_taxonomy.py", "decision_service.py", "decision_mcp.py", "decision_launch.py", "runtime_milestones.py",
+            "bounded_command.py", "bounded_command_worker.py", "recovering_test.py", "tool_cli.py",
             "collaboration.py", "config.py", "containment.py", "delegation.py", "errors.py",
             "mandatory_context.py", "model_registry.py", "models.py", "omniroute.py", "paths.py", "policy.py",
             "privacy.py", "recovery.py", "retrieval.py", "routing.py",
@@ -56,6 +57,10 @@ CORE_DEPLOYMENT_MAPPINGS = {
     "core-pi-turn-gate": (
         "src/quattro_agent/data/pi-turn-gate.ts",
         ".local/bin/quattro_agent/data/pi-turn-gate.ts",
+    ),
+    "core-pi-recovery-tools": (
+        "src/quattro_agent/data/pi-recovery-tools.ts",
+        ".local/bin/quattro_agent/data/pi-recovery-tools.ts",
     ),
     **{
         f"namespace-{relative.replace('/', '-').removesuffix('.py')}":

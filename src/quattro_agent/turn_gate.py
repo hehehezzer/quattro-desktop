@@ -88,7 +88,10 @@ class TurnGate:
         self.decisions = self._new_decisions()
 
     def _new_decisions(self):
-        return DecisionSession(mode=self._decision_options.get('mode', 'OFF'),
+        mode = self._decision_options.get('mode', 'OFF')
+        if mode == 'OFF' and self._decision_options.get('testRecoveryMode') == 'COOPERATIVE':
+            mode = 'COOPERATIVE'
+        return DecisionSession(mode=mode,
                                timeout_ms=self._decision_options.get('timeoutMs', 1500))
 
     def observe_runtime(self, turn: Turn):
@@ -102,6 +105,10 @@ class TurnGate:
                     'evidence': 'inactive_or_stale', 'fallback_required': True}
         try:
             validate_request(request)
+            if (self._decision_options.get('mode', 'OFF') == 'OFF'
+                    and self._decision_options.get('testRecoveryMode') == 'COOPERATIVE'
+                    and request['decision_type'] != 'test_recovery'):
+                return fallback
             with self._lock:
                 turns = [turn for turn in self._active.values() if not turn.finished]
                 if len(turns) != 1:
@@ -117,7 +124,7 @@ class TurnGate:
                 state = json.loads(json.dumps(request))
                 state['execution_state']['revision'] = revision
                 context = state['relevant_context']
-                for key in CONTEXT_CATEGORIES:
+                for key in ('initial_complexity', 'initial_task_type'):
                     context.pop(key, None)  # Initial Jev evidence is host-owned.
                 context.update(turn.decision_context)
                 # Consume a completed initial evaluation, never re-evaluate it.

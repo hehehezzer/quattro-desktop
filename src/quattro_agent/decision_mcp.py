@@ -1,7 +1,8 @@
-"""Private stdio adapter for session-wide operational advice in Codex execution.
+"""Private stdio adapter for advice and gated host-owned recovery tools.
 
-Routed Pi delegates to the same Codex harness; its UI tool prohibitions remain
-unchanged. This adapter never executes actions and never returns provider text.
+Routed Pi delegates to the same Codex harness. The optional test tool
+runs only a fixed host argument vector and returns bounded results. Provider text
+never directly becomes an executable command.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ if not __package__:
 
 from quattro_agent.decision_service import DecisionSession
 from quattro_agent.decision_taxonomy import ACTIONS, CONTEXT_FLAGS, CONTEXT_CATEGORIES
+from quattro_agent.recovering_test import recovering_test
 
 
 DESCRIPTION = (
@@ -65,7 +67,7 @@ def tool_spec():
     }}
 
 
-def handle(message, session):
+def handle(message, session, *, test_enabled=False, advisory_enabled=True):
     if not isinstance(message, dict) or "id" not in message:
         return None
     method = message.get("method")
@@ -77,10 +79,28 @@ def handle(message, session):
     elif method == "ping":
         response["result"] = {}
     elif method == "tools/list":
-        response["result"] = {"tools": [tool_spec()]}
+        tools = [tool_spec()] if advisory_enabled else []
+        if test_enabled:
+            tools.append({"name": "quattro_test",
+                          "description": "Run one bounded test file in tests/. Supply test_flaky.py or tests/test_flaky.py, never an absolute path. Quattro may apply one policy-scoped recovery after an ambiguous failure.",
+                          "annotations": {"readOnlyHint": False, "destructiveHint": False,
+                                          "idempotentHint": False, "openWorldHint": False},
+                          "inputSchema": {"type": "object", "additionalProperties": False,
+                                          "required": ["test_file"], "properties": {
+                                              "test_file": {"type": "string",
+                                                            "pattern": "^(tests/)?test_[A-Za-z0-9_]{1,60}\\.py$"}}}})
+        response["result"] = {"tools": tools}
     elif method == "tools/call":
         params = message.get("params")
-        if not isinstance(params, dict) or params.get("name") != "operational_decision":
+        if isinstance(params, dict) and params.get("name") == "quattro_test" and test_enabled:
+            arguments = params.get("arguments")
+            if not isinstance(arguments, dict) or set(arguments) != {"test_file"}:
+                response["error"] = {"code": -32602, "message": "invalid test arguments"}
+            else:
+                result = recovering_test(Path.cwd(), arguments["test_file"], session)
+                response["result"] = {"content": [{"type": "text", "text": json.dumps(result, allow_nan=False)}],
+                                      "isError": result["status"] in {"invalid", "failed"}}
+        elif not isinstance(params, dict) or params.get("name") != "operational_decision" or not advisory_enabled:
             response["error"] = {"code": -32602, "message": "unsupported decision tool"}
         else:
             result = session.decide(params.get("arguments"))
@@ -140,6 +160,8 @@ def main():
     parser.add_argument("--mode", choices=("OFF", "SHADOW", "COOPERATIVE"), default="OFF")
     parser.add_argument("--timeout-ms", type=int, default=1500)
     parser.add_argument("--native-proxy", action="store_true")
+    parser.add_argument("--test-recovery", action="store_true")
+    parser.add_argument("--test-only", action="store_true")
     args = parser.parse_args()
     session = NativeDecisionProxy() if args.native_proxy else DecisionSession(mode=args.mode, timeout_ms=args.timeout_ms)
     try:
@@ -150,7 +172,8 @@ def main():
             if len(line) > 8192:
                 break  # Bounded framing; never interpret a truncated request.
             try:
-                response = handle(json.loads(line), session)
+                response = handle(json.loads(line), session, test_enabled=args.test_recovery,
+                                  advisory_enabled=not args.test_only)
             except Exception:
                 response = {"jsonrpc": "2.0", "id": None,
                             "error": {"code": -32603, "message": "decision service unavailable"}}

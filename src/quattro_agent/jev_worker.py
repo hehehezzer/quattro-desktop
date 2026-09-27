@@ -37,7 +37,8 @@ def session() -> None:
             try:
                 request = validate_request(json.loads(line))
                 result = client.evaluate_questions(dict(request, schema_version=SCHEMA_VERSION),
-                                                   question(request), reuse_catalog=True)
+                                                   question(request), reuse_catalog=True,
+                                                   verify_catalog=request["decision_type"] not in {"test_recovery"})
                 result["failure_category"] = None
             except JevFailure as error:
                 result = {"failure_category": error.category}

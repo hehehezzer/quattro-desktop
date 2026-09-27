@@ -1,3 +1,5 @@
+**Subsequent work:** [bounded test recovery](JEV_TEST_RECOVERY.md) replaces a real mid-turn retry choice in Codex/Pi; the validation-order experiment below remains historical and disabled.
+
 # PR #31: host runtime milestone experiment
 
 Continuation of exact `766c391d257a3eea29a5191c2c8ba2642e5c5fe3`.

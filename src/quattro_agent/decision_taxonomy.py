@@ -1,7 +1,8 @@
 """Operational advice vocabulary; not permissions, execution, or model policy.
 
-Only categorical/boolean projections cross the provider boundary. No raw task,
-file names, tool output, skills, routes, or model identifiers are accepted.
+Routine advice uses categorical/boolean projections. Gated recovery tools may
+add only one fixed assertion category; no complete
+task, transcript, file path, skill, route, or model identifier is accepted.
 """
 from __future__ import annotations
 
@@ -58,6 +59,10 @@ ACTIONS = {
         "more_context": "Gather missing evidence before continuing.",
         "agent": "Escalation or completion readiness requires agent reasoning.",
     },
+    "test_recovery": {
+        "retry_exact": "Run the same bounded test file once more within the host retry budget.",
+        "agent": "Return the original failure for agent reasoning and repair.",
+    },
 }
 ELIGIBLE = frozenset(ACTIONS) | frozenset({
     "task_classification", "complexity_estimation", "delegation_evidence",
@@ -72,7 +77,8 @@ CONTEXT_FLAGS = frozenset({
     "independent_steps", "tests_available", "changes_present",
 })
 CONTEXT_CATEGORIES = {"initial_complexity": tuple(CHOICES["complexity"]),
-                      "initial_task_type": tuple(CHOICES["task_type"])}
+                      "initial_task_type": tuple(CHOICES["task_type"]),
+                      "test_duration": ("moderate", "slow")}
 SCHEMA_VERSION = "quattro-jev-decisions-v1"
 
 
@@ -88,7 +94,11 @@ def classify_decision(name: str) -> DecisionClass:
 def validate_request(value: Any) -> dict:
     required = {"decision_type", "available_actions", "relevant_context",
                 "hard_constraints", "execution_state", "previous_result"}
-    if not isinstance(value, dict) or set(value) != required:
+    if not isinstance(value, dict):
+        raise JevFailure("invalid_state")
+    if value.get("decision_type") == "test_recovery":
+        required.add("failure_summary")
+    if set(value) != required:
         raise JevFailure("invalid_state")
     name = value["decision_type"]
     if not isinstance(name, str) or name not in ACTIONS:
@@ -118,27 +128,41 @@ def validate_request(value: Any) -> dict:
         raise JevFailure("invalid_state")
     if value["previous_result"] not in ("none", "success", "transient_failure", "test_failure", "unknown_failure"):
         raise JevFailure("invalid_state")
+    if name == "test_recovery":
+        summary = value["failure_summary"]
+        if (not isinstance(summary, str) or not 8 <= len(summary) <= 160
+                or any(ord(char) < 32 or ord(char) > 126 for char in summary)
+                or context.get("test_duration") not in {"moderate", "slow"}):
+            raise JevFailure("invalid_state")
     return value
 
 
 def allowed_action(request: dict, action: str) -> bool:
     constraints = request["hard_constraints"]
     return action in request["available_actions"] and not (
-        action == "retry" and not constraints["retry_allowed"]
+        action in {"retry", "retry_exact"} and not constraints["retry_allowed"]
         or action == "parallel" and not constraints["parallel_allowed"]
         or action == "retrieve" and not constraints["retrieval_allowed"]
     )
 
 
 def question(request: dict) -> dict:
+    instructions = (
+        "Choose a routine operational strategy from the supplied signals. "
+        "These signals are incomplete. Choose agent when semantic evidence is needed. "
+        "Hard constraints take precedence. This is advice, never authorization, "
+        "model selection, validation success, or task completion."
+    )
+    if request["decision_type"] == "test_recovery":
+        instructions = (
+            "A bounded unit test failed once. Choose retry_exact only if another run "
+            "could plausibly resolve a transient or race condition; choose agent "
+            "when code diagnosis is required. "
+            "The host owns all commands, budgets, validation, and execution authority."
+        )
     return {"decision": {
         "type": "choice",
-        "instructions": (
-            "Choose a routine operational strategy from the supplied signals. "
-            "These signals are incomplete. Choose agent when semantic evidence is needed. "
-            "Hard constraints take precedence. This is advice, never authorization, "
-            "model selection, validation success, or task completion."
-        ),
+        "instructions": instructions,
         "criteria": {action: ACTIONS[request["decision_type"]][action]
                      for action in request["available_actions"]},
     }}

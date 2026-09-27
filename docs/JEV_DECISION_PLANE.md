@@ -1,3 +1,5 @@
+**Current executable class:** [bounded test recovery](JEV_TEST_RECOVERY.md) adds a separately gated host-applied retry path. The advisory-only history below is retained for context.
+
 # Jev runtime decision plane — PR #31, experimental
 
 Latest continuation: [host runtime milestone experiment](JEV_RUNTIME_MILESTONES.md).

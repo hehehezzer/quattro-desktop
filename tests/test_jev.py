@@ -18,7 +18,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 from quattro_agent.jev import (
-    CHOICES, MODEL, JevClient, JevFailure, decode, serialize_state, validate_response,
+    CHOICES, MODEL, QUESTIONS, JevClient, JevFailure, decode, serialize_state, validate_response,
 )
 from quattro_agent.jev_shadow import FailureCooldown, ShadowRun, current_evidence, lifecycle, start_shadow
 from quattro_agent.routing_signals import classify_with_signals, fuse, learned_signal
@@ -107,6 +107,21 @@ class JevClientTests(unittest.TestCase):
         body["model"] = "jev-1.13.0"
         self.serve({"models": [{"name": MODEL}]}, body)
         self.assertEqual(self.client.evaluate(serialize_state("hello"))["response"]["model"], "jev-1.13.0")
+
+    def test_fixed_runtime_alias_skips_catalog_but_requires_canonical_model(self):
+        body = response()
+        body["model"] = "jev-1.13.0"
+        self.serve(body)
+        state = decode(serialize_state("hello").encode())
+        result = self.client.evaluate_questions(state, QUESTIONS, verify_catalog=False)
+        self.assertEqual(result["catalog_latency_ms"], 0)
+        self.assertEqual(len(self.opener.open.call_args_list), 1)
+        self.assertEqual(self.opener.open.call_args.args[0].full_url,
+                         "https://api.typesafe.ai/v1/systemone")
+        body["model"] = "jev-unexpected"
+        self.serve(body)
+        with self.assertRaisesRegex(JevFailure, "model_unavailable"):
+            self.client.evaluate_questions(state, QUESTIONS, verify_catalog=False)
 
     def test_unadvertised_nonversion_model_rejected(self):
         body = response()

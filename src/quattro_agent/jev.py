@@ -145,7 +145,7 @@ def validate_response(body: Any, choices: Mapping[str, Any] = CHOICES) -> dict[s
 
 
 class JevClient:
-    """One catalog verification and one evaluation; no retries or alternate models.
+    """One evaluation with optional catalog verification; no retries or alternate models.
 
     Socket timeouts are supplemented by the owning worker's wall-clock deadline.
     Proxies are disabled to keep direct native measurements and credential scope.
@@ -215,25 +215,31 @@ class JevClient:
         return self.evaluate_questions(state, QUESTIONS)
 
     def evaluate_questions(self, state: Mapping[str, Any], questions: Mapping[str, Any],
-                           *, reuse_catalog: bool = False) -> dict[str, Any]:
+                           *, reuse_catalog: bool = False, verify_catalog: bool = True) -> dict[str, Any]:
         """Use the native named-choice API; callers validate their own state schema.
 
         Initial routing retains per-call catalog verification. A lifecycle-owned
         session can explicitly reuse its verified catalog until the client closes.
         """
-        start = time.perf_counter()
-        try:
-            catalog = self._catalog if reuse_catalog and self._catalog is not None else self._request("/v1/models")
-        finally:
-            self.timings["catalog_latency_ms"] = (time.perf_counter() - start) * 1000
-        if (not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list)
-                or not all(isinstance(item, dict) and isinstance(item.get("name"), str)
-                           for item in catalog["models"])):
-            raise JevFailure("catalog_schema")
-        if MODEL not in {item["name"] for item in catalog["models"]}:
-            # Never silently substitute a different live identifier.
-            raise JevFailure("model_unavailable")
-        self._catalog = catalog
+        catalog = None
+        if verify_catalog:
+            start = time.perf_counter()
+            try:
+                catalog = self._catalog if reuse_catalog and self._catalog is not None else self._request("/v1/models")
+            finally:
+                self.timings["catalog_latency_ms"] = (time.perf_counter() - start) * 1000
+            if (not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list)
+                    or not all(isinstance(item, dict) and isinstance(item.get("name"), str)
+                               for item in catalog["models"])):
+                raise JevFailure("catalog_schema")
+            if MODEL not in {item["name"] for item in catalog["models"]}:
+                # Never silently substitute a different live identifier.
+                raise JevFailure("model_unavailable")
+            self._catalog = catalog
+        else:
+            # The fixed runtime alias is sent directly. A missing alias fails at
+            # POST; the returned model still must be its narrow canonical form.
+            self.timings["catalog_latency_ms"] = 0.0
         start = time.perf_counter()
         self.timings["jev_request_started"] = start
         try:
@@ -245,9 +251,9 @@ class JevClient:
             self.timings["jev_latency_ms"] = (self.timings["jev_request_finished"] - start) * 1000
         # The authenticated catalog advertises aliases, while System One returns
         # a concrete semantic version (observed jev-latest -> jev-1.13.0).
-        # Accept that narrow canonical form only after verifying our requested
-        # alias above. Never substitute an unadvertised request model.
-        if (result["model"] not in {item["name"] for item in catalog["models"]}
+        # The fixed runtime alias may skip catalog I/O, but still accepts only
+        # the narrow canonical form. Never substitute an unexpected model.
+        if ((catalog is None or result["model"] not in {item["name"] for item in catalog["models"]})
                 and not re.fullmatch(r"jev-[0-9]+\.[0-9]+\.[0-9]+", result["model"])):
             raise JevFailure("model_unavailable")
         return {"response": result, **self.timings}

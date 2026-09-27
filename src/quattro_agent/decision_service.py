@@ -28,6 +28,7 @@ class DecisionSession:
     # existing conservative bounds. No 25 ms wait default is introduced.
     MAX_CALLS = 64
     MIN_CONFIDENCE = 0.90
+    TEST_RECOVERY_MIN_CONFIDENCE = 0.65  # One bounded host test action; required validation still runs.
 
     def __init__(self, *, mode="OFF", timeout_ms=1500, credential=None, popen=None):
         self.mode = mode if mode in {"OFF", "SHADOW", "COOPERATIVE"} else "OFF"
@@ -394,7 +395,9 @@ class DecisionSession:
                     self.last_jev_model = response["model"]
                 if not allowed_action(request, action):
                     result = self._fallback("hard_policy")
-                elif answer["confidence"] < self.MIN_CONFIDENCE or action == "agent":
+                elif (answer["confidence"] < (
+                        self.TEST_RECOVERY_MIN_CONFIDENCE if request["decision_type"] == "test_recovery"
+                        else self.MIN_CONFIDENCE) or action == "agent"):
                     result = self._fallback("uncertain")
                 else:
                     result = {"selected_action": action, "confidence": answer["confidence"],

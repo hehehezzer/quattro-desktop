@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+import sys
 from typing import Mapping
 
 from .policy import ApprovalMode, NetworkAccess, PolicyProfile
@@ -197,6 +198,11 @@ class CodexAdapter(AgentAdapter):
 class PiAdapter(AgentAdapter):
     name = "pi"
 
+    def assert_policy_supported(self, spec: RunSpec) -> None:
+        if spec.policy.network is NetworkAccess.FULL and not spec.policy.explicit_full_access:
+            raise ValueError("pi cannot enforce full network access without explicit full access")
+        super().assert_policy_supported(spec)
+
     @property
     def capabilities(self) -> AgentCapabilities:
         return AgentCapabilities(
@@ -205,12 +211,18 @@ class PiAdapter(AgentAdapter):
             supports_native_approvals=False,
             supports_native_sandbox=False,
             requires_harness_containment=True,
-            supported_network=frozenset({NetworkAccess.NONE}),
+            supported_network=frozenset({NetworkAccess.NONE, NetworkAccess.FULL}),
             supported_tools=frozenset(),
         )
 
     def build_launch(self, binary: str, spec: RunSpec) -> LaunchPlan:
         self.assert_policy_supported(spec)
+        from .decision_launch import OPTIONS
+        jev_options = OPTIONS.get() or {}
+        test_enabled = (sys.platform == "linux" and (jev_options.get("experimentalTestRecovery") is True
+                         or jev_options.get("testRecoveryMode") == "COOPERATIVE")
+                        and spec.policy.explicit_full_access and not spec.delegated_worker)
+        recovery_extension = str(Path(__file__).with_name("data") / "pi-recovery-tools.ts")
         routed_args = (
             ("--provider", "omniroute", "--model", spec.model_override)
             if spec.model_override else ()
@@ -222,12 +234,18 @@ class PiAdapter(AgentAdapter):
             )
             if spec.delegated_worker else routed_args
         )
+        if test_enabled and spec.mode is AgentMode.PROMPT:
+            worker_args = ("--mode", "json", *worker_args)
         if spec.delegated_worker:
             tool_args = (
                 "--no-extensions", "--tools", "read,grep,find,ls", "--approve",
             )
         elif spec.policy.explicit_full_access:
-            tool_args = ("--no-extensions", "--tools", "read,bash,edit,write")
+            names = ["read", "bash", "edit", "write"]
+            if test_enabled:
+                names.append("quattro_test")
+            tool_args = (("--no-extensions", "-e", recovery_extension, "--tools", ",".join(names))
+                         if test_enabled else ("--no-extensions", "--tools", "read,bash,edit,write"))
         else:
             tool_args = ("--no-extensions", "--no-tools")
         if spec.mode is AgentMode.RESUME:
@@ -243,7 +261,10 @@ class PiAdapter(AgentAdapter):
             argv=argv,
             cwd=spec.project_path,
             stdin_text=None,
-            environment_overrides={},
+            environment_overrides=({"QUATTRO_PYTHON": sys.executable,
+                                    "QUATTRO_JEV_TEST_MODE": jev_options.get("testRecoveryMode", "OFF"),
+                                    "QUATTRO_TEST_ALLOWED": "1"}
+                                   if test_enabled else {}),
         )
 
 
