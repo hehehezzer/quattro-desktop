@@ -22,8 +22,9 @@ Item {
     property string removePath: ""
     property string expandedPath: ""
     property int visibleDeviceCount: devices.filter(d => adapter && d.adapter === adapter.path).length
-    property int preferredHeight: !adapter || !adapter.powered ? 172 : Math.min(540,
-        145 + Math.max(1, Math.min(visibleDeviceCount, 4)) * 82
+    // Includes the SystemPanels heading and footer around this component.
+    property int preferredHeight: !adapter || !adapter.powered ? 220 : Math.min(540,
+        210 + Math.max(1, Math.min(visibleDeviceCount, 4)) * 82
         + (expandedPath ? 38 : 0)
         + (prompt ? (prompt.kind === "pin" || prompt.kind === "passkey" ? 145 : 90) : 0)
         + (error ? 36 : 0)
