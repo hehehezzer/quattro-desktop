@@ -90,6 +90,7 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
     "session-helper": ("src/quattro-session", ".local/bin/quattro-session"),
     "theme-helper": ("src/quattro-theme", ".local/bin/quattro-theme"),
     "night-light-helper": ("src/quattro-night-light", ".local/bin/quattro-night-light"),
+    "screenshot-helper": ("src/quattro-screenshot", ".local/bin/quattro-screenshot"),
     "pointer-helper": ("src/quattro-pointer", ".local/bin/quattro-pointer"),
     "system-stats-helper": ("src/quattro-system-stats", ".local/bin/quattro-system-stats"),
     "agents-qml": ("src/quickshell/components/Agents.qml", ".config/quickshell/components/Agents.qml"),

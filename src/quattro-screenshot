@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+
+set -u
+
+MODE="${1:-smart}"
+
+[[ -f "$HOME/.config/user-dirs.dirs" ]] && source "$HOME/.config/user-dirs.dirs"
+
+OUTPUT_DIR="${XDG_PICTURES_DIR:-$HOME/Pictures}"
+
+mkdir -p "$OUTPUT_DIR"
+
+# ============================================================
+# TOGGLE BEHAVIOR
+#
+# Press Print again while slurp is open -> cancel screenshot.
+# ============================================================
+
+if pgrep -x slurp >/dev/null 2>&1; then
+    pkill -x slurp
+    exit 0
+fi
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+focused_monitor_geometry() {
+    hyprctl monitors -j | jq -r '
+        .[]
+        | select(.focused == true)
+        | "\(.x),\(.y) \((.width / .scale) | floor)x\((.height / .scale) | floor)"
+    ' | head -n1
+}
+
+monitor_rectangles() {
+    hyprctl monitors -j | jq -r '
+        .[]
+        | "\(.x),\(.y) \((.width / .scale) | floor)x\((.height / .scale) | floor)"
+    '
+}
+
+window_rectangles() {
+    local workspace
+
+    workspace="$(
+        hyprctl activeworkspace -j |
+            jq -r '.id'
+    )"
+
+    hyprctl clients -j |
+        jq -r \
+            --argjson ws "$workspace" '
+                .[]
+                | select(
+                    .workspace.id == $ws
+                    and .hidden != true
+                    and .mapped == true
+                )
+                | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"
+            '
+}
+
+all_rectangles() {
+    monitor_rectangles
+    window_rectangles
+}
+
+cleanup() {
+    if [[ -n "${FREEZE_PID:-}" ]]; then
+        kill "$FREEZE_PID" 2>/dev/null || true
+        FREEZE_PID=""
+    fi
+    if [[ "${NIGHT_LIGHT_SUSPENDED:-0}" == 1 ]]; then
+        NIGHT_LIGHT_SUSPENDED=0
+        if ! quattro-night-light apply >/dev/null; then
+            echo "quattro-screenshot: could not restore Night Light" >&2
+        fi
+    fi
+}
+
+trap cleanup EXIT INT TERM
+
+# Hyprland includes screen shaders in grim output. Temporarily suspend only
+# Quattro's own Night Light shader, then restore its persisted preset even if
+# selection is cancelled or capture fails.
+shader_path="$(hyprctl getoption decoration:screen_shader -j 2>/dev/null | jq -r '.str // empty' 2>/dev/null || true)"
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+case "$shader_path" in
+    "$config_home/quattro/night-light-shaders/"*.frag)
+        if hyprctl eval 'hl.config({ decoration = { screen_shader = "" } })' >/dev/null 2>&1; then
+            NIGHT_LIGHT_SUSPENDED=1
+        else
+            echo "quattro-screenshot: could not suspend Night Light" >&2
+            exit 1
+        fi
+        ;;
+esac
+
+# ============================================================
+# FULLSCREEN
+#
+# Capture focused monitor directly.
+# ============================================================
+
+if [[ "$MODE" == "fullscreen" ]]; then
+    GEOMETRY="$(focused_monitor_geometry)"
+
+    [[ -n "$GEOMETRY" ]] || exit 1
+else
+    # ========================================================
+    # FREEZE SCREEN
+    #
+    # Same basic idea used by current Quattro:
+    # keep the desktop visually frozen while selection happens.
+    # ========================================================
+
+    hyprpicker -r -z >/dev/null 2>&1 &
+    FREEZE_PID=$!
+
+    sleep 0.12
+
+    case "$MODE" in
+        region)
+            GEOMETRY="$(slurp 2>/dev/null || true)"
+            ;;
+
+        windows)
+            GEOMETRY="$(
+                all_rectangles |
+                    slurp -r 2>/dev/null ||
+                    true
+            )"
+            ;;
+
+        smart)
+            # Give slurp window + monitor rectangles as hints,
+            # but do not restrict selection to them.
+            #
+            # This allows both:
+            #   - dragging any freeform region
+            #   - selecting hinted window/monitor rectangles
+            GEOMETRY="$(
+                all_rectangles |
+                    slurp 2>/dev/null ||
+                    true
+            )"
+            ;;
+
+        *)
+            echo "Usage: quattro-screenshot [smart|region|windows|fullscreen]" >&2
+            exit 2
+            ;;
+    esac
+
+    [[ -n "$GEOMETRY" ]] || exit 0
+fi
+
+# ============================================================
+# CAPTURE
+# ============================================================
+
+FILENAME="screenshot-$(date +'%Y-%m-%d_%H-%M-%S').png"
+FILEPATH="$OUTPUT_DIR/$FILENAME"
+
+grim -g "$GEOMETRY" "$FILEPATH" || exit 1
+
+# Screen is captured; release freeze immediately.
+cleanup
+
+# ============================================================
+# CLIPBOARD
+# ============================================================
+
+wl-copy --type image/png < "$FILEPATH"
+
+# ============================================================
+# NOTIFICATION
+# ============================================================
+
+notify-send \
+    -t 5000 \
+    -a "Screenshot" \
+    -i "$FILEPATH" \
+    "Screenshot captured" \
+    "Saved to Pictures and copied to clipboard"
+
+echo "$FILEPATH"
