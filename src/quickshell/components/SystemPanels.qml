@@ -16,6 +16,7 @@ Scope {
     id: root
 
     property string page: ""
+    property bool keyboardOpened: false
     property string nightLightCommand: Quickshell.env("HOME") + "/.local/bin/quattro-night-light"
     property string sessionCommand: Quickshell.env("HOME") + "/.local/bin/quattro-session"
     property string nightLightPreset: "off"
@@ -108,16 +109,17 @@ Scope {
             if (name === "clock") root.toggleClock();
             else if (["spotify", "audio", "bluetooth", "network", "display", "power"].indexOf(name) >= 0) {
                 if (popupHost.visible && root.page === name) root.close();
-                else root.openPage(name);
+                else root.openPage(name, false);
             }
         }
     }
 
-    function openPage(name) {
+    function openPage(name, fromKeyboard) {
         root.closeClock()
 
         if (popupHost.opened && root.page !== name) root.close()
         root.page = name
+        root.keyboardOpened = !!fromKeyboard
 
         popupHost.screen = focusedScreen()
         popupHost.opened = true
@@ -134,6 +136,7 @@ Scope {
     }
 
     function close() {
+        root.keyboardOpened = false
         popupHost.opened = false
         root.page = ""
 
@@ -181,27 +184,27 @@ Scope {
         target: "panel"
 
         function audio(): void {
-            root.openPage("audio")
+            root.openPage("audio", true)
         }
 
         function spotify(): void {
-            root.openPage("spotify")
+            root.openPage("spotify", true)
         }
 
         function bluetooth(): void {
-            root.openPage("bluetooth")
+            root.openPage("bluetooth", true)
         }
 
         function network(): void {
-            root.openPage("network")
+            root.openPage("network", true)
         }
 
         function display(): void {
-            root.openPage("display")
+            root.openPage("display", true)
         }
 
         function power(): void {
-            root.openPage("power")
+            root.openPage("power", true)
         }
 
         function clock(): void {
@@ -217,6 +220,15 @@ Scope {
     // ========================================================
     // RIGHT-SIDE SYSTEM PANEL HOST
     // ========================================================
+
+    HyprlandFocusGrab {
+        windows: [popupHost]
+        active: root.keyboardOpened && popupHost.opened
+        onCleared: {
+            if (root.keyboardOpened)
+                root.close()
+        }
+    }
 
     TemporaryPanel {
         id: popupHost
