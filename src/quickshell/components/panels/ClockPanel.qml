@@ -621,10 +621,12 @@ Item {
                     }
                 }
                 ColumnLayout {
+                    Layout.preferredWidth: 245
+                    Layout.maximumWidth: 245
                     Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
                     spacing: 1
                     Text {
-                        Layout.maximumWidth: 245
+                        Layout.fillWidth: true
                         text: DesktopWeather.placeLabel
                         textFormat: Text.PlainText
                         elide: Text.ElideRight
