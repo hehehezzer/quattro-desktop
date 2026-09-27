@@ -592,6 +592,8 @@ Scope {
 
                                 source:
                                     previewPanel.selected
+                                    && previewPanel.selected.type === "image"
+                                    && previewPanel.selected.path
                                         ? "file://"
                                             + previewPanel.selected.path
                                         : ""
