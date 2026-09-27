@@ -197,6 +197,12 @@ class Bridge:
         if action == "refresh":
             self.refresh()
             return False
+        if action == "stop" and self.busy:
+            # Closing the panel can stop discovery while pairing is still in
+            # flight. This cleanup must not replace the pairing result.
+            if request.get("path") == self.scan_path:
+                self.stop_scan()
+            return False
         if self.busy:
             self.emit(error="Wait for the current Bluetooth operation")
             return False
@@ -261,7 +267,8 @@ class Bridge:
 
     def arm_scan_timer(self):
         self.cancel_scan_timer()
-        self.scan_timer = GLib.timeout_add_seconds(SCAN_SECONDS, self.scan_expired)
+        if self.scan_path:
+            self.scan_timer = GLib.timeout_add_seconds(SCAN_SECONDS, self.scan_expired)
         return False
 
     def scan_expired(self):

@@ -96,6 +96,7 @@ class BluetoothTests(unittest.TestCase):
         self.assertIn(5000, self.bridge.bus.call.call_args.args)
 
     def test_restarting_scan_replaces_previous_expiry(self):
+        self.bridge.scan_path = "/adapter"
         with patch.object(bridge_module.GLib, "timeout_add_seconds", side_effect=[11, 12]) as add_timer, \
              patch.object(bridge_module.GLib, "source_remove") as remove_timer:
             self.bridge.arm_scan_timer()
@@ -112,6 +113,20 @@ class BluetoothTests(unittest.TestCase):
         remove_timer.assert_called_once_with(17)
         self.assertEqual(self.bridge.scan_timer, 0)
         self.bridge.bus.call.assert_called_once()
+
+    def test_stop_while_pairing_does_not_emit_busy_error(self):
+        self.bridge.busy = True
+        self.bridge.scan_path = "/adapter"
+        self.bridge.dispatch({"action": "stop", "path": "/adapter"})
+        self.bridge.bus.call.assert_called_once()
+        self.assertFalse(any(call.kwargs.get("error") for call in self.bridge.emit.call_args_list))
+
+    def test_unrelated_stop_cannot_cancel_active_scan(self):
+        self.bridge.busy = True
+        self.bridge.scan_path = "/adapter"
+        self.bridge.dispatch({"action": "stop", "path": "/other"})
+        self.bridge.bus.call.assert_not_called()
+        self.assertEqual(self.bridge.scan_path, "/adapter")
 
     def test_repeated_stop_request_does_not_report_discovery_error(self):
         self.bridge.objects = {"/adapter": {bridge_module.ADAPTER: {}}}
