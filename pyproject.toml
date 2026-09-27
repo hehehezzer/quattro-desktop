@@ -23,6 +23,8 @@ classifiers = [
 
 [project.scripts]
 quattro-agent = "quattro_agent.cli:main"
+quattro-intelligence-mcp = "quattro_intelligence_mcp:main"
+quattro-intelligence = "quattro_agent.shared_intelligence:cli_main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -30,6 +32,7 @@ py-modules = [
   "quattro_deployment",
   "quattro_harness",
   "quattro_image_mcp",
+  "quattro_intelligence_mcp",
   "quattro_memory",
   "quattro_pr_review",
   "quattro_release",
