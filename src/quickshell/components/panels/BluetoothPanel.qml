@@ -184,6 +184,7 @@ Item {
         }
         RowLayout {
             Layout.fillWidth: true
+            visible: !!root.adapter && root.adapter.powered
             Text {
                 text: root.adapter && root.adapter.scanning ? "DISCOVERING" : "DEVICES"
                 color: root.adapter && root.adapter.scanning ? QuattroTheme.Theme.accent : QuattroTheme.Theme.textMuted
@@ -203,6 +204,7 @@ Item {
             }
         }
         ListView {
+            visible: !!root.adapter && root.adapter.powered
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -310,6 +312,15 @@ Item {
                 font.pixelSize: 12
             }
         }
+        Text {
+            visible: !!root.adapter && !root.adapter.powered
+            Layout.fillWidth: true
+            text: "Turn on Bluetooth to reconnect your devices."
+            wrapMode: Text.Wrap
+            color: QuattroTheme.Theme.textMuted
+            font.family: QuattroTheme.Theme.fontFamily
+            font.pixelSize: 11
+        }
         ColumnLayout {
             visible: !!root.prompt
             Layout.fillWidth: true
@@ -353,8 +364,8 @@ Item {
         }
         Text {
             Layout.fillWidth: true
-            visible: text.length > 0
-            text: root.error || root.message
+            visible: root.error.length > 0
+            text: root.error
             textFormat: Text.PlainText
             wrapMode: Text.Wrap
             color: root.error ? QuattroTheme.Theme.danger : QuattroTheme.Theme.textMuted
