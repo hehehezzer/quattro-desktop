@@ -37,6 +37,10 @@ Item {
         + (adapters.length > 1 ? 44 : 0))
     implicitWidth: 430
     implicitHeight: preferredHeight
+    onVisibleChanged: {
+        if (visible)
+            Qt.callLater(() => deviceList.positionViewAtBeginning());
+    }
 
     function send(data) {
         if (bridge.running)
@@ -237,12 +241,17 @@ Item {
             }
         }
         ListView {
+            id: deviceList
             visible: !!root.adapter && root.adapter.powered
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
             spacing: 6
             model: root.devices.filter(d => root.adapter && d.adapter === root.adapter.path)
+            onCountChanged: {
+                if (count <= 1)
+                    Qt.callLater(() => positionViewAtBeginning());
+            }
             ScrollBar.vertical: ScrollBar {}
             delegate: ColumnLayout {
                 id: deviceRow
