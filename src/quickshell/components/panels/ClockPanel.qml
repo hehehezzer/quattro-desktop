@@ -313,44 +313,14 @@ Item {
 
             spacing: 8
 
-            Rectangle {
+            DesktopButton {
                 implicitWidth: 36
                 implicitHeight: 34
-
-                radius: QuattroTheme.Theme.cornerRadius
-
-                color:
-                    previousMouse.containsMouse
-                    ? QuattroTheme.Theme.border
-                    : QuattroTheme.Theme.surface
-
-                Text {
-                    anchors.centerIn: parent
-
-                    text: "󰅁"
-
-                    color: QuattroTheme.Theme.text
-
-                    font.family:
-                        root.fontFamily
-
-                    font.pixelSize: 14
-                }
-
-                MouseArea {
-                    id: previousMouse
-
-                    anchors.fill: parent
-
-                    hoverEnabled: true
-
-                    cursorShape:
-                        Qt.PointingHandCursor
-
-                    onClicked: {
-                        root.previousMonth()
-                    }
-                }
+                text: "󰅁"
+                font.pixelSize: 14
+                Accessible.name: "Previous month"
+                ToolTip.text: Accessible.name
+                onClicked: root.previousMonth()
             }
 
             Text {
@@ -374,44 +344,14 @@ Item {
                 font.bold: true
             }
 
-            Rectangle {
+            DesktopButton {
                 implicitWidth: 36
                 implicitHeight: 34
-
-                radius: QuattroTheme.Theme.cornerRadius
-
-                color:
-                    nextMouse.containsMouse
-                    ? QuattroTheme.Theme.border
-                    : QuattroTheme.Theme.surface
-
-                Text {
-                    anchors.centerIn: parent
-
-                    text: "󰅂"
-
-                    color: QuattroTheme.Theme.text
-
-                    font.family:
-                        root.fontFamily
-
-                    font.pixelSize: 14
-                }
-
-                MouseArea {
-                    id: nextMouse
-
-                    anchors.fill: parent
-
-                    hoverEnabled: true
-
-                    cursorShape:
-                        Qt.PointingHandCursor
-
-                    onClicked: {
-                        root.nextMonth()
-                    }
-                }
+                text: "󰅂"
+                font.pixelSize: 14
+                Accessible.name: "Next month"
+                ToolTip.text: Accessible.name
+                onClicked: root.nextMonth()
             }
         }
 
@@ -732,48 +672,11 @@ Item {
                 Layout.fillWidth: true
             }
 
-            Rectangle {
-                implicitWidth:
-                    todayText.implicitWidth + 22
-
+            DesktopButton {
                 implicitHeight: 32
-
-                radius: QuattroTheme.Theme.cornerRadius
-
-                color:
-                    todayMouse.containsMouse
-                    ? QuattroTheme.Theme.border
-                    : QuattroTheme.Theme.surface
-
-                Text {
-                    id: todayText
-
-                    anchors.centerIn: parent
-
-                    text: "Today"
-
-                    color: QuattroTheme.Theme.text
-
-                    font.family:
-                        root.fontFamily
-
-                    font.pixelSize: 11
-                }
-
-                MouseArea {
-                    id: todayMouse
-
-                    anchors.fill: parent
-
-                    hoverEnabled: true
-
-                    cursorShape:
-                        Qt.PointingHandCursor
-
-                    onClicked: {
-                        root.goToday()
-                    }
-                }
+                text: "Today"
+                Accessible.name: "Go to today"
+                onClicked: root.goToday()
             }
         }
     }
