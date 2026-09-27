@@ -30,9 +30,27 @@ the buttons. The status is display-safe media metadata, not a diagnostic dump.
 
 ### Weather and clock
 
-The clock remains local and live, with seconds. Calendar retains month/week
-navigation and adds latitude/longitude settings and Refresh. No location is
-inferred from personal data, IP address or unrelated project content.
+The clock remains on the system timezone, with seconds. Calendar retains
+month/week navigation and offers a named Location picker, fixed Celsius units
+and Refresh weather. Coordinates are internal, not normal settings. No location
+is inferred from personal data, IP address or unrelated project content.
+
+Open-Meteo's HTTPS geocoder searches worldwide with Unicode names, city,
+province/state and country labels. Search has a 325 ms debounce, two-character
+minimum, 100-character maximum, eight-result cap, eight-second socket timeout and
+64 KiB response limit. Editing/closing cancels the worker; monotonically increasing
+request revisions reject late data **and errors**, even if cancellation is ignored.
+There is one search worker, no per-keystroke request and no idle search polling.
+Loading, no-results and retryable network errors are distinct. Results support
+Tab, arrows and Enter; the normal Location button opens the picker.
+
+Saved locations win, including legacy coordinate-only configurations (labelled
+“Saved location”). No authoritative system place provider is configured on this
+Hyprland desktop. Fresh setups use explicitly labelled **generic Manila,
+Philippines**, not a claim about the user's city. Selection atomically stores the
+canonical name, coordinates, region/country, provider ID and timezone. It clears
+the old displayed weather and immediately requests the new city's weather.
+Forecast timezone is the location timezone, never a system-clock setting.
 
 `quattro_desktop_controls.py weather` uses HTTPS Open-Meteo current weather,
 Celsius and WMO weather codes. No API key is required or exposed. Location is
@@ -40,7 +58,58 @@ validated and stored in `~/.config/quattro/weather.json`; results are atomically
 cached in `~/.cache/quattro/weather.json`. A changed location cannot display the
 previous location's cached weather. Requests have a 12-second timeout and bounded
 response size. One shared QML singleton refreshes every 30 minutes, retaining
-and marking stale last-known results on failure. Missing location is explicit.
+and marking stale last-known results on failure. Cache identity includes both
+coordinates and forecast timezone; selected metadata is attached afresh even to
+cached results. The legacy `weather --location LAT LON` CLI remains for scripts.
+
+### Shared temporary panel ownership and dismissal
+
+`services/PopupManager.qml` owns one active temporary surface. The reusable
+`shared/TemporaryPanel.qml` assigns an identity **before mapping**, hides without
+a closing delay, releases keyboard focus on close, and routes Escape and dismissal
+through the owner's cleanup. Calendar, Audio/EQ, Bluetooth, Network, Display,
+Power, Running applications, Main Menu, Clipboard and Agents participate. Opening
+another major panel closes the old owner; Bluetooth cleanup stops discovery.
+Main Menu, Clipboard and Agents now have card-sized hosts, not fullscreen
+backdrops. The existing panel content, theme, and compositor transitions remain.
+
+On this Hyprland 0.56.2 build both `HyprlandFocusGrab` and **Exclusive** layer focus
+can consume outside pointer input. Live application click counters demonstrated
+this; neither is used by temporary panels now. OnDemand layers and
+`hypr/popup-dismissal.lua` instead use three non-consuming mouse bindings. On a
+button event only, the compositor checks its actual mapped layer rectangles
+(global coordinates, including other monitors). Outside clicks send a numeric
+per-opening identity to the singleton. Delayed dismissals cannot close a newly
+opened panel. Bar actions dispatch synchronously, including repeated toggles.
+Escape is enabled at the compositor only while a temporary layer is mapped, so
+it also works after focus has followed the pointer; ordinary application Escape
+is not intercepted with panels closed. No pointer tracking loop, click replay,
+invisible overlay, synthetic click or additional persistent process is added.
+Workspace/fullscreen/monitor-removal events also close the active temporary owner.
+
+Context menus stay inside their application-list host (`Popup.Item`), close when
+the selected window disappears, when the host closes, after actions, and on
+outside/Escape. One shared menu replaces the prior selection. Confirmation and
+submenus belong to the major panel, rather than competing for ownership.
+
+Deliberate exceptions: notifications are passive five-second **toasts**, not an
+opened notification-center panel; they never acquire focus or close another
+panel. CPU/RAM and account hover tooltips disappear on pointer leave and are
+suppressed while a major panel is active. System-tray menus are native toolkit
+menus owned by their tray items; opening one releases the major shell panel and
+the toolkit owns its nested-menu dismissal. There is no separate battery, quick
+settings, or expanded-media host in this shell.
+
+**Remaining compositor edge:** if a panel is opened by IPC/keyboard while the
+pointer is already stationary over an application, Hyprland's layer-map path
+assigns pointer focus to the new layer even outside its rectangle. Clicking
+without any intervening motion dismisses the panel but can lose that first
+application click. Ordinary moved-pointer outside clicks passed, on both monitors.
+This was reproduced separately; it is not claimed fixed. Input replay or a
+compositor patch was not introduced after the four bounded repair passes.
+
+`qs ipc call popups status|close` exposes ownership. Process-menu status is
+available at `qs ipc call applications-MONITOR status` without window titles.
 
 ### Audio and real EQ
 
@@ -128,7 +197,7 @@ WirePlumber owns Bluetooth audio profiles and device creation. A genuinely
 connected audio device appears in the existing PipeWire output selector; no fake
 Bluetooth sink is created by the shell.
 
-## Validation, 2026-09-27
+## Initial PR validation, 2026-09-27 (before the UX follow-up)
 
 - Repository unit suite: **719 tests, five skipped** (after final Lua regression).
   Desktop backend/BlueZ tests include stale PID, protected process, exact pidfd
@@ -164,6 +233,57 @@ Bluetooth sink is created by the shell.
   not destructively exercised. Existing Clipboard `file://undefined` and portal
   registration warnings were observed outside this scope.
 
+## UX follow-up validation, 2026-09-27
+
+- **PASSED:** 728 repository tests, five skips. New hermetic backend cases cover
+  Unicode, country metadata, validation, empty/error responses, saved selection,
+  cache identity, timezone and labelled default. A bounded **windowless** Quickshell
+  test process uses a fake local helper (no network) to execute the actual QML
+  debounce/cancellation logic, including a worker that ignores SIGTERM and returns
+  late. It verifies no stale replacement, one request for rapid `T/To/Tok/Tokyo`,
+  selection persistence, empty results, failure and clearing the search. The test
+  engine is terminated/reaped; it is not a second persistent desktop shell.
+- **PASSED:** Lua contract tests for inside/outside, other-monitor coordinates,
+  non-consuming bindings, no idle helper invocation, Escape lifetime and numeric
+  token validation. Shared-host and stale-dismissal architecture contracts pass.
+- **PASSED:** Python compile/hygiene, public-artifact policy, whitespace, isolated
+  wheel/sdist build, shellcheck and Lua syntax. Qt 6 qmlformat processed every
+  changed QML path (new/replaced files formatted in place; incumbent large files
+  retain unrelated formatting). Qt 6 qmllint exits zero with existing plugin and
+  unqualified-access warnings. Native QML is outside Impeccable's web detector.
+- **PASSED live:** Manila, Imus, Tokyo, London, New York and Singapore searched and
+  selected through the Calendar UI; correct PH/PH/JP/GB/US/SG country metadata,
+  internal coordinates, weather refresh and forecast timezone verified. Singapore
+  survived a shell restart and returned cached weather. Test selections were
+  reverted afterward; the user's location was not invented. Generic Manila is
+  active on this previously unconfigured installation. System timezone unchanged.
+- **PASSED live:** ten major panels each opened, accepted an inside click, closed
+  with an ordinary outside click that incremented a disposable GTK application's
+  click counter, closed on Escape and yielded to another major panel. Cross-screen
+  checks passed HDMI-A-1→DP-2 and DP-2→HDMI-A-1, plus inside/outside on DP-2. Repeated
+  bar toggles, rapid Audio/Bluetooth/Calendar switching and stale dismissal-token
+  rejection passed. See the separately reproduced stationary-pointer exception.
+- **PASSED live:** application right-click/keyboard context menus, dismissing a
+  submenu by clicking its host, exact disposable-window Close, confirmed SIGTERM
+  via the UI, and automatic menu invalidation after an external owner exit.
+- **PASSED live:** Spotify selected explicitly for an unambiguous MPRIS regression:
+  metadata, advancing progress, play/pause, next and previous via shell IPC. An
+  earlier unpinned multi-player assertion was inconclusive; the pinned rerun passed.
+- **PASSED live:** real PipeWire volume/mute readback, all nine EQ presets, Custom
+  service-restart persistence, selection of the existing physical target, and
+  restoration of prior state. Isolated DSP again measured RMS 706.21 → 1409.06 →
+  706.21, with default output preserved. Bluetooth adapter power and scanning
+  passed; panel dismissal stops scanning. Existing bonds were preserved.
+- **PASSED:** one persistent shell, normal IPC registration and no Hyprland config
+  errors after reload. Temporary virtual-keyboard test settings were cleared by
+  reload. The shell still reports the pre-existing Clipboard `file://undefined`
+  and portal-registration warnings; no new QML load error was observed.
+- **NOT RUN:** destructive logout/power actions, physical monitor unplug,
+  exhaustive native tray-menu/notification actions and a hung GUI's SIGKILL path.
+- **BLOCKED:** physical Bluetooth pairing/connect/disconnect/remove and headphone
+  playback still require an available pairing-mode device. The stationary-pointer
+  first-click compositor edge remains open. PR #32 stays draft and unmerged.
+
 ## UX review
 
 Impeccable was used in existing-world/Operate mode, with an in-thread finish
@@ -184,7 +304,9 @@ only when enabled. Sampled shell lifetime CPU was about 0.3%, RSS about 348 MiB;
 filter service systemd memory about 3.8 MiB. These are observations under changing
 live workload, not a controlled before/after performance benchmark.
 
-Before considering end-to-end validation complete, configure the user's weather
-coordinates and test with a physical Bluetooth device in pairing mode, including
-headphone output selection. Reference-image fidelity remains blocked until the
+The original manual-coordinate requirement is superseded by the searchable
+picker and labelled Manila fallback. Before considering end-to-end validation
+complete, test with a physical Bluetooth device in pairing mode, including
+headphone output selection, and resolve/document the stationary-pointer edge
+above. Reference-image fidelity remains blocked until the
 actual file is supplied. Do not merge on the basis of unperformed hardware tests.
