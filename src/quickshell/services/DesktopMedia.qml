@@ -12,7 +12,9 @@ QtObject {
     property var players: Mpris.players.values
     property var player: {
         const list = players.slice();
-        list.sort((a, b) => Number(b.isPlaying) - Number(a.isPlaying) || (activity[b.dbusName] || 0) - (activity[a.dbusName] || 0) || Number(b.dbusName === preferred) - Number(a.dbusName === preferred));
+        // After a shell restart there may be no activity history. Prefer a
+        // paused track over an empty browser MPRIS endpoint in that tie.
+        list.sort((a, b) => Number(b.isPlaying) - Number(a.isPlaying) || (activity[b.dbusName] || 0) - (activity[a.dbusName] || 0) || Number(b.dbusName === preferred) - Number(a.dbusName === preferred) || Number(!!b.trackTitle) - Number(!!a.trackTitle));
         return list.length ? list[0] : null;
     }
     property real position: 0
