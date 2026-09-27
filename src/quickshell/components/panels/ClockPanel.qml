@@ -19,6 +19,7 @@ Item {
     )
 
     property bool choosingLocation: false
+    property bool compactHeight: height < 650
     signal requestFocus()
     onChoosingLocationChanged: {
         if (choosingLocation) locationPicker.begin();
@@ -187,7 +188,7 @@ Item {
     // ========================================================
 
     WheelHandler {
-        enabled: !root.choosingLocation
+        enabled: !root.choosingLocation && !root.compactHeight
         target: null
 
         acceptedDevices:
@@ -216,9 +217,25 @@ Item {
         onDone: { root.choosingLocation = false; root.requestFocus(); }
     }
 
-    ColumnLayout {
+    Flickable {
+        id: calendarScroll
         anchors.fill: parent
         visible: !root.choosingLocation
+        clip: true
+        contentWidth: width
+        contentHeight: calendarContent.height
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+
+        ScrollBar.vertical: ScrollBar {
+            policy: calendarScroll.interactive ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+        }
+
+    ColumnLayout {
+        id: calendarContent
+        width: calendarScroll.width
+        height: Math.max(implicitHeight, calendarScroll.height)
 
         spacing: 10
 
@@ -743,5 +760,6 @@ Item {
                 }
             }
         }
+    }
     }
 }
