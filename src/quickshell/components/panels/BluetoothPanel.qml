@@ -21,6 +21,12 @@ Item {
     property var prompt: null
     property string removePath: ""
     property string expandedPath: ""
+    function pendingLabel() {
+        if (action === "pair") return "Pairing…";
+        if (action === "connect") return "Connecting…";
+        if (action === "disconnect") return "Disconnecting…";
+        return "Working…";
+    }
     property int visibleDeviceCount: devices.filter(d => adapter && d.adapter === adapter.path).length
     // Includes the SystemPanels heading and footer around this component.
     property int preferredHeight: !adapter || !adapter.powered ? 220 : Math.min(540,
@@ -180,7 +186,7 @@ Item {
                 }
                 Text {
                     text: root.adapter && root.adapter.powered
-                        ? root.devices.filter(d => d.adapter === root.adapter.path && d.connected).length + " connected"
+                        ? root.devices.filter(d => d.adapter === root.adapter.path && d.connected && d.paired).length + " connected"
                         : "Discovery and connections are paused"
                     color: QuattroTheme.Theme.textMuted
                     font.family: QuattroTheme.Theme.fontFamily
@@ -248,7 +254,7 @@ Item {
                     Rectangle {
                         Layout.preferredWidth: 3
                         Layout.preferredHeight: 30
-                        color: deviceRow.modelData.connected ? QuattroTheme.Theme.success
+                        color: deviceRow.modelData.connected && deviceRow.modelData.paired ? QuattroTheme.Theme.success
                             : root.pendingPath === deviceRow.modelData.path ? QuattroTheme.Theme.accent
                             : "transparent"
                     }
@@ -271,8 +277,11 @@ Item {
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: root.pendingPath === deviceRow.modelData.path ? root.action + "…" : deviceRow.modelData.connected ? "Connected" : deviceRow.modelData.paired ? "Paired · Disconnected" : "Available to pair"
-                            color: deviceRow.modelData.connected ? QuattroTheme.Theme.success : QuattroTheme.Theme.textMuted
+                            text: root.pendingPath === deviceRow.modelData.path ? root.pendingLabel()
+                                : deviceRow.modelData.connected && deviceRow.modelData.paired ? "Connected"
+                                : deviceRow.modelData.connected ? "Connection incomplete"
+                                : deviceRow.modelData.paired ? "Paired · Disconnected" : "Available to pair"
+                            color: deviceRow.modelData.connected && deviceRow.modelData.paired ? QuattroTheme.Theme.success : QuattroTheme.Theme.textMuted
                             font.pixelSize: 10
                             elide: Text.ElideRight
                         }
