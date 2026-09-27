@@ -138,7 +138,7 @@ DesktopButton {
         id: popup
         panelName: "applications"
         onDismissed: root.opened = false
-        visible: root.opened
+        opened: root.opened
         screen: root.barWindow.screen
         anchors {
             top: true

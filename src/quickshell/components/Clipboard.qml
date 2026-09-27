@@ -34,7 +34,7 @@ Scope {
         id: window
         panelName: "clipboard"
         onDismissed: root.close()
-        visible: root.opened
+        opened: root.opened
         implicitWidth: Math.min(900, (screen ? screen.width : 1920) - 80)
         implicitHeight: Math.min(620, (screen ? screen.height : 1080) - 100)
 

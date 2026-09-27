@@ -347,7 +347,7 @@ Scope {
         id: agentsWindow
         panelName: "agents"
         onDismissed: root.close()
-        visible: root.opened
+        opened: root.opened
         anchors { top: true; bottom: true; right: true }
         margins { top: 42; bottom: 12; right: 12 }
         implicitWidth: 760

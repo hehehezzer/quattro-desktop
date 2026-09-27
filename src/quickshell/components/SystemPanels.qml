@@ -108,10 +108,11 @@ Scope {
     function openPage(name) {
         root.closeClock()
 
+        if (popupHost.opened && root.page !== name) root.close()
         root.page = name
 
         popupHost.screen = focusedScreen()
-        popupHost.visible = true
+        popupHost.opened = true
 
         if (name === "network")
             networkPanel.refreshNetwork()
@@ -125,7 +126,7 @@ Scope {
     }
 
     function close() {
-        popupHost.visible = false
+        popupHost.opened = false
         root.page = ""
 
         networkPanel.resetTransientState()
@@ -143,7 +144,7 @@ Scope {
         clockPanel.resetToToday()
 
         clockHost.screen = focusedScreen()
-        clockHost.visible = true
+        clockHost.opened = true
 
         Qt.callLater(() => {
             clockKeyScope.forceActiveFocus()
@@ -154,7 +155,7 @@ Scope {
         // Reset first so any scroll/month navigation state is discarded.
         clockPanel.resetToToday()
 
-        clockHost.visible = false
+        clockHost.opened = false
     }
 
     function toggleClock() {
@@ -721,7 +722,7 @@ Scope {
                     clockPanel.resetToToday()
 
                     if (clockHost.visible) {
-                        clockHost.visible = false
+                        clockHost.opened = false
                     }
                 }
             }

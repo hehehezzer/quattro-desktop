@@ -7,6 +7,16 @@ PanelWindow {
     id: root
     required property string panelName
     property string dismissalId: "0-0"
+    property bool opened: false
+    onOpenedChanged: {
+        if (opened) {
+            PopupManager.open(root);
+            visible = true;
+        } else {
+            visible = false;
+            PopupManager.release(root);
+        }
+    }
     WlrLayershell.namespace: "quattro-popup-" + dismissalId
     signal dismissed
     visible: false
@@ -14,15 +24,6 @@ PanelWindow {
     focusable: true
     // Keyboard-only focus while visible. Pointer input is never grabbed.
     WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-    Connections {
-        target: root
-        function onVisibleChanged() {
-            if (root.visible)
-                PopupManager.open(root);
-            else
-                PopupManager.release(root);
-        }
-    }
     Component.onDestruction: PopupManager.release(root)
     Shortcut {
         sequence: "Escape"

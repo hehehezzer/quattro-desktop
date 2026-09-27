@@ -202,14 +202,14 @@ Scope {
         page = pageName
 
         menuWindow.screen = focusedScreen()
-        menuWindow.visible = true
+        menuWindow.opened = true
 
         search.text = ""
         search.forceActiveFocus()
     }
 
     function close() {
-        menuWindow.visible = false
+        menuWindow.opened = false
         page = "main"
         search.text = ""
         globalFileResults = []
