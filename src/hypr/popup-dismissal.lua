@@ -16,9 +16,6 @@ local function dismissOutside()
             if token then
                 if inside(layer, point) then return end
                 tokens[#tokens + 1] = token
-            elseif layer.namespace == "quattro-bar" and inside(layer, point) then
-                -- The bar dispatches buttons synchronously through PopupManager.
-                return
             end
         end
     end
