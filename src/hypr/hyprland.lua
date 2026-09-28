@@ -94,6 +94,8 @@ local menu        = "hyprlauncher"
 hl.on("hyprland.start", function () 
   hl.exec_cmd(terminal)
   hl.exec_cmd("systemctl --user start plasma-polkit-agent.service")
+  hl.exec_cmd("python3 ~/.local/bin/quattro_desktop_controls.py surfshark-startup")
+  hl.exec_cmd("systemctl --user start quattro-surfshark.service")
   hl.exec_cmd("quickshell -p ~/.config/quickshell/shell.qml")
 end)
 

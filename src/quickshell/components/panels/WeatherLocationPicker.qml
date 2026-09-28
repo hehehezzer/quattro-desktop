@@ -21,7 +21,7 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         Text {
-            text: "Weather location"
+            text: "VPN location"
             color: QuattroTheme.Theme.textStrong
             font.pixelSize: 17
             Layout.fillWidth: true
@@ -33,7 +33,7 @@ ColumnLayout {
     }
     Text {
         Layout.fillWidth: true
-        text: "Search cities and places worldwide. Your desktop clock follows the selected location."
+        text: "Choose a Surfshark exit. VPN, desktop clock, and weather change together."
         wrapMode: Text.Wrap
         color: QuattroTheme.Theme.textMuted
         font.pixelSize: 12
@@ -42,8 +42,8 @@ ColumnLayout {
         id: search
         Layout.fillWidth: true
         implicitHeight: 38
-        placeholderText: "Search city or place…"
-        Accessible.name: "Search weather location"
+        placeholderText: "Search Surfshark city or country…"
+        Accessible.name: "Search Surfshark VPN location"
         maximumLength: 100
         onTextChanged: {
             results.currentIndex = 0;
@@ -59,7 +59,7 @@ ColumnLayout {
     Text {
         Layout.fillWidth: true
         visible: !results.count || DesktopWeather.searching
-        text: DesktopWeather.searchError || (DesktopWeather.searching ? "Searching…" : search.text.trim().length < 2 ? "Try Manila, Imus or any city worldwide. Enter at least 2 characters." : "No places found. Try a nearby city or another spelling.")
+        text: DesktopWeather.searchError || (DesktopWeather.searching ? "Searching…" : search.text.trim().length < 2 ? "Try Manila, Singapore, or Japan. Enter at least 2 characters." : "No Surfshark locations found.")
         wrapMode: Text.Wrap
         color: DesktopWeather.searchError ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
         font.pixelSize: 12
@@ -119,7 +119,7 @@ ColumnLayout {
         }
     }
     Text {
-        text: "Location search by Open-Meteo · GeoNames"
+        text: "Locations from your installed Surfshark client · sorted by server load"
         color: QuattroTheme.Theme.textMuted
         font.pixelSize: 10
     }
