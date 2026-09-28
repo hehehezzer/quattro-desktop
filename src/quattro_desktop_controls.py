@@ -404,6 +404,16 @@ def eq_consume_restart_marker():
     EQ_RESTART_MARKER.unlink(missing_ok=True)
 
 
+def eq_restart_in_progress():
+    try:
+        creator = int(EQ_RESTART_MARKER.read_text().strip())
+        os.kill(creator, 0)
+        return True
+    except (OSError, ValueError):
+        eq_consume_restart_marker()
+        return False
+
+
 def eq_supervise():
     """Own and continuously validate the DSP process and its physical link."""
     state = load(CONFIG / "equalizer.json", {})
@@ -442,7 +452,7 @@ def eq_supervise():
                 missing_since = None
             time.sleep(1)
         if stopping:
-            if EQ_RESTART_MARKER.exists():
+            if eq_restart_in_progress():
                 return {"restarting": True}
             eq_recover("DSP service stopped; EQ bypassed")
             return {"enabled": False, "degraded": True}
@@ -486,7 +496,7 @@ def eq_apply(gains, preset="Custom", enabled=True, target=None):
             nodes = eq_nodes()
             if not eq_graph_active(target) or target != old.get("target"):
                 run(["systemctl", "--user", "enable", "quattro-equalizer.service"])
-                atomic(EQ_RESTART_MARKER, "reconfigure\n")
+                atomic(EQ_RESTART_MARKER, f"{os.getpid()}\n")
                 run(["systemctl", "--user", "restart", "quattro-equalizer.service"])
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline:
