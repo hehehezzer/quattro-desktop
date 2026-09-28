@@ -49,9 +49,13 @@ Quattro therefore binds identities from successful, request-correlated
 to one private bridge/native process. If a 0.157.x frontend omits `threadId` on
 its first normal `turn/start`, the bridge inserts that connection's bound ID
 before plan creation. It never generates an ID or reads a global/previous-session
-value. Starting another lifecycle invalidates the fallback immediately, and a
-generation check prevents failed, pending, or out-of-order lifecycle responses
-from restoring a stale ID.
+value. Codex 0.158 may issue `thread/resume` for the already-bound ID after a
+completed turn to refresh incomplete snapshot metadata. Quattro blocks new turns
+while that refresh is pending, commits only a matching successful response, and
+restores the same binding if the refresh fails. A start, fork, different-ID
+resume, or path/history resume remains identity-changing and cannot restore the
+old binding on failure. A generation check prevents pending or out-of-order
+lifecycle responses from restoring a stale ID.
 
 The old invalid invariant was “an execution turn must already carry a thread
 ID.” The corrected invariant is “a normal execution turn must have a canonical

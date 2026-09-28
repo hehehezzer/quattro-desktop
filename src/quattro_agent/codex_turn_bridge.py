@@ -209,7 +209,10 @@ class CodexTurnBridge:
         self._active: dict[str, dict[str, Any]] = {}
         self._internal: dict[str, queue.Queue[Any]] = {}
         self._delegate_requests: dict[Any, str] = {}
-        self._lifecycle_requests: dict[Any, tuple[str, str | None, int]] = {}
+        self._frontend_requests: set[Any] = set()
+        # method, requested thread, generation, same-thread resume rollback.
+        # A rollback is identity only; turns remain blocked while the request is pending.
+        self._lifecycle_requests: dict[Any, tuple[str, str | None, int, str | None]] = {}
         self._lifecycle_generation = 0
         self._current_thread_id: str | None = None
         self._front: Any = None
@@ -413,14 +416,19 @@ class CodexTurnBridge:
         """Bind only an identity returned by a successful native lifecycle RPC."""
         with self._state_lock:
             lifecycle = self._lifecycle_requests.pop(request_id, None)
-        if lifecycle is None or "error" in message:
+        if lifecycle is None:
+            return
+        method, requested, generation, rollback = lifecycle
+        if "error" in message:
+            with self._state_lock:
+                if generation == self._lifecycle_generation and rollback is not None:
+                    self._current_thread_id = rollback
             return
         result = message.get("result")
         thread = result.get("thread") if isinstance(result, dict) else None
         canonical = self._canonical_thread_id(thread.get("id") if isinstance(thread, dict) else None)
         if canonical is None:
             return
-        method, requested, generation = lifecycle
         requested_canonical = self._canonical_thread_id(requested)
         if method == "thread/resume" and requested_canonical != canonical:
             return
@@ -502,6 +510,8 @@ class CodexTurnBridge:
                 if "method" not in message:
                     self._bind_lifecycle_response(request_id, message)
                 with self._state_lock:
+                    if "method" not in message:
+                        self._frontend_requests.discard(request_id)
                     internal = self._internal.get(request_id)
                     owner = self._delegate_requests.pop(request_id, None) if "method" not in message else None
                 with self._state_lock:
@@ -562,6 +572,8 @@ class CodexTurnBridge:
         turn_id = str(turn.turn_id)
         wire_turn = {"id": turn_id, "status": "inProgress", "items": [], "error": None,
                      "startedAt": int(time.time()), "completedAt": None}
+        with self._state_lock:
+            self._frontend_requests.discard(request["id"])
         self._send({"id": request["id"], "result": {"turn": wire_turn}})
         state["accepted"] = True
         self._notify("turn/started", {"threadId": thread_id, "turn": wire_turn})
@@ -610,6 +622,8 @@ class CodexTurnBridge:
             )
             state["turn"] = turn
             if state["cancelled"].is_set():
+                with self._state_lock:
+                    self._frontend_requests.discard(request["id"])
                 self._error(request["id"], "Quattro turn cancelled before agent execution")
                 self._finish(thread_id, state, "interrupted")
                 return
@@ -632,6 +646,7 @@ class CodexTurnBridge:
                 settings["reasoning_effort"] = turn.plan.reasoning_effort
             with self._state_lock:
                 if state["cancelled"].is_set():
+                    self._frontend_requests.discard(request["id"])
                     self._error(request["id"], "Quattro turn cancelled before agent execution")
                     self._finish(thread_id, state, "interrupted")
                     return
@@ -650,6 +665,9 @@ class CodexTurnBridge:
                         "message": "Quattro direct turn failed", "codexErrorInfo": None,
                         "additionalDetails": None}}})
             else:
+                with self._state_lock:
+                    self._frontend_requests.discard(request["id"])
+                    self._delegate_requests.pop(request["id"], None)
                 self._error(request["id"], "Quattro could not authorize or execute this turn")
             self._finish(thread_id, state, status)
 
@@ -663,20 +681,7 @@ class CodexTurnBridge:
         if method is None and "id" in request and ("result" in request or "error" in request):
             self._forward(request)
             return
-        if method in {"thread/read", "thread/resume", "thread/turns/list", "thread/items/list"}:
-            with self._state_lock:
-                self._views[request.get("id")] = (method, copy.deepcopy(params))
-            if method == "thread/items/list" and params.get("turnId"):
-                rows = self._history(thread_id)
-                if any(row["id"] == params["turnId"] for row in rows):
-                    result = {"data": [], "nextCursor": None, "backwardsCursor": None}
-                    self._merge_history(method, params, result)
-                    self._views.pop(request.get("id"), None)
-                    self._send({"id": request.get("id"), "result": result})
-                    return
-        if method in EXECUTION_PLANE_METHODS:
-            self._error(request.get("id"), "This native operation requires a Quattro execution plan; submit a normal turn")
-            return
+        lifecycle_admitted = False
         if method in {"thread/start", "thread/resume", "thread/fork"}:
             request = copy.deepcopy(request)
             params = request["params"]
@@ -685,14 +690,54 @@ class CodexTurnBridge:
             with self._state_lock:
                 lifecycle_id = request.get("id")
                 if lifecycle_id is None or lifecycle_id in self._lifecycle_requests:
+                    # Invalidate any pending rollback carried by a colliding ID.
+                    self._lifecycle_generation += 1
                     self._current_thread_id = None
                     self._error(lifecycle_id, "Native Codex lifecycle request ID is missing or already pending")
                     return
+                if (lifecycle_id in self._views or lifecycle_id in self._delegate_requests
+                        or lifecycle_id in self._internal or lifecycle_id in self._frontend_requests):
+                    self._error(lifecycle_id, "Native Codex request ID is already pending")
+                    return
+                if self._active:
+                    self._error(lifecycle_id, "Native Codex lifecycle changes require the active turn to finish")
+                    return
                 self._lifecycle_generation += 1
+                requested_canonical = self._canonical_thread_id(params.get("threadId"))
+                rollback = None
+                if (method == "thread/resume"
+                        and requested_canonical == self._current_thread_id
+                        and not params.get("history") and not params.get("path")):
+                    rollback = self._current_thread_id
+                # Block turns until lifecycle settlement. A failed unambiguous
+                # same-thread refresh may restore only its own prior binding.
                 self._current_thread_id = None
                 self._lifecycle_requests[lifecycle_id] = (
-                    method, params.get("threadId"), self._lifecycle_generation,
+                    method, params.get("threadId"), self._lifecycle_generation, rollback,
                 )
+                lifecycle_admitted = True
+        if method in {"thread/read", "thread/resume", "thread/turns/list", "thread/items/list"}:
+            view_id = request.get("id")
+            with self._state_lock:
+                if (not lifecycle_admitted and (view_id is None
+                        or view_id in self._lifecycle_requests or view_id in self._views
+                        or view_id in self._delegate_requests or view_id in self._internal
+                        or view_id in self._frontend_requests)):
+                    self._error(view_id, "Native Codex request ID is missing or already pending")
+                    return
+                self._views[view_id] = (method, copy.deepcopy(params))
+            if method == "thread/items/list" and params.get("turnId"):
+                rows = self._history(thread_id)
+                if any(row["id"] == params["turnId"] for row in rows):
+                    result = {"data": [], "nextCursor": None, "backwardsCursor": None}
+                    self._merge_history(method, params, result)
+                    with self._state_lock:
+                        self._views.pop(view_id, None)
+                    self._send({"id": view_id, "result": result})
+                    return
+        if method in EXECUTION_PLANE_METHODS:
+            self._error(request.get("id"), "This native operation requires a Quattro execution plan; submit a normal turn")
+            return
         if method == "turn/steer":
             self._error(request.get("id"), "Quattro requires a fresh plan; submit after the active turn completes")
             return
@@ -721,6 +766,13 @@ class CodexTurnBridge:
                 self._error(request.get("id"), str(error))
                 return
             with self._state_lock:
+                turn_request_id = request.get("id")
+                if (turn_request_id is None or turn_request_id in self._frontend_requests
+                        or turn_request_id in self._lifecycle_requests
+                        or turn_request_id in self._views or turn_request_id in self._delegate_requests
+                        or turn_request_id in self._internal):
+                    self._error(turn_request_id, "Native Codex request ID is missing or already pending")
+                    return
                 if thread_id in self._active:
                     self._error(request.get("id"), "Wait for the current Quattro turn before submitting another")
                     return
@@ -729,6 +781,7 @@ class CodexTurnBridge:
                     "requires_native_delegate": requires_native_delegate,
                 }
                 self._active[thread_id] = state
+                self._frontend_requests.add(turn_request_id)
             threading.Thread(target=self._start, args=(request, thread_id, state), daemon=True).start()
             return
         if method == "turn/interrupt":
