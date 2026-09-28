@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# Ask Quickshell itself to stop every registered instance. A daemon launched
+# through `qs -d` has the process name `qs`, so matching only `quickshell`
+# can leave an older shell running beside the replacement.
+qs kill --all 2>/dev/null || true
+
+for _attempt in {1..20}; do
+    if ! pgrep -x qs >/dev/null && ! pgrep -x quickshell >/dev/null; then
+        break
+    fi
+    sleep 0.1
+done
+
+# Preserve the old helper's bounded fallback for an unresponsive instance.
+pkill -TERM -x qs 2>/dev/null || true
+pkill -TERM -x quickshell 2>/dev/null || true
+
+nohup quickshell -p "$HOME/.config/quickshell/shell.qml" \
+    > /tmp/quickshell.log 2>&1 < /dev/null &
+
+disown

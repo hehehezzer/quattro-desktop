@@ -25,6 +25,18 @@ class DeploymentManifestTests(unittest.TestCase):
     REVISION = "a" * 40
     PREVIOUS_REVISION = "b" * 40
 
+    def test_quickshell_restart_helper_stops_qs_and_quickshell_instances(self):
+        source = pathlib.Path(__file__).parents[1] / "src/restart-quickshell"
+        helper = source.read_text(encoding="utf-8")
+        self.assertEqual(
+            DEPLOYMENT_MAPPINGS["quickshell-restart-helper"],
+            ("src/restart-quickshell", ".local/bin/restart-quickshell"),
+        )
+        self.assertIn("qs kill --all", helper)
+        self.assertIn("pgrep -x qs", helper)
+        self.assertIn("pgrep -x quickshell", helper)
+        self.assertNotIn("pkill quickshell", helper)
+
     def test_status_detects_manifest_inventory_missing_from_installed_cli(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
