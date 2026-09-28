@@ -1,7 +1,7 @@
 # Native interactive routing
 
 Quattro owns each turn's execution decision independently of the selected UI.
-Supported native versions validated for this change: Codex 0.157.1 and Pi 0.87.1
+Supported native versions validated for this change: Codex 0.157.1/0.158.0 and Pi 0.87.1
 (Node 24). The Codex remote bridge currently requires a Unix socket platform.
 
 ## Cause and corrected boundary
@@ -35,7 +35,7 @@ methods fail closed until classified against the installed Codex protocol.
 
 ### Native thread bootstrap lifecycle
 
-The Codex 0.157.1 protocol was verified from its exact binary schemas and native
+The Codex 0.157.1 and 0.158.0 protocols were verified from their exact binary schemas and native
 TUI implementation. A fresh TUI initializes the app-server, performs bounded
 bootstrap reads, then sends `thread/start`. That request intentionally has no
 thread ID. Its successful response contains the canonical native identity at
@@ -118,9 +118,13 @@ history is sent back to the gate on subsequent/resumed inputs. Sensitive answers
 use transient widgets. Quattro's existing logical Pi resume limitation remains;
 a native Pi session reference is required for native resume.
 
-Steering/queued generation, compaction, native review/goal generation, and
-attachments currently fail explicitly when they cannot obtain a fresh plan.
-Submit the work as a new ordinary turn. Pi shell shortcuts, compaction, new/fork
+Steering/queued generation, compaction, and native review/goal generation fail
+explicitly when they cannot obtain a fresh plan. Codex 0.158 mixed user input
+(`image`, `localImage`, `skill`, or `mention` alongside bounded text) receives a
+fresh Quattro plan and is forced through locked native delegation with the input
+preserved; it can never enter the text-only DIRECT transport. Malformed, unknown,
+audio-only, text-free, and tool-output turns fail with distinct bounded errors.
+Submit unsupported work as a new ordinary turn. Pi shell shortcuts, compaction, new/fork
 session operations, and native cache warming are blocked because they bypass
 input routing or native custom-message persistence. Start a new Quattro session
 instead. No unsupported path silently falls back to unclassified execution.
