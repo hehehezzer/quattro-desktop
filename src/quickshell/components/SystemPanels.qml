@@ -232,11 +232,12 @@ Scope {
         }
 
         margins {
-            top: 32
-            right: 8
+            top: QuattroTheme.Theme.barHeight + QuattroTheme.Theme.spaceSm
+            right: QuattroTheme.Theme.spaceSm
         }
 
-        implicitWidth: Math.min(430, (screen ? screen.width : 1920) - 16)
+        implicitWidth: Math.min(QuattroTheme.Theme.panelWidth,
+            (screen ? screen.width : 1920) - QuattroTheme.Theme.spaceLg)
         implicitHeight: Math.min(root.page === "spotify" ? 328
             : root.page === "bluetooth" ? bluetoothPanel.preferredHeight
             : root.page === "display" ? 285
@@ -292,21 +293,27 @@ Scope {
             Rectangle {
                 anchors.fill: parent
 
-                radius: QuattroTheme.Theme.cornerRadius
+                radius: QuattroTheme.Theme.panelRadius
 
-                color: QuattroTheme.Theme.background
+                color: QuattroTheme.Theme.panelSurface
 
                 border.width: 1
-                border.color: QuattroTheme.Theme.border
+                border.color: QuattroTheme.Theme.panelBorder
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.margins: QuattroTheme.Theme.panelInset
 
-                    spacing: 10
+                    spacing: QuattroTheme.Theme.spaceSm
 
                     RowLayout {
                         Layout.fillWidth: true
+
+                        Rectangle {
+                            Layout.preferredWidth: 4
+                            Layout.preferredHeight: 4
+                            color: QuattroTheme.Theme.accent
+                        }
 
                         Text {
                             text:
@@ -326,10 +333,9 @@ Scope {
 
                             color: QuattroTheme.Theme.textStrong
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
-                            font.pixelSize: 17
+                            font.pixelSize: QuattroTheme.Theme.typeTitle
                             font.bold: true
 
                             Layout.fillWidth: true
@@ -340,10 +346,9 @@ Scope {
 
                             color: QuattroTheme.Theme.textMuted
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
-                            font.pixelSize: 10
+                            font.pixelSize: QuattroTheme.Theme.typeMeta
                         }
                     }
 
@@ -692,10 +697,11 @@ Scope {
         color: "transparent"
 
         anchors { top: true }
-        margins { top: 38 }
+        margins { top: QuattroTheme.Theme.barHeight + QuattroTheme.Theme.spaceSm }
 
         implicitHeight: Math.min(660, (screen ? screen.height : 1080) - 60)
-        implicitWidth: Math.min(430, (screen ? screen.width : 1920) - 16)
+        implicitWidth: Math.min(QuattroTheme.Theme.panelWidth,
+            (screen ? screen.width : 1920) - QuattroTheme.Theme.spaceLg)
 
         exclusionMode:
             ExclusionMode.Ignore
@@ -745,31 +751,36 @@ Scope {
             Rectangle {
                 anchors.fill: parent
 
-                radius: QuattroTheme.Theme.cornerRadius
+                radius: QuattroTheme.Theme.panelRadius
 
-                color: QuattroTheme.Theme.background
+                color: QuattroTheme.Theme.panelSurface
 
                 border.width: 1
-                border.color: QuattroTheme.Theme.border
+                border.color: QuattroTheme.Theme.panelBorder
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.margins: QuattroTheme.Theme.panelInset
 
-                    spacing: 10
+                    spacing: QuattroTheme.Theme.spaceSm
 
                     RowLayout {
                         Layout.fillWidth: true
+
+                        Rectangle {
+                            Layout.preferredWidth: 4
+                            Layout.preferredHeight: 4
+                            color: QuattroTheme.Theme.accent
+                        }
 
                         Text {
                             text: "Calendar"
 
                             color: QuattroTheme.Theme.textStrong
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
-                            font.pixelSize: 17
+                            font.pixelSize: QuattroTheme.Theme.typeTitle
                             font.bold: true
 
                             Layout.fillWidth: true
@@ -780,10 +791,9 @@ Scope {
 
                             color: QuattroTheme.Theme.textMuted
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
-                            font.pixelSize: 10
+                            font.pixelSize: QuattroTheme.Theme.typeMeta
                         }
                     }
 
@@ -850,62 +860,4 @@ Scope {
         }
     }
 
-    component PanelButton: Rectangle {
-        id: button
-
-        required property string label
-
-        signal clicked()
-
-        Layout.fillWidth: true
-        implicitHeight: 42
-
-        radius: QuattroTheme.Theme.cornerRadius
-
-        color:
-            buttonMouse.containsMouse
-            ? QuattroTheme.Theme.border
-            : QuattroTheme.Theme.surface
-
-        Text {
-            anchors {
-                left: parent.left
-                right: parent.right
-
-                leftMargin: 12
-                rightMargin: 12
-
-                verticalCenter:
-                    parent.verticalCenter
-            }
-
-            text:
-                button.label
-
-            color: QuattroTheme.Theme.textStrong
-
-            font.family:
-                "JetBrainsMono Nerd Font"
-
-            font.pixelSize: 12
-
-            wrapMode:
-                Text.Wrap
-        }
-
-        MouseArea {
-            id: buttonMouse
-
-            anchors.fill: parent
-
-            hoverEnabled: true
-
-            cursorShape:
-                Qt.PointingHandCursor
-
-            onClicked: {
-                button.clicked()
-            }
-        }
-    }
 }

@@ -18,11 +18,11 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 14
+        spacing: QuattroTheme.Theme.spaceMd
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 16
+            spacing: QuattroTheme.Theme.spaceLg
             Item {
                 Layout.preferredWidth: Math.min(118, Math.max(78, root.width * 0.29))
                 Layout.preferredHeight: width
@@ -33,8 +33,8 @@ Item {
                         anchors.centerIn: parent
                         text: "󰓇"
                         color: QuattroTheme.Theme.accent
-                        font.family: "JetBrainsMono Nerd Font"
-                        font.pixelSize: 35
+                        font.family: QuattroTheme.Theme.iconFontFamily
+                        font.pixelSize: 34
                     }
                 }
                 Image {
@@ -49,7 +49,7 @@ Item {
             }
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 5
+                spacing: QuattroTheme.Theme.spaceXs
                 Text {
                     Layout.fillWidth: true
                     text: root.hasTrack ? root.player.trackTitle : root.player ? "Ready to play" : "Spotify is closed"
@@ -58,8 +58,8 @@ Item {
                     maximumLineCount: 2
                     elide: Text.ElideRight
                     color: QuattroTheme.Theme.textStrong
-                    font.family: "JetBrainsMono Nerd Font"
-                    font.pixelSize: 16
+                    font.family: QuattroTheme.Theme.fontFamily
+                    font.pixelSize: QuattroTheme.Theme.typeTitle
                     font.bold: true
                 }
                 Text {
@@ -71,7 +71,8 @@ Item {
                     maximumLineCount: 2
                     elide: Text.ElideRight
                     color: QuattroTheme.Theme.text
-                    font.pixelSize: 11
+                    font.family: QuattroTheme.Theme.fontFamily
+                    font.pixelSize: QuattroTheme.Theme.typeBody
                 }
                 Text {
                     visible: root.hasTrack && !!root.player.trackAlbum
@@ -80,13 +81,14 @@ Item {
                     textFormat: Text.PlainText
                     elide: Text.ElideRight
                     color: QuattroTheme.Theme.textMuted
-                    font.pixelSize: 10
+                    font.family: QuattroTheme.Theme.fontFamily
+                    font.pixelSize: QuattroTheme.Theme.typeMeta
                 }
                 Text {
                     text: root.player ? root.hasTrack ? root.player.isPlaying ? "PLAYING" : "PAUSED" : "IDLE" : "UNAVAILABLE"
                     color: root.player && root.player.isPlaying ? QuattroTheme.Theme.success : QuattroTheme.Theme.textMuted
-                    font.family: "JetBrainsMono Nerd Font"
-                    font.pixelSize: 9
+                    font.family: QuattroTheme.Theme.fontFamily
+                    font.pixelSize: QuattroTheme.Theme.typeMicro
                     font.letterSpacing: 1
                 }
             }
@@ -94,7 +96,7 @@ Item {
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 5
+            spacing: QuattroTheme.Theme.spaceXs
             Slider {
                 id: progress
                 Layout.fillWidth: true
@@ -131,25 +133,26 @@ Item {
                 Text {
                     text: root.hasProgress ? root.duration(DesktopMedia.position) : "—:—"
                     color: QuattroTheme.Theme.textMuted
-                    font.family: "JetBrainsMono Nerd Font"
-                    font.pixelSize: 10
+                    font.family: QuattroTheme.Theme.fontFamily
+                    font.pixelSize: QuattroTheme.Theme.typeMeta
                 }
                 Item { Layout.fillWidth: true }
                 Text {
                     text: root.hasProgress ? root.duration(root.player.length) : "—:—"
                     color: QuattroTheme.Theme.textMuted
-                    font.family: "JetBrainsMono Nerd Font"
-                    font.pixelSize: 10
+                    font.family: QuattroTheme.Theme.fontFamily
+                    font.pixelSize: QuattroTheme.Theme.typeMeta
                 }
             }
         }
 
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
-            spacing: 10
+            spacing: QuattroTheme.Theme.spaceXs
             DesktopButton {
                 text: "󰒮"
-                implicitWidth: 40
+                quiet: true
+                implicitWidth: 44
                 implicitHeight: 40
                 Accessible.name: "Spotify previous track"
                 ToolTip.text: Accessible.name
@@ -160,6 +163,7 @@ Item {
                 text: root.player && root.player.isPlaying ? "󰏤" : "󰐊"
                 implicitWidth: 48
                 implicitHeight: 44
+                prominent: true
                 Accessible.name: root.player && root.player.isPlaying ? "Pause Spotify" : "Play Spotify"
                 ToolTip.text: Accessible.name
                 enabled: root.hasTrack && root.player.canControl && root.player.canTogglePlaying
@@ -167,7 +171,8 @@ Item {
             }
             DesktopButton {
                 text: "󰒭"
-                implicitWidth: 40
+                quiet: true
+                implicitWidth: 44
                 implicitHeight: 40
                 Accessible.name: "Spotify next track"
                 ToolTip.text: Accessible.name

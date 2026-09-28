@@ -12,9 +12,10 @@ import "../theme" as QuattroTheme
 DesktopButton {
     id: root
     required property var barWindow
-    text: "󰍹"
-    implicitWidth: 26
-    implicitHeight: 26
+    text: "󰀻"
+    quiet: true
+    implicitWidth: QuattroTheme.Theme.compactTarget
+    implicitHeight: QuattroTheme.Theme.barControlHeight
     Accessible.name: "Running applications"
     ToolTip.text: "Running applications · right-click a window for process controls"
     property bool opened: false
@@ -154,13 +155,13 @@ DesktopButton {
             right: true
         }
         margins {
-            top: 38
-            right: 8
+            top: QuattroTheme.Theme.barHeight + QuattroTheme.Theme.spaceSm
+            right: QuattroTheme.Theme.spaceSm
         }
         exclusionMode: ExclusionMode.Ignore
         implicitWidth: 410
         implicitHeight: 430
-        color: QuattroTheme.Theme.background
+        color: QuattroTheme.Theme.panelSurface
         onVisibleChanged: if (!visible)
             root.opened = false
         ColumnLayout {

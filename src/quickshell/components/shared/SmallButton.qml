@@ -16,16 +16,18 @@ Rectangle {
             buttonText.implicitWidth + 22
         )
 
-    implicitHeight: 31
+    implicitHeight: QuattroTheme.Theme.compactTarget
 
     radius: QuattroTheme.Theme.cornerRadius
 
     color:
         button.accent
         ? QuattroTheme.Theme.accent
+        : buttonMouse.pressed
+        ? QuattroTheme.Theme.pressed
         : buttonMouse.containsMouse
-        ? QuattroTheme.Theme.border
-        : QuattroTheme.Theme.border
+        ? QuattroTheme.Theme.hover
+        : QuattroTheme.Theme.surfaceRaised
 
     Text {
         id: buttonText
@@ -41,9 +43,9 @@ Rectangle {
             : QuattroTheme.Theme.text
 
         font.family:
-            "JetBrainsMono Nerd Font"
+            QuattroTheme.Theme.fontFamily
 
-        font.pixelSize: 10
+        font.pixelSize: QuattroTheme.Theme.typeMeta
 
         font.bold:
             button.accent

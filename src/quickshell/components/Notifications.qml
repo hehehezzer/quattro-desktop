@@ -27,8 +27,8 @@ Scope {
         }
 
         margins {
-            top: 42
-            right: 12
+            top: QuattroTheme.Theme.barHeight + QuattroTheme.Theme.spaceSm
+            right: QuattroTheme.Theme.spaceMd
         }
 
         implicitWidth: Math.min(360, (screen ? screen.width : 1920) - 24)
@@ -90,12 +90,12 @@ Scope {
                         modelData.dismiss()
                     }
 
-                    radius: QuattroTheme.Theme.cornerRadius
+                    radius: QuattroTheme.Theme.panelRadius
 
-                    color: QuattroTheme.Theme.background
+                    color: QuattroTheme.Theme.panelSurface
 
-                    border.width: activeFocus ? 2 : 1
-                    border.color: activeFocus ? QuattroTheme.Theme.accent : QuattroTheme.Theme.border
+                    border.width: activeFocus ? QuattroTheme.Theme.focusLine : 1
+                    border.color: activeFocus ? QuattroTheme.Theme.accent : QuattroTheme.Theme.panelBorder
 
                     property bool hovered:
                         notificationMouse.containsMouse
@@ -148,8 +148,7 @@ Scope {
 
                             color: QuattroTheme.Theme.textStrong
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
                             font.bold: true
 
@@ -174,8 +173,7 @@ Scope {
 
                             color: QuattroTheme.Theme.text
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
                             Layout.fillWidth: true
 

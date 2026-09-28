@@ -4,7 +4,7 @@ import "../../theme" as QuattroTheme
 
 ComboBox {
     id: root
-    implicitHeight: 32
+    implicitHeight: QuattroTheme.Theme.compactTarget
     font.family: QuattroTheme.Theme.fontFamily
     hoverEnabled: true
     palette.button: QuattroTheme.Theme.surface
@@ -13,7 +13,7 @@ ComboBox {
     palette.text: QuattroTheme.Theme.textStrong
     palette.highlight: QuattroTheme.Theme.hover
     palette.highlightedText: QuattroTheme.Theme.textStrong
-    font.pixelSize: 11
+    font.pixelSize: QuattroTheme.Theme.typeBody
     indicator: Text {
         x: root.width - width - 9
         height: root.height
@@ -33,7 +33,7 @@ ComboBox {
     }
     background: Rectangle {
         color: root.hovered || root.popup.visible ? QuattroTheme.Theme.hover : QuattroTheme.Theme.surface
-        border.width: 1
+        border.width: root.activeFocus ? QuattroTheme.Theme.focusLine : 0
         border.color: root.activeFocus ? QuattroTheme.Theme.textStrong : QuattroTheme.Theme.border
         radius: QuattroTheme.Theme.cornerRadius
     }
@@ -57,9 +57,9 @@ ComboBox {
         }
     }
     popup: Popup {
-        y: root.height + 4
+        y: root.height + QuattroTheme.Theme.spaceXs
         width: root.width
-        padding: 4
+        padding: QuattroTheme.Theme.spaceXs
         implicitHeight: Math.min(contentItem.implicitHeight + topPadding + bottomPadding, 200)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         contentItem: ListView {

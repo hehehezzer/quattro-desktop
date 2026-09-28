@@ -2,133 +2,202 @@ import Quickshell
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import "shared"
 import "../services"
 import "../theme" as QuattroTheme
 
-Rectangle {
+Item {
     id: root
+
     signal openRequested()
+
     readonly property var player: DesktopMedia.player
     readonly property bool hasTrack: !!player && !!player.trackTitle
+    readonly property bool controlsVisible: !!player && width >= 286
     implicitWidth: 360
-    implicitHeight: 32
-    visible: !!player
-    color: QuattroTheme.Theme.surface
-    border.width: 1
-    border.color: QuattroTheme.Theme.border
+    implicitHeight: QuattroTheme.Theme.barControlHeight
 
-    function duration(seconds) {
-        const n = Math.max(0, Math.floor(seconds || 0))
-        return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0")
+    Rectangle {
+        anchors.fill: parent
+        radius: QuattroTheme.Theme.cornerRadius
+        color: stripHover.hovered ? QuattroTheme.Theme.hover : "transparent"
+
+        Behavior on color {
+            ColorAnimation { duration: QuattroTheme.Theme.motionFast }
+        }
     }
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 4
-        anchors.rightMargin: 3
-        spacing: 5
+        spacing: QuattroTheme.Theme.spaceSm
+
         Item {
             Layout.preferredWidth: 28
             Layout.preferredHeight: 28
+
             Rectangle {
                 anchors.fill: parent
-                color: QuattroTheme.Theme.surfaceRaised
+                radius: QuattroTheme.Theme.cornerRadius
+                color: root.player ? QuattroTheme.Theme.surfaceRaised : "transparent"
+
                 Text {
                     anchors.centerIn: parent
+                    anchors.verticalCenterOffset: QuattroTheme.Theme.iconOpticalOffsetY
                     text: "󰓇"
-                    font.family: QuattroTheme.Theme.fontFamily
-                    font.pixelSize: 15
-                    color: QuattroTheme.Theme.accent
+                    font.family: QuattroTheme.Theme.iconFontFamily
+                    font.pixelSize: QuattroTheme.Theme.iconMedium
+                    color: root.player ? QuattroTheme.Theme.accent : QuattroTheme.Theme.textMuted
                 }
             }
+
             Image {
                 anchors.fill: parent
                 source: DesktopMedia.artwork
-                sourceSize.width: 48
-                sourceSize.height: 48
+                sourceSize.width: 56
+                sourceSize.height: 56
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
                 visible: status === Image.Ready
             }
+
             TapHandler { onTapped: root.openRequested() }
         }
+
         ColumnLayout {
             Layout.fillWidth: true
             Layout.minimumWidth: 0
             spacing: 0
+
             Text {
                 Layout.fillWidth: true
                 text: root.hasTrack ? root.player.trackTitle : "Spotify"
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: QuattroTheme.Theme.textStrong
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 10
+                font.family: QuattroTheme.Theme.fontFamily
+                font.pixelSize: QuattroTheme.Theme.typeMeta
                 font.bold: true
             }
+
             Text {
                 Layout.fillWidth: true
-                visible: root.width >= 200
-                text: root.hasTrack ? (root.player.trackArtist || (root.player.isPlaying ? "Playing" : "Paused")) : "No active track"
+                visible: root.width >= 150
+                text: root.hasTrack
+                    ? (root.player.trackArtist || (root.player.isPlaying ? "Playing" : "Paused"))
+                    : root.player ? "Ready" : "Closed"
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
-                color: QuattroTheme.Theme.textMuted
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 9
+                color: root.player && root.player.isPlaying
+                    ? QuattroTheme.Theme.success
+                    : QuattroTheme.Theme.textMuted
+                font.family: QuattroTheme.Theme.fontFamily
+                font.pixelSize: QuattroTheme.Theme.typeMicro
             }
+
             TapHandler { onTapped: root.openRequested() }
         }
-        Text {
-            visible: root.width >= 325 && root.hasTrack && root.player.lengthSupported && root.player.positionSupported
-            text: root.duration(DesktopMedia.position) + " / " + root.duration(root.player ? root.player.length : 0)
-            color: QuattroTheme.Theme.textMuted
-            font.family: "JetBrainsMono Nerd Font"
-            font.pixelSize: 9
-        }
-        DesktopButton {
-            text: "󰒮"
-            visible: root.width >= 240
-            implicitWidth: 28
-            implicitHeight: 28
-            Accessible.name: "Spotify previous track"
-            ToolTip.text: Accessible.name
-            enabled: root.hasTrack && root.player.canControl && root.player.canGoPrevious
-            onClicked: root.player.previous()
-        }
-        DesktopButton {
-            text: root.player && root.player.isPlaying ? "󰏤" : "󰐊"
-            visible: root.width >= 240
-            implicitWidth: 30
-            implicitHeight: 28
-            prominent: true
-            Accessible.name: root.player && root.player.isPlaying ? "Pause Spotify" : "Play Spotify"
-            ToolTip.text: Accessible.name
-            enabled: root.hasTrack && root.player.canControl && root.player.canTogglePlaying
-            onClicked: root.player.togglePlaying()
-        }
-        DesktopButton {
-            text: "󰒭"
-            visible: root.width >= 240
-            implicitWidth: 28
-            implicitHeight: 28
-            Accessible.name: "Spotify next track"
-            ToolTip.text: Accessible.name
-            enabled: root.hasTrack && root.player.canControl && root.player.canGoNext
-            onClicked: root.player.next()
+
+        RowLayout {
+            visible: root.controlsVisible
+            spacing: 0
+
+            TransportButton {
+                glyph: "󰒮"
+                accessibleName: "Spotify previous track"
+                enabled: root.hasTrack && root.player.canControl && root.player.canGoPrevious
+                onActivated: root.player.previous()
+            }
+
+            TransportButton {
+                glyph: root.player && root.player.isPlaying ? "󰏤" : "󰐊"
+                accessibleName: root.player && root.player.isPlaying ? "Pause Spotify" : "Play Spotify"
+                primary: true
+                enabled: root.hasTrack && root.player.canControl && root.player.canTogglePlaying
+                onActivated: root.player.togglePlaying()
+            }
+
+            TransportButton {
+                glyph: "󰒭"
+                accessibleName: "Spotify next track"
+                enabled: root.hasTrack && root.player.canControl && root.player.canGoNext
+                onActivated: root.player.next()
+            }
         }
     }
+
     Rectangle {
+        anchors.left: parent.left
+        anchors.leftMargin: 36
+        anchors.right: parent.right
+        anchors.rightMargin: root.controlsVisible ? 92 : 0
         anchors.bottom: parent.bottom
-        height: 2
-        width: root.hasTrack && root.player.lengthSupported && root.player.length > 0
-            ? parent.width * Math.min(1, DesktopMedia.position / root.player.length) : 0
-        color: QuattroTheme.Theme.accent
+        height: 1
+        color: QuattroTheme.Theme.border
+        opacity: root.hasTrack ? 1 : 0
+
+        Rectangle {
+            height: parent.height
+            width: root.hasTrack && root.player.lengthSupported && root.player.length > 0
+                ? parent.width * Math.min(1, DesktopMedia.position / root.player.length) : 0
+            color: QuattroTheme.Theme.accent
+
+            Behavior on width {
+                NumberAnimation { duration: QuattroTheme.Theme.motionFast }
+            }
+        }
     }
-    HoverHandler { id: hover }
-    ToolTip.visible: hover.hovered
+
+    HoverHandler { id: stripHover }
+
+    ToolTip.visible: stripHover.hovered
     ToolTip.delay: 900
     ToolTip.text: root.hasTrack
         ? "Spotify · " + root.player.trackTitle + "\n" + root.player.trackArtist
-        : "Spotify · no active track"
+        : root.player ? "Spotify · ready" : "Spotify · closed"
+
+    component TransportButton: Item {
+        id: transport
+        required property string glyph
+        required property string accessibleName
+        property bool primary: false
+        signal activated()
+
+        Layout.preferredWidth: primary ? 30 : 28
+        Layout.preferredHeight: 28
+        opacity: enabled ? 1 : QuattroTheme.Theme.disabledOpacity
+        Accessible.role: Accessible.Button
+        Accessible.name: accessibleName
+
+        Rectangle {
+            anchors.fill: parent
+            radius: QuattroTheme.Theme.cornerRadius
+            color: transportTap.pressed ? QuattroTheme.Theme.pressed
+                : transportHover.hovered ? QuattroTheme.Theme.hover
+                : transport.primary ? QuattroTheme.Theme.accentMuted
+                : "transparent"
+        }
+
+        Text {
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: QuattroTheme.Theme.iconOpticalOffsetY
+            width: parent.width
+            height: parent.height
+            text: transport.glyph
+            color: transport.primary ? QuattroTheme.Theme.textStrong : QuattroTheme.Theme.text
+            font.family: QuattroTheme.Theme.iconFontFamily
+            font.pixelSize: transport.primary
+                ? QuattroTheme.Theme.iconMedium : QuattroTheme.Theme.iconSmall
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+
+        HoverHandler { id: transportHover }
+        TapHandler {
+            id: transportTap
+            enabled: transport.enabled
+            onTapped: transport.activated()
+        }
+        ToolTip.visible: transportHover.hovered
+        ToolTip.delay: 700
+        ToolTip.text: transport.accessibleName
+    }
 }

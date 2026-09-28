@@ -4,7 +4,7 @@
 
 | Source | Observation | Decision | Confidence |
 |---|---|---|---|
-| `src/quickshell/theme/Theme.qml` | Five mature dark palettes, sharp corners, 150 ms color transitions | Extend existing themes; add semantic geometry/type/control tokens | High |
+| `src/quickshell/theme/Theme.qml` | Five named palettes, sharp geometry, but color-only atmosphere and incomplete type/control tokens | Keep theme identities; add semantic geometry, type, icon, state, material, and atmosphere tokens | High |
 | `SystemPanels.qml` | One 430 px right-side host and clock host; duplicated chrome | Unify panel frame, header, footer, and responsive margins | High |
 | Audio/EQ/Spotify | Real PipeWire DSP and MPRIS behavior; controls lack hierarchy | Preserve integrations; compose around listening state and frequency response | High |
 | Clock/Weather | Rich calendar and weather data; weather settings compete with current conditions | Current conditions first; settings and freshness secondary | High |
@@ -13,16 +13,16 @@
 
 ## Direction
 
-**Mode:** Operate. **World:** precision instrument bay—a dark, sharply machined control plane with quiet bays, calibrated scales, explicit state lamps, and dense typographic readouts. This replaces “widgets in cards” with a continuous operating surface. The assigned concept was the fourth grounded direction from Impeccable seed `a8fbd9b0`.
+**Mode:** Operate. **World:** architectural drafting desk at dusk—a mineral control plane organized by datum lines, measured spacing, quiet drawing plates, and one restrained material accent. This replaces “widgets in cards” with one continuous working surface. Impeccable direction seed `a1d9f03c` assigned the sixth grounded candidate; the brief's premium, restrained daily-use requirements ruled out decorative racing language while retaining its commitment to decisive state and motion.
 
-The interface is used beside active work under mixed room light; near-black surfaces reduce distraction while high-contrast text and theme accent identify current state. Expression comes from exact alignment, frequency scales, transport geometry, and state indicators—not glow, gradients, glass, or decoration.
+The interface is used beside active work under mixed room light; dark mineral surfaces reduce distraction while high-contrast text and theme accent identify current state. Expression comes from exact alignment, frequency scales, transport geometry, datum lines, and theme-specific background plates. Blur, glow, and continuous effects are excluded.
 
 Raises retained from declined challengers: **Cathode discipline:** state changes snap clearly and stale state visibly decays. **Teletext discipline:** keyboard paths and tabular readouts remain exact. **Atlas discipline:** scale and position carry data hierarchy. **Manual discipline:** progressive layers expose advanced controls. **Cloud discipline:** color is confined to meaningful state edges. **Alphabet discipline:** motion transforms state rather than decorating containers.
 
 ## Tokens
 
-- Geometry: 0 px product radius; 1 px structural line; 2 px focus ring; 44 px primary target; 32 px compact target.
-- Space: 4, 8, 12, 16, 20, 24, 32 px. Panel inset 16 px; compact inset 12 px.
+- Geometry: 3 px control radius, 7 px panel radius, 1 px structural line, 2 px focus ring, 44 px primary target, 32 px compact target, 40 px bar.
+- Space: 2, 4, 8, 12, 16, 24, 32 px. Panel inset 16 px; compact inset 12 px.
 - Surfaces: `background` host, `surface` grouped bay, `surfaceRaised` interactive control, `hover` hover/pressed, `border` quiet separator, `borderStrong` structural boundary.
 - Content: `textStrong` primary identity, `text` values/body, `textMuted` metadata, `textDim` disabled/tertiary.
 - State: `accent` selected/current, `success` connected/healthy, `warning` stale/pending/headroom, `danger` failed/destructive. State always includes text or iconography.
@@ -81,9 +81,9 @@ Do align baselines, use tabular data, reserve accent for current state, and keep
 
 - [x] Audit integrations and visible panels
 - [x] Define shared tokens and hierarchy
-- [ ] Refine shared controls and panel frame
-- [ ] Make Spotify selection product-exclusive
-- [ ] Recompose Spotify, EQ, weather, Bluetooth, and processes
-- [ ] Normalize remaining panels to shared primitives
-- [ ] Validate loading/empty/error/disabled/focus states
-- [ ] Validate QML, Python, tests, runtime, resize, keyboard, and visual output
+- [x] Refine shared controls and panel frame
+- [x] Make Spotify selection product-exclusive
+- [x] Recompose Spotify, EQ, weather, Bluetooth, and processes
+- [x] Normalize the primary panels to shared tokens and material
+- [x] Validate loading/empty/error/disabled/focus states
+- [x] Validate QML, Python, tests, runtime, keyboard, responsive collapse rules, and visual output
