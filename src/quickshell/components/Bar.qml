@@ -22,13 +22,10 @@ PanelWindow {
         right: true
     }
 
-    readonly property bool inlineLyricsVisible: LyricsController.state === "synced"
+    readonly property bool inlineLyricsAvailable: LyricsController.state === "synced"
         && LyricsController.lines.length > 0
-        && width >= 560
-        && !PopupManager.activePanel
 
-    implicitHeight: inlineLyricsVisible
-        ? QuattroTheme.Theme.barLyricsHeight : QuattroTheme.Theme.barHeight
+    implicitHeight: QuattroTheme.Theme.barHeight
     color: "transparent"
 
     property string fontFamily: QuattroTheme.Theme.fontFamily
@@ -327,72 +324,42 @@ PanelWindow {
 
     Item {
         id: inlineLyrics
-        visible: root.inlineLyricsVisible
-        x: Math.max(QuattroTheme.Theme.spaceLg, mediaStrip.x)
-        y: QuattroTheme.Theme.barHeight + QuattroTheme.Theme.spaceXs
-        width: Math.max(0, Math.min(680, root.width - x - QuattroTheme.Theme.spaceLg))
-        height: QuattroTheme.Theme.barLyricsHeight - y - QuattroTheme.Theme.spaceXs
+        x: mediaStrip.x + mediaStrip.width + QuattroTheme.Theme.spaceMd
+        y: 0
+        width: Math.max(0, clockArea.x - x - QuattroTheme.Theme.spaceSm)
+        height: QuattroTheme.Theme.barHeight
+        visible: root.inlineLyricsAvailable && width >= 220
         clip: true
         Accessible.role: Accessible.StaticText
         Accessible.name: "Synchronized Spotify lyrics"
 
         Rectangle {
             anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            height: QuattroTheme.Theme.structuralLine
+            anchors.verticalCenter: parent.verticalCenter
+            width: QuattroTheme.Theme.structuralLine
+            height: QuattroTheme.Theme.barControlHeight - QuattroTheme.Theme.spaceSm
             color: QuattroTheme.Theme.border
         }
 
-        ListView {
-            id: inlineLyricsList
+        Text {
             anchors.fill: parent
-            anchors.topMargin: QuattroTheme.Theme.spaceXs
-            clip: true
-            interactive: false
-            model: LyricsController.lines
-            currentIndex: Math.max(0, LyricsController.activeIndex)
-            boundsBehavior: Flickable.StopAtBounds
-            reuseItems: true
-            highlight: Item {}
-            highlightRangeMode: ListView.StrictlyEnforceRange
-            preferredHighlightBegin: QuattroTheme.Theme.barLyricsLineHeight
-            preferredHighlightEnd: QuattroTheme.Theme.barLyricsLineHeight * 2
-            highlightMoveDuration: QuattroTheme.Theme.transitionDuration
-
-            delegate: Item {
-                id: inlineLyricLine
-                required property var modelData
-                required property int index
-                width: inlineLyricsList.width
-                height: QuattroTheme.Theme.barLyricsLineHeight
-                readonly property bool activeLine: index === LyricsController.activeIndex
-
-                Text {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: QuattroTheme.Theme.spaceSm
-                    anchors.rightMargin: QuattroTheme.Theme.spaceSm
-                    text: inlineLyricLine.modelData.text
-                    textFormat: Text.PlainText
-                    elide: Text.ElideRight
-                    color: inlineLyricLine.activeLine
-                        ? QuattroTheme.Theme.textStrong : QuattroTheme.Theme.textMuted
-                    font.family: root.fontFamily
-                    font.pixelSize: inlineLyricLine.activeLine
-                        ? QuattroTheme.Theme.typeLabel : QuattroTheme.Theme.typeMeta
-                    font.bold: inlineLyricLine.activeLine
-                    opacity: inlineLyricLine.activeLine ? 1 : QuattroTheme.Theme.inactiveOpacity
-
-                    Behavior on opacity {
-                        NumberAnimation { duration: QuattroTheme.Theme.transitionDuration }
-                    }
-                    Behavior on color {
-                        ColorAnimation { duration: QuattroTheme.Theme.transitionDuration }
-                    }
-                }
-            }
+            anchors.leftMargin: QuattroTheme.Theme.spaceSm
+            anchors.rightMargin: QuattroTheme.Theme.spaceXs
+            text: LyricsController.lines.length > 0
+                ? LyricsController.lines[Math.min(LyricsController.lines.length - 1,
+                    Math.max(0, LyricsController.activeIndex))].text : ""
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            maximumLineCount: 2
+            elide: Text.ElideNone
+            horizontalAlignment: Text.AlignLeft
+            verticalAlignment: Text.AlignVCenter
+            color: QuattroTheme.Theme.textStrong
+            font.family: root.fontFamily
+            font.pixelSize: QuattroTheme.Theme.typeMeta
+            font.bold: true
+            fontSizeMode: Text.Fit
+            minimumPixelSize: QuattroTheme.Theme.typeMicro
         }
 
         HoverHandler { id: inlineLyricsHover }

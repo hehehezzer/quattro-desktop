@@ -52,13 +52,11 @@ and failure states. Manual scrolling pauses auto-follow until **Current line** i
 used. A lyric line seeks only through the existing MPRIS player and only when
 that player advertises seeking support.
 
-When synchronized lyrics are available and no temporary panel is open, the bar
-expands from its 40 px control rail to a 108 px lyric rail. Three virtualized
-lines follow the authoritative active index with restrained movement; the center
-line is dominant and adjacent lines remain quiet. Controls stay on the original
-40 px datum. Opening any panel collapses the lyric rail before that panel maps,
-so existing popup placement and interactions remain unchanged. The rail is
-hidden below 560 px width and whenever synchronized lyrics are unavailable.
+When synchronized lyrics are available, the active lyric occupies the unused
+horizontal space between Spotify controls and the centered date/time. It wraps
+to two lines and scales within the existing type floor rather than truncating.
+The bar stays 40 px tall and the lyric region disappears when less than 220 px
+remains, preserving Spotify, clock, and system controls at constrained widths.
 
 ### Weather and clock
 

@@ -66,19 +66,23 @@ class SystemStatsTests(unittest.TestCase):
 
 
 class InlineLyricsBarTests(unittest.TestCase):
-    def test_synced_lyrics_expand_below_the_original_control_rail(self):
+    def test_synced_lyrics_use_the_gap_between_spotify_and_clock(self):
         content = BAR.read_text(encoding="utf-8")
         theme = (SRC / "quickshell/theme/Theme.qml").read_text(encoding="utf-8")
         self.assertIn('LyricsController.state === "synced"', content)
-        self.assertIn('&& !PopupManager.activePanel', content)
-        self.assertIn('? QuattroTheme.Theme.barLyricsHeight : QuattroTheme.Theme.barHeight', content)
-        self.assertIn('id: inlineLyricsList', content)
-        self.assertIn('model: LyricsController.lines', content)
-        self.assertIn('currentIndex: Math.max(0, LyricsController.activeIndex)', content)
-        self.assertIn('highlightRangeMode: ListView.StrictlyEnforceRange', content)
+        self.assertIn('implicitHeight: QuattroTheme.Theme.barHeight', content)
+        self.assertIn('x: mediaStrip.x + mediaStrip.width + QuattroTheme.Theme.spaceMd', content)
+        self.assertIn('width: Math.max(0, clockArea.x - x - QuattroTheme.Theme.spaceSm)', content)
+        self.assertIn('visible: root.inlineLyricsAvailable && width >= 220', content)
+        self.assertIn('Math.max(0, LyricsController.activeIndex)', content)
+        self.assertIn('wrapMode: Text.Wrap', content)
+        self.assertIn('maximumLineCount: 2', content)
+        self.assertIn('elide: Text.ElideNone', content)
+        self.assertIn('fontSizeMode: Text.Fit', content)
+        self.assertIn('minimumPixelSize: QuattroTheme.Theme.typeMicro', content)
         self.assertIn('readonly property int barHeight: 40', theme)
-        self.assertIn('readonly property int barLyricsHeight: 108', theme)
-        self.assertIn('readonly property int barLyricsLineHeight: 20', theme)
+        self.assertNotIn('barLyricsHeight', theme)
+        self.assertNotIn('barLyricsLineHeight', theme)
 
 
 class NightLightTests(unittest.TestCase):

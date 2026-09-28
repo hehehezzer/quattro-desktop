@@ -28,8 +28,6 @@ QtObject {
     readonly property int compactTarget: 32
     readonly property int primaryTarget: 44
     readonly property int barHeight: 40
-    readonly property int barLyricsHeight: 108
-    readonly property int barLyricsLineHeight: 20
     readonly property int barControlHeight: 30
     readonly property int panelWidth: 430
     readonly property int panelInset: 16
