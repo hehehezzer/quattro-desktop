@@ -33,7 +33,7 @@ ColumnLayout {
     }
     Text {
         Layout.fillWidth: true
-        text: "Search cities and places worldwide. Your desktop clock stays on system time."
+        text: "Search cities and places worldwide. Your desktop clock follows the selected location."
         wrapMode: Text.Wrap
         color: QuattroTheme.Theme.textMuted
         font.pixelSize: 12

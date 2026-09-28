@@ -33,7 +33,11 @@ if args[0] == "geocode":
     print(json.dumps({"query": query, "results": [] if query in ["empty", "offline"] else [{"name": query, "label": query, "latitude": 1, "longitude": 2}], **({"error": "Network unavailable"} if query == "offline" else {})}), flush=True)
 else:
     path = root / "selection"
-    if "--place" in args: path.write_text(args[args.index("--place") + 1])
+    selected = json.loads(args[args.index("--place") + 1]) if "--place" in args else None
+    if selected and selected["name"] == "denied":
+        print(json.dumps({"error": "Timezone change was denied"}), flush=True)
+        raise SystemExit(1)
+    if selected: path.write_text(json.dumps(selected))
     place = json.loads(path.read_text()) if path.exists() else {"name": "Manila", "label": "Manila"}
     print(json.dumps({"available": True, "configured": True, "place": place, "temperature": 25, "code": 2, "day": True}), flush=True)
 ''')
@@ -46,7 +50,7 @@ ShellRoot {
         target: "weatherTest"
         function query(value: string): void { DesktopWeather.searchQuery = value; }
         function choose(): void { DesktopWeather.selectPlace(DesktopWeather.searchResults[0]); }
-        function state(): string { return JSON.stringify({query: DesktopWeather.searchQuery, results: DesktopWeather.searchResults, error: DesktopWeather.searchError, searching: DesktopWeather.searching, snapshot: DesktopWeather.snapshot}); }
+        function state(): string { return JSON.stringify({query: DesktopWeather.searchQuery, results: DesktopWeather.searchResults, error: DesktopWeather.searchError, weatherError: DesktopWeather.error, searching: DesktopWeather.searching, snapshot: DesktopWeather.snapshot}); }
     }
 }
 ''')
@@ -98,6 +102,14 @@ ShellRoot {
                     time.sleep(.3)
                     self.assertEqual(state()["snapshot"]["place"]["name"], "London")
                     self.assertEqual(json.loads((root / "selection").read_text())["longitude"], 2)
+                    call("query", "denied")
+                    self.assertEqual(settled()["results"][0]["name"], "denied")
+                    call("choose")
+                    time.sleep(.3)
+                    value = state()
+                    self.assertEqual(value["snapshot"]["place"]["name"], "London")
+                    self.assertEqual(value["weatherError"], "Timezone change was denied")
+                    self.assertEqual(json.loads((root / "selection").read_text())["name"], "London")
                     call("query", "empty")
                     value = settled()
                     self.assertEqual(value["results"], [])

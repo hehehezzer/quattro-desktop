@@ -30,8 +30,8 @@ the buttons. The status is display-safe media metadata, not a diagnostic dump.
 
 ### Weather and clock
 
-The clock remains on the system timezone, with seconds. Calendar retains
-month/week navigation and offers a named Location picker, fixed Celsius units
+The clock uses the system timezone, with seconds. Calendar retains month/week
+navigation and offers a named Location picker, fixed Celsius units
 and Refresh weather. Coordinates are internal, not normal settings. No location
 is inferred from personal data, IP address or unrelated project content.
 
@@ -48,9 +48,10 @@ Saved locations win, including legacy coordinate-only configurations (labelled
 “Saved location”). No authoritative system place provider is configured on this
 Hyprland desktop. Fresh setups use explicitly labelled **generic Manila,
 Philippines**, not a claim about the user's city. Selection atomically stores the
-canonical name, coordinates, region/country, provider ID and timezone. It clears
-the old displayed weather and immediately requests the new city's weather.
-Forecast timezone is the location timezone, never a system-clock setting.
+canonical name, coordinates, region/country, provider ID and timezone. It changes
+the system timezone to match before saving the selection, clears the old displayed
+weather and immediately requests the new city's weather. If the system timezone
+change is rejected, the new weather location is not saved.
 
 `quattro_desktop_controls.py weather` uses HTTPS Open-Meteo current weather,
 Celsius and WMO weather codes. No API key is required or exposed. Location is
