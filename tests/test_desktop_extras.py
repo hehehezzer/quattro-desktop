@@ -65,6 +65,22 @@ class SystemStatsTests(unittest.TestCase):
         self.assertIn("root.systemStatsPopupPositioned", content)
 
 
+class InlineLyricsBarTests(unittest.TestCase):
+    def test_synced_lyrics_expand_below_the_original_control_rail(self):
+        content = BAR.read_text(encoding="utf-8")
+        theme = (SRC / "quickshell/theme/Theme.qml").read_text(encoding="utf-8")
+        self.assertIn('LyricsController.state === "synced"', content)
+        self.assertIn('&& !PopupManager.activePanel', content)
+        self.assertIn('? QuattroTheme.Theme.barLyricsHeight : QuattroTheme.Theme.barHeight', content)
+        self.assertIn('id: inlineLyricsList', content)
+        self.assertIn('model: LyricsController.lines', content)
+        self.assertIn('currentIndex: Math.max(0, LyricsController.activeIndex)', content)
+        self.assertIn('highlightRangeMode: ListView.StrictlyEnforceRange', content)
+        self.assertIn('readonly property int barHeight: 40', theme)
+        self.assertIn('readonly property int barLyricsHeight: 108', theme)
+        self.assertIn('readonly property int barLyricsLineHeight: 20', theme)
+
+
 class NightLightTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

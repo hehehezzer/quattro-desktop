@@ -50,8 +50,15 @@ The panel displays a restrained five-line region around the active lyric, plain
 lyrics when timing is absent, and intentional loading, instrumental, unavailable
 and failure states. Manual scrolling pauses auto-follow until **Current line** is
 used. A lyric line seeks only through the existing MPRIS player and only when
-that player advertises seeking support. The 40 px bar is unchanged; its existing
-media region remains the entry point to this expanded panel.
+that player advertises seeking support.
+
+When synchronized lyrics are available and no temporary panel is open, the bar
+expands from its 40 px control rail to a 108 px lyric rail. Three virtualized
+lines follow the authoritative active index with restrained movement; the center
+line is dominant and adjacent lines remain quiet. Controls stay on the original
+40 px datum. Opening any panel collapses the lyric rail before that panel maps,
+so existing popup placement and interactions remain unchanged. The rail is
+hidden below 560 px width and whenever synchronized lyrics are unavailable.
 
 ### Weather and clock
 
