@@ -49,7 +49,7 @@ class DesktopControlsTests(unittest.TestCase):
             desktop.atomic(desktop.CONFIG / "equalizer.json", json.dumps({
                 "enabled": True, "target": "missing-ephemeral-id", "gains": [0] * 10,
             }))
-            run.side_effect = [json.dumps(sinks), "quattro_eq\n", "", json.dumps(streams), ""]
+            run.side_effect = [json.dumps(sinks), "alsa_output.usb-wrong\n", "", json.dumps(streams), ""]
             result = desktop.eq_recover("test failure")
         self.assertFalse(result["enabled"])
         self.assertTrue(result["degraded"])

@@ -304,9 +304,11 @@ def eq_recover(reason="DSP unavailable"):
         target = physical[0]
     if target is None:
         raise RuntimeError("No physical audio output is available")
-    if default == EQ_NAME or default not in physical:
+    if default != target:
         run(["pactl", "set-default-sink", target])
-    eq_move_streams(sinks, target, EQ_NAME)
+    # WirePlumber may already have evacuated streams to an arbitrary fallback
+    # before ExecStopPost runs. Reunite them on the user's saved output.
+    eq_move_streams(sinks, target)
     recovered = {**state, "enabled": False, "target": target, "degraded": True,
                  "error": reason[:160]}
     atomic(CONFIG / "equalizer.json", json.dumps(recovered))
