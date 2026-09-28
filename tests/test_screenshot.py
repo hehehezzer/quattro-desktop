@@ -45,6 +45,7 @@ esac
             env = dict(os.environ)
             env.update(
                 HOME=str(home),
+                XDG_CONFIG_HOME=str(home / ".config"),
                 XDG_PICTURES_DIR=str(root / "pictures"),
                 TEST_SHADER=str(shader),
                 TEST_LOG=str(log),
