@@ -33,6 +33,31 @@ review/compaction/realtime generation, shell or standalone command execution,
 MCP tool calls, and raw model-history injection—remain denied. Unknown protocol
 methods fail closed until classified against the installed Codex protocol.
 
+### Native thread bootstrap lifecycle
+
+The Codex 0.157.1 protocol was verified from its exact binary schemas and native
+TUI implementation. A fresh TUI initializes the app-server, performs bounded
+bootstrap reads, then sends `thread/start`. That request intentionally has no
+thread ID. Its successful response contains the canonical native identity at
+`result.thread.id`; the related `thread/started` notification may arrive later.
+Only after consuming the response does the TUI submit `turn/start`, whose schema
+normally requires `threadId`. Resume uses `thread/resume {threadId}` and returns
+the same canonical ID; a new thread or fork returns a new canonical ID.
+
+Quattro therefore binds identities from successful, request-correlated
+`thread/start`, `thread/resume`, and `thread/fork` responses. The binding belongs
+to one private bridge/native process. If a 0.157.x frontend omits `threadId` on
+its first normal `turn/start`, the bridge inserts that connection's bound ID
+before plan creation. It never generates an ID or reads a global/previous-session
+value. Starting another lifecycle invalidates the fallback immediately, and a
+generation check prevents failed, pending, or out-of-order lifecycle responses
+from restoring a stale ID.
+
+The old invalid invariant was “an execution turn must already carry a thread
+ID.” The corrected invariant is “a normal execution turn must have a canonical
+native identity before Quattro creates its plan or dispatches a model; a fresh
+session may acquire that identity from its successful native lifecycle response.”
+
 New Pi path: chooser → real Pi TUI → trusted pre-agent input hook → the same
 Quattro gate → DIRECT Responses call or durable Codex harness task. Every input
 is consumed by the hook, including failures, so an unavailable gate cannot fall

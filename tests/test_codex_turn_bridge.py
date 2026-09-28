@@ -14,11 +14,18 @@ from quattro_agent.codex_turn_bridge import (
     CONTROL_PLANE_METHODS, EXECUTION_PLANE_METHODS, CodexTurnBridge,
 )
 
+THREAD_ID = "0199b724-06b7-7000-8000-000000000001"
 
 BACKEND = '''import json,sys
 for line in sys.stdin:
  r=json.loads(line)
- if r.get("method")=="turn/start":
+ if r.get("method") in {"thread/start","thread/resume","thread/fork"}:
+  if r["params"].get("fixtureLifecycleError"):
+   print(json.dumps({"id":r["id"],"error":{"code":-32000,"message":"fixture failure"}}),flush=True)
+  else:
+   ident=r["params"].get("fixtureThreadId") or r["params"].get("threadId") or "0199b724-06b7-7000-8000-000000000001"
+   print(json.dumps({"id":r["id"],"result":{"method":r.get("method"),"thread":{"id":ident,"turns":[]}}}),flush=True)
+ elif r.get("method")=="turn/start":
   print(json.dumps({"id":r["id"],"result":{"observed":r["params"]}}),flush=True)
   print(json.dumps({"method":"turn/completed","params":{"threadId":r["params"]["threadId"],"turn":{"id":"backend","status":"completed","items":[]}}}),flush=True)
  elif "id" in r:
@@ -91,6 +98,8 @@ class BridgeTests(unittest.TestCase):
         while not headers.endswith(b"\r\n\r\n"):
             headers += self.stream.read(1)
         self.assertIn(b"101 Switching Protocols", headers)
+        # Most focused turn tests begin after a successful native thread/start.
+        self.bridge._current_thread_id = THREAD_ID
 
     def tearDown(self):
         self.stream.close()
@@ -101,7 +110,10 @@ class BridgeTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def send(self, method, params=None, request_id=1):
-        raw = json.dumps({"id":request_id,"method":method,"params":params or {}}).encode()
+        params = dict(params or {})
+        if params.get("threadId") == "thread-1":
+            params["threadId"] = THREAD_ID
+        raw = json.dumps({"id":request_id,"method":method,"params":params}).encode()
         self._send_raw(raw)
 
     def _send_raw(self, raw):
@@ -132,7 +144,159 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual([m.get("method") for m in messages[1:]], [
             "turn/started", "item/started", "item/agentMessage/delta", "item/completed", "turn/completed"])
         self.assertEqual(messages[-1]["params"]["turn"]["status"], "completed")
-        self.assertEqual(self.gate.calls, [("thread-1", "Explain recursion", "codex")])
+        self.assertEqual(self.gate.calls, [(THREAD_ID, "Explain recursion", "codex")])
+
+    def test_fresh_thread_response_bootstraps_first_turn_without_frontend_id(self):
+        thread_id = "0199b724-06b7-7000-8000-000000000010"
+        self.send("thread/start", {"fixtureThreadId":thread_id}, 40)
+        self.assertEqual(self.receive()["result"]["thread"]["id"], thread_id)
+        self.send("turn/start", {"input":[{"type":"text","text":"First"}]}, 41)
+        while self.receive().get("method") != "turn/completed":
+            pass
+        self.send("turn/start", {"input":[{"type":"text","text":"Second"}]}, 42)
+        while self.receive().get("method") != "turn/completed":
+            pass
+        self.assertEqual(self.gate.calls, [
+            (thread_id, "First", "codex"), (thread_id, "Second", "codex"),
+        ])
+
+    def test_bootstrapped_first_delegated_turn_is_locked_before_dispatch(self):
+        thread_id = "0199b724-06b7-7000-8000-000000000022"
+        self.send("thread/start", {"fixtureThreadId":thread_id}, 43)
+        self.receive()
+        self.gate.decision = "DELEGATE"
+        self.send("turn/start", {"input":[{"type":"text","text":"Build"}],
+                  "model":"unapproved", "effort":"ultra"}, 44)
+        observed = self.receive()["result"]["observed"]
+        self.assertEqual(observed["threadId"], thread_id)
+        self.assertEqual(observed["model"], "exact/route")
+        self.assertEqual(observed["effort"], "low")
+        self.assertEqual(observed["responsesapiClientMetadata"]["quattro_plan_id"], "plan-1")
+        self.assertEqual(self.receive()["method"], "turn/completed")
+
+    def test_new_thread_rebinds_missing_id_within_same_process(self):
+        first = "0199b724-06b7-7000-8000-000000000011"
+        second = "0199b724-06b7-7000-8000-000000000012"
+        for request_id, thread_id in ((50, first), (51, second)):
+            self.send("thread/start", {"fixtureThreadId":thread_id}, request_id)
+            self.assertEqual(self.receive()["result"]["thread"]["id"], thread_id)
+        self.send("turn/start", {"input":[{"type":"text","text":"New thread"}]}, 52)
+        while self.receive().get("method") != "turn/completed":
+            pass
+        self.assertEqual(self.gate.calls, [(second, "New thread", "codex")])
+
+    def test_resume_binds_only_matching_canonical_thread(self):
+        thread_id = "0199b724-06b7-7000-8000-000000000013"
+        self.send("thread/resume", {"threadId":thread_id}, 60)
+        self.assertEqual(self.receive()["result"]["thread"]["id"], thread_id)
+        self.send("turn/start", {"input":[{"type":"text","text":"Resumed"}]}, 61)
+        while self.receive().get("method") != "turn/completed":
+            pass
+        self.assertEqual(self.gate.calls, [(thread_id, "Resumed", "codex")])
+
+    def test_failed_lifecycle_does_not_bind_or_inherit_stale_thread(self):
+        self.send("thread/start", {"fixtureLifecycleError":True}, 70)
+        self.assertIn("error", self.receive())
+        self.send("turn/start", {"input":[{"type":"text","text":"Must fail"}]}, 71)
+        self.assertIn("error", self.receive())
+        self.assertEqual(self.gate.calls, [])
+
+    def test_native_bindings_are_private_to_each_bridge(self):
+        first = "0199b724-06b7-7000-8000-000000000015"
+        second = "0199b724-06b7-7000-8000-000000000016"
+        other = CodexTurnBridge(Path(self.tmp.name) / "other.sock", [], {}, Gate())
+        self.bridge._lifecycle_requests[90] = ("thread/start", None, 0)
+        other._lifecycle_requests[90] = ("thread/start", None, 0)
+        self.bridge._bind_lifecycle_response(90, {"id":90,"result":{"thread":{"id":first}}})
+        other._bind_lifecycle_response(90, {"id":90,"result":{"thread":{"id":second}}})
+        self.assertEqual(self.bridge._current_thread_id, first)
+        self.assertEqual(other._current_thread_id, second)
+
+    def test_mismatched_resume_response_cannot_replace_binding(self):
+        original = "0199b724-06b7-7000-8000-000000000017"
+        unrelated = "0199b724-06b7-7000-8000-000000000018"
+        self.bridge._lifecycle_requests[91] = ("thread/start", None, 0)
+        self.bridge._bind_lifecycle_response(91, {"id":91,"result":{"thread":{"id":original}}})
+        self.bridge._lifecycle_requests[92] = ("thread/resume", original, 0)
+        self.bridge._bind_lifecycle_response(92, {"id":92,"result":{"thread":{"id":unrelated}}})
+        self.assertEqual(self.bridge._current_thread_id, original)
+
+    def test_explicit_id_cannot_bypass_failed_or_mismatched_lifecycle(self):
+        old = "0199b724-06b7-7000-8000-000000000023"
+        other = "0199b724-06b7-7000-8000-000000000024"
+        self.send("thread/start", {"fixtureThreadId":old}, 100)
+        self.receive()
+        self.send("thread/start", {"fixtureLifecycleError":True}, 101)
+        self.assertIn("error", self.receive())
+        self.send("turn/start", {"threadId":old,
+                  "input":[{"type":"text","text":"Stale"}]}, 102)
+        self.assertIn("error", self.receive())
+        self.bridge._lifecycle_requests[103] = ("thread/resume", old,
+                                                self.bridge._lifecycle_generation)
+        self.bridge._bind_lifecycle_response(
+            103, {"id":103,"result":{"thread":{"id":other}}},
+        )
+        self.send("turn/start", {"threadId":old,
+                  "input":[{"type":"text","text":"Mismatch"}]}, 104)
+        self.assertIn("error", self.receive())
+        self.assertEqual(self.gate.calls, [])
+
+    def test_invalid_lifecycle_identity_cannot_authorize_explicit_turn(self):
+        self.bridge._current_thread_id = None
+        self.bridge._lifecycle_requests[105] = ("thread/start", None,
+                                                self.bridge._lifecycle_generation)
+        self.bridge._bind_lifecycle_response(
+            105, {"id":105,"result":{"thread":{"id":"not-a-canonical-id"}}},
+        )
+        self.send("turn/start", {"threadId":THREAD_ID,
+                  "input":[{"type":"text","text":"Must fail"}]}, 106)
+        self.assertIn("error", self.receive())
+        self.assertEqual(self.gate.calls, [])
+
+    def test_duplicate_pending_lifecycle_request_id_fails_closed(self):
+        messages = []
+        bridge = CodexTurnBridge(Path(self.tmp.name) / "duplicate.sock", [], {}, Gate())
+        bridge._current_thread_id = THREAD_ID
+        bridge._lifecycle_generation = 1
+        bridge._lifecycle_requests[107] = ("thread/start", None, 1)
+        bridge._send = messages.append
+        bridge.handle({"id":107,"method":"thread/start","params":{}})
+        self.assertIsNone(bridge._current_thread_id)
+        self.assertIn("error", messages[0])
+
+    def test_pending_or_failed_new_thread_cannot_reuse_previous_binding(self):
+        original = "0199b724-06b7-7000-8000-000000000019"
+        self.send("thread/start", {"fixtureThreadId":original}, 93)
+        self.receive()
+        self.send("thread/start", {"fixtureLifecycleError":True}, 94)
+        self.assertIn("error", self.receive())
+        self.send("turn/start", {"input":[{"type":"text","text":"No stale reuse"}]}, 95)
+        self.assertIn("error", self.receive())
+        self.assertEqual(self.gate.calls, [])
+
+    def test_out_of_order_lifecycle_response_cannot_restore_old_binding(self):
+        old = "0199b724-06b7-7000-8000-000000000020"
+        new = "0199b724-06b7-7000-8000-000000000021"
+        self.bridge._lifecycle_generation = 2
+        self.bridge._lifecycle_requests[96] = ("thread/start", None, 1)
+        self.bridge._lifecycle_requests[97] = ("thread/start", None, 2)
+        self.bridge._bind_lifecycle_response(97, {"id":97,"result":{"thread":{"id":new}}})
+        self.bridge._bind_lifecycle_response(96, {"id":96,"result":{"thread":{"id":old}}})
+        self.assertEqual(self.bridge._current_thread_id, new)
+
+    def test_first_turn_gate_failure_preserves_valid_native_binding(self):
+        thread_id = "0199b724-06b7-7000-8000-000000000014"
+        self.send("thread/start", {"fixtureThreadId":thread_id}, 80)
+        self.receive()
+        original = self.gate.begin
+        self.gate.begin = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("fixture"))
+        self.send("turn/start", {"input":[{"type":"text","text":"Fails"}]}, 81)
+        self.assertIn("error", self.receive())
+        self.gate.begin = original
+        self.send("turn/start", {"input":[{"type":"text","text":"Retry"}]}, 82)
+        while self.receive().get("method") != "turn/completed":
+            pass
+        self.assertEqual(self.gate.calls, [(thread_id, "Retry", "codex")])
 
     def test_delegate_locks_model_and_collaboration_settings(self):
         self.gate.decision = "DELEGATE"

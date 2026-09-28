@@ -209,6 +209,9 @@ class CodexTurnBridge:
         self._active: dict[str, dict[str, Any]] = {}
         self._internal: dict[str, queue.Queue[Any]] = {}
         self._delegate_requests: dict[Any, str] = {}
+        self._lifecycle_requests: dict[Any, tuple[str, str | None, int]] = {}
+        self._lifecycle_generation = 0
+        self._current_thread_id: str | None = None
         self._front: Any = None
         self._backend: Any = None
         self._connection: socket.socket | None = None
@@ -397,6 +400,35 @@ class CodexTurnBridge:
                              tools_used=state.get("tools_used", False),
                              agent_lifecycle=state.get("delegated", False))
 
+    @staticmethod
+    def _canonical_thread_id(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            return str(uuid.UUID(value))
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+    def _bind_lifecycle_response(self, request_id: Any, message: dict[str, Any]) -> None:
+        """Bind only an identity returned by a successful native lifecycle RPC."""
+        with self._state_lock:
+            lifecycle = self._lifecycle_requests.pop(request_id, None)
+        if lifecycle is None or "error" in message:
+            return
+        result = message.get("result")
+        thread = result.get("thread") if isinstance(result, dict) else None
+        canonical = self._canonical_thread_id(thread.get("id") if isinstance(thread, dict) else None)
+        if canonical is None:
+            return
+        method, requested, generation = lifecycle
+        requested_canonical = self._canonical_thread_id(requested)
+        if method == "thread/resume" and requested_canonical != canonical:
+            return
+        with self._state_lock:
+            if generation != self._lifecycle_generation:
+                return
+            self._current_thread_id = canonical
+
     def _backend_reader(self) -> None:
         try:
             while not self.closed.is_set():
@@ -404,6 +436,8 @@ class CodexTurnBridge:
                 if message is None:
                     break
                 request_id = message.get("id")
+                if "method" not in message:
+                    self._bind_lifecycle_response(request_id, message)
                 with self._state_lock:
                     internal = self._internal.get(request_id)
                     owner = self._delegate_requests.pop(request_id, None) if "method" not in message else None
@@ -583,10 +617,33 @@ class CodexTurnBridge:
             params = request["params"]
             for key in ("config", "modelProvider", "model_provider"):
                 params.pop(key, None)
+            with self._state_lock:
+                lifecycle_id = request.get("id")
+                if lifecycle_id is None or lifecycle_id in self._lifecycle_requests:
+                    self._current_thread_id = None
+                    self._error(lifecycle_id, "Native Codex lifecycle request ID is missing or already pending")
+                    return
+                self._lifecycle_generation += 1
+                self._current_thread_id = None
+                self._lifecycle_requests[lifecycle_id] = (
+                    method, params.get("threadId"), self._lifecycle_generation,
+                )
         if method == "turn/steer":
             self._error(request.get("id"), "Quattro requires a fresh plan; submit after the active turn completes")
             return
         if method == "turn/start":
+            supplied_thread_id = self._canonical_thread_id(thread_id)
+            with self._state_lock:
+                bound_thread_id = self._current_thread_id
+            if supplied_thread_id is None and (not isinstance(thread_id, str) or not thread_id):
+                supplied_thread_id = bound_thread_id
+            if supplied_thread_id is not None and supplied_thread_id == bound_thread_id:
+                thread_id = supplied_thread_id
+                request = copy.deepcopy(request)
+                params = request["params"]
+                params["threadId"] = thread_id
+            else:
+                thread_id = None
             if (not isinstance(thread_id, str) or not thread_id or params.get("toolOutput") is not None
                     or not isinstance(params.get("input"), list) or not params["input"]
                     or any(not isinstance(item, dict) or item.get("type") != "text"
