@@ -187,7 +187,8 @@ class DesktopControlsTests(unittest.TestCase):
                 patch.object(desktop, "CACHE", Path(temp) / "cache"), patch.object(desktop, "run") as run:
             place = {**desktop.DEFAULT_LOCATION, "name": "Tokyo", "country": "Japan", "country_code": "JP", "admin1": "Tokyo", "latitude": 35.6895, "longitude": 139.6917, "timezone": "Asia/Tokyo"}
             saved = desktop.save_place(place)
-            run.assert_called_once_with(["timedatectl", "set-timezone", "Asia/Tokyo"])
+            run.assert_called_once_with(
+                ["pkexec", "timedatectl", "set-timezone", "Asia/Tokyo"], timeout=120)
             self.assertEqual(saved["label"], "Tokyo, Japan")
             self.assertEqual(desktop.load(desktop.CONFIG / "weather.json", {}), saved)
             response = MagicMock()
@@ -202,7 +203,8 @@ class DesktopControlsTests(unittest.TestCase):
                 self.assertEqual(request.call_count, 1)
                 desktop.save_place(desktop.DEFAULT_LOCATION)
                 self.assertEqual(run.call_args.args[0],
-                                 ["timedatectl", "set-timezone", "Asia/Manila"])
+                                 ["pkexec", "timedatectl", "set-timezone", "Asia/Manila"])
+                self.assertEqual(run.call_args.kwargs, {"timeout": 120})
                 result = desktop.weather()
                 self.assertEqual(request.call_count, 2)
                 self.assertEqual(result["place"]["name"], "Manila")
@@ -221,6 +223,12 @@ class DesktopControlsTests(unittest.TestCase):
                 desktop.save_place({**desktop.DEFAULT_LOCATION, "timezone": ""})
             run.assert_not_called()
             self.assertFalse((desktop.CONFIG / "weather.json").exists())
+
+    def test_hyprland_starts_graphical_polkit_agent_before_quickshell(self):
+        config = (Path(__file__).parents[1] / "src/hypr/hyprland.lua").read_text()
+        agent = config.index('hl.exec_cmd("systemctl --user start plasma-polkit-agent.service")')
+        quickshell = config.index('hl.exec_cmd("quickshell -p ~/.config/quickshell/shell.qml")')
+        self.assertLess(agent, quickshell)
 
     def test_place_metadata_is_bounded_and_not_trusted_html(self):
         for value in [None, {**desktop.DEFAULT_LOCATION, "name": "x" * 161}, {**desktop.DEFAULT_LOCATION, "timezone": "Asia/Manila?bad"}]:
