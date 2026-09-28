@@ -1838,11 +1838,15 @@ def tool_version(name: str) -> str | None:
 
 
 def print_status(as_json: bool) -> None:
+    from quattro_agent.provider_access import typesafe_credential_status
+
     data = dashboard()
+    data["typesafeCredential"] = typesafe_credential_status()
     if as_json:
         print(json.dumps(data, ensure_ascii=False))
         return
     print(f"Default agent: {data['defaultAgent']}")
+    print(f"TypeSafe credential: {data['typesafeCredential']}")
     print(f"Codex account: {data['activeAccount']}")
     for agent, record in data["agents"].items():
         print(f"{agent.title()}: {record['version'] or 'NOT FOUND'}")

@@ -3872,7 +3872,26 @@ class HarnessRuntime:
             self.store.transition_task(task_id, TaskState.VALIDATING_RESULT)
             if coordination_top_level:
                 refresh_coordination_heartbeat("validating")
-            validation = self.validate_task(task_id, pathlib.Path(task["project_path"]), run_id)
+            from quattro_agent.runtime_milestones import MilestoneCancelled
+            try:
+                validation = self.validate_task(task_id, pathlib.Path(task["project_path"]), run_id)
+            except MilestoneCancelled:
+                current = TaskState(self.store.get_task(task_id)["state"])
+                if current is TaskState.CANCELLING:
+                    self.store.transition_task(
+                        task_id, TaskState.CANCELLED, terminal_code="cancelled",
+                        terminal_summary="Task cancelled at the host validation milestone.",
+                    )
+                return 130
+            validation_state = TaskState(self.store.get_task(task_id)["state"])
+            if validation_state is TaskState.CANCELLING:
+                self.store.transition_task(
+                    task_id, TaskState.CANCELLED, terminal_code="cancelled_during_validation",
+                    terminal_summary="Task cancelled during host validation.",
+                )
+                return 130
+            if validation_state is TaskState.CANCELLED:
+                return 130
             if logical_session_id:
                 self.checkpoint_task(
                     task_id,
@@ -4126,39 +4145,59 @@ class HarnessRuntime:
                 else "The task produced no inspectable output artifact.",
             ),
         ]
+        from quattro_agent.runtime_milestones import RequiredCheck, run_validation_milestone
+        checks = []
+
+        def schedule_command(name, command, cwd, timeout, *, scope="broad"):
+            argv = tuple(command)
+            checks.append(RequiredCheck(scope, lambda: self._command_validation(name, argv, cwd, timeout)))
+
         if (project / ".git").exists() and self.command_resolver("git"):
-            results.append(self._command_validation(
+            schedule_command(
                 "Git diff integrity", [self.command_resolver("git") or "git", "diff", "--check"],
-                project, 30,
-            ))
+                project, 30, scope="targeted",
+            )
             if not profile.writable_roots:
-                results.append(self._git_clean_validation(
+                checks.append(RequiredCheck("policy", lambda: self._git_clean_validation(
                     project, task["private_payload"].get("gitStatusBefore")
-                ))
+                )))
         delegated_worker = task.get("workflow") == "codex-pi-delegation"
         if delegated_worker:
             pass
         elif project.resolve() == self.default_workspace.resolve() and (project / "tests").is_dir():
-            results.append(self._command_validation(
+            schedule_command(
                 "Quattro unit suite", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"],
                 project, 120,
-            ))
+            )
         elif (project / "tests").is_dir() and any(project.rglob("*.py")):
-            results.append(self._command_validation(
+            schedule_command(
                 "Python project tests",
                 [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"],
                 project, 300,
-            ))
+            )
         elif (project / "Cargo.toml").is_file() and self.command_resolver("cargo"):
-            results.append(self._command_validation(
+            schedule_command(
                 "Cargo tests", [self.command_resolver("cargo") or "cargo", "test", "--quiet"],
                 project, 600,
-            ))
+            )
         elif (project / "go.mod").is_file() and self.command_resolver("go"):
-            results.append(self._command_validation(
+            schedule_command(
                 "Go tests", [self.command_resolver("go") or "go", "test", "./..."],
                 project, 600,
-            ))
+            )
+        try:
+            # A workflow-parent/manual validation is not native-agent completion.
+            milestone_options = self.config().get("routing", {}).get("jev", {}) if run_id is not None else {}
+        except ConfigError:
+            milestone_options = {}
+        results.extend(run_validation_milestone(
+            checks, options=milestone_options,
+            is_current=lambda: self.store.get_task(task_id)["state"] == TaskState.VALIDATING_RESULT.value,
+            emit=lambda record: self.store.append_event(
+                task_id, "runtime.milestone", run_id=run_id,
+                display=dict(record, agent=task["agent"]),
+            ),
+        ))
         try:
             config = self.config()
             enabled, vault, projects, _ = self._memory(config)
@@ -4568,6 +4607,13 @@ class HarnessRuntime:
             self.write_projection()
             return
         run_state = RunState(run["state"])
+        if state in {TaskState.VALIDATING_RESULT, TaskState.CANCELLING} and run_state is RunState.SUCCEEDED:
+            # Validation is host-owned after the native child has been reaped.
+            # Do not signal its old PID or attempt to interrupt a succeeded run.
+            # Keep CANCELLING until the owner leaves the milestone or finishes
+            # its bounded active validator; work may still be in progress.
+            self.write_projection()
+            return
         if run_state is RunState.RUNNING:
             self.store.transition_run(run["run_id"], RunState.CANCELLING)
         identity = ProcessIdentity(

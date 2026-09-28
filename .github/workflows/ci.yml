@@ -59,7 +59,7 @@ jobs:
       - name: Import and CLI startup
         run: python -c "import quattro, quattro.core, quattro_agent; print('imports-ok')" && quattro-agent --help && quattro-agent --version
       - name: Core architecture and portable feature tests
-        run: python -m unittest tests.test_core_desktop_boundary tests.test_windows_core
+        run: python -m unittest tests.test_core_desktop_boundary tests.test_windows_core tests.test_decision_plane
       - name: Compile Core
         run: python -m compileall -q src/quattro src/quattro_agent src/quattro_harness.py src/quattro_deployment.py src/quattro_release.py
 

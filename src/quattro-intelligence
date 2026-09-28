@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from quattro_agent.shared_intelligence import cli_main
+
+raise SystemExit(cli_main())

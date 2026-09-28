@@ -1,0 +1,820 @@
+{
+  "measurement": "LIVE decision component only; no execution model or tools run",
+  "release_gate_passed": false,
+  "limits": [
+    "No task-quality gold labels; usable advice is not successful execution.",
+    "No model-token, task-wall-time, cost or routing-quality improvement established.",
+    "Skill selection is intentionally unsupported and fails open."
+  ],
+  "summary": {
+    "OFF": {
+      "decision_boundary_ms": {
+        "samples": 11,
+        "p50": 0.00313599593937397,
+        "p95": 0.013767043128609657
+      },
+      "jev_rtt_ms": null,
+      "blocking_ms": {
+        "samples": 10,
+        "p50": 0.0006565242074429989,
+        "p95": 0.00452797394245863
+      },
+      "usable_advice": 0,
+      "first_token_ms": null,
+      "total_task_ms": null,
+      "model_turns": null,
+      "execution_tokens": null,
+      "cost": null,
+      "task_success": null
+    },
+    "COOPERATIVE": {
+      "decision_boundary_ms": {
+        "samples": 11,
+        "p50": 261.388499988243,
+        "p95": 590.6093679368496
+      },
+      "jev_rtt_ms": {
+        "samples": 9,
+        "p50": 261.1093180021271,
+        "p95": 313.6128600453958
+      },
+      "blocking_ms": {
+        "samples": 10,
+        "p50": 265.4501280048862,
+        "p95": 590.5933269532397
+      },
+      "usable_advice": 3,
+      "first_token_ms": null,
+      "total_task_ms": null,
+      "model_turns": null,
+      "execution_tokens": null,
+      "cost": null,
+      "task_success": null
+    }
+  },
+  "sessions": [
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "telemetry": {
+        "schema_version": "quattro-jev-decisions-v1",
+        "counts": {
+          "requests": 10,
+          "skipped": 10,
+          "blocking_ms": 0.01139205414801836,
+          "fallbacks": 10,
+          "fallback_disabled": 10
+        },
+        "calls_by_type": {},
+        "call_count_semantics": "supervised attempts; completed_evaluations separately",
+        "last_timing": {
+          "blocking_ms": 0.0005610054358839989,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": null,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "execution_resumed": 0.0005610054358839989
+          }
+        },
+        "jev_model": null,
+        "agent_overrides": null,
+        "model_turns_avoided": null,
+        "cost": null,
+        "cost_source": "unavailable"
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "telemetry": {
+        "schema_version": "quattro-jev-decisions-v1",
+        "counts": {
+          "requests": 10,
+          "context_bytes": 3212,
+          "calls": 9,
+          "worker_starts": 1,
+          "completed_evaluations": 9,
+          "input_tokens": 4809,
+          "output_tokens": 397,
+          "queue_ms": 0.32787409145385027,
+          "preparation_ms": 0.822284840978682,
+          "worker_roundtrip_ms": 2794.2006591474637,
+          "validation_ms": 0.7569618755951524,
+          "resume_ms": 0.18188427202403545,
+          "blocking_ms": 2796.308390214108,
+          "fallbacks": 7,
+          "fallback_uncertain": 6,
+          "accepted": 3,
+          "skipped": 1,
+          "fallback_unsupported_decision": 1
+        },
+        "calls_by_type": {
+          "validation_strategy": 1,
+          "context_strategy": 3,
+          "retry_strategy": 2,
+          "execution_strategy": 2,
+          "progress_strategy": 1
+        },
+        "call_count_semantics": "supervised attempts; completed_evaluations separately",
+        "last_timing": {
+          "rtt_ms": 258.0217869253829,
+          "catalog_ms": 0.000300002284348011,
+          "useful_overlap_ms": 0.0,
+          "request_body_bytes": 1062,
+          "blocking_ms": 258.3481380715966,
+          "queue_ms": 0.019508064724504948,
+          "preparation_ms": 0.04178890958428383,
+          "worker_roundtrip_ms": 258.17690207622945,
+          "validation_ms": 0.08041295222938061,
+          "resume_ms": 0.029526068828999996,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "monitor_started": 0.019508064724504948,
+            "request_sent": 0.061296974308788776,
+            "answer_received": 258.23819905053824,
+            "provider_request_started": 0.12195203453302383,
+            "provider_answer_received": 258.14373895991594,
+            "decision_validated": 258.3186120027676,
+            "execution_resumed": 258.3481380715966
+          }
+        },
+        "jev_model": "jev-1.13.0",
+        "agent_overrides": null,
+        "model_turns_avoided": null,
+        "cost": null,
+        "cost_source": "unavailable"
+      }
+    }
+  ],
+  "rows": [
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "trivial_question",
+      "decision_boundary_ms": 0.0006610061973333359,
+      "result": {
+        "selected_action": null,
+        "fallback_required": true,
+        "evidence": "local_trivial_skip"
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "simple_coding",
+      "decision_boundary_ms": 0.013767043128609657,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "blocking_ms": 0.00452797394245863,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": null,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "execution_resumed": 0.00452797394245863
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "repository_inspection",
+      "decision_boundary_ms": 0.007714028470218182,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "blocking_ms": 0.0014830147847533226,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": null,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "execution_resumed": 0.0014830147847533226
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "debugging",
+      "decision_boundary_ms": 0.00680296216160059,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "blocking_ms": 0.0010719522833824158,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": null,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "execution_resumed": 0.0010719522833824158
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "multi_file_implementation",
+      "decision_boundary_ms": 0.003476976417005062,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "blocking_ms": 0.0006719492375850677,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": null,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "execution_resumed": 0.0006719492375850677
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "tool_heavy",
+      "decision_boundary_ms": 0.004659057594835758,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "blocking_ms": 0.0006420304998755455,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": null,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "execution_resumed": 0.0006420304998755455
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "skill_heavy",
+      "decision_boundary_ms": 0.00313599593937397,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "blocking_ms": 0.0006710179150104523,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": null,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "execution_resumed": 0.0006710179150104523
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "subagent_worthy",
+      "decision_boundary_ms": 0.0028150388970971107,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "blocking_ms": 0.0005610054358839989,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": null,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "execution_resumed": 0.0005610054358839989
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "failing_test_repair",
+      "decision_boundary_ms": 0.002694898284971714,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "blocking_ms": 0.000591040588915348,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": null,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "execution_resumed": 0.000591040588915348
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "research_retrieval",
+      "decision_boundary_ms": 0.0027259811758995056,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "blocking_ms": 0.0006110640242695808,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": null,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "execution_resumed": 0.0006110640242695808
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "OFF",
+      "case": "validation_heavy",
+      "decision_boundary_ms": 0.0026349443942308426,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "disabled",
+        "fallback_required": true,
+        "timing": {
+          "blocking_ms": 0.0005610054358839989,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": null,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "execution_resumed": 0.0005610054358839989
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "trivial_question",
+      "decision_boundary_ms": 0.0002608867362141609,
+      "result": {
+        "selected_action": null,
+        "fallback_required": true,
+        "evidence": "local_trivial_skip"
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "simple_coding",
+      "decision_boundary_ms": 590.6093679368496,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.46,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "broad_first": 0.26,
+          "agent": 0.09,
+          "targeted_first": 0.65
+        },
+        "timing": {
+          "rtt_ms": 258.4890259895474,
+          "catalog_ms": 296.14214098546654,
+          "useful_overlap_ms": 0.0,
+          "request_body_bytes": 987,
+          "blocking_ms": 590.5933269532397,
+          "queue_ms": 0.12653996236622334,
+          "preparation_ms": 0.4752440145239234,
+          "worker_roundtrip_ms": 589.8080739425495,
+          "validation_ms": 0.16264000441879034,
+          "resume_ms": 0.020829029381275177,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "monitor_started": 0.12653996236622334,
+            "request_sent": 0.6017839768901467,
+            "answer_received": 590.4098579194397,
+            "provider_request_started": 331.791756907478,
+            "provider_answer_received": 590.2807828970253,
+            "decision_validated": 590.5724979238585,
+            "execution_resumed": 590.5933269532397
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "repository_inspection",
+      "decision_boundary_ms": 313.9314849395305,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.5,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "sufficient": 0.0,
+          "inspect": 0.62,
+          "agent": 0.37,
+          "retrieve": 0.01
+        },
+        "timing": {
+          "rtt_ms": 313.6128600453958,
+          "catalog_ms": 0.00045006163418293,
+          "useful_overlap_ms": 0.0,
+          "request_body_bytes": 1078,
+          "blocking_ms": 313.91516409348696,
+          "queue_ms": 0.03097904846072197,
+          "preparation_ms": 0.05640694871544838,
+          "worker_roundtrip_ms": 313.72450198978186,
+          "validation_ms": 0.07761805318295956,
+          "resume_ms": 0.02565805334597826,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "monitor_started": 0.03097904846072197,
+            "request_sent": 0.08738599717617035,
+            "answer_received": 313.811887986958,
+            "provider_request_started": 0.1353470142930746,
+            "provider_answer_received": 313.74820705968887,
+            "decision_validated": 313.889506040141,
+            "execution_resumed": 313.91516409348696
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "debugging",
+      "decision_boundary_ms": 258.2927430048585,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.9,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "agent": 0.9400000000000001,
+          "retry": 0.0,
+          "change_strategy": 0.06
+        },
+        "timing": {
+          "rtt_ms": 258.0387599300593,
+          "catalog_ms": 0.0003809109330177307,
+          "useful_overlap_ms": 0.0,
+          "request_body_bytes": 975,
+          "blocking_ms": 258.2737570628524,
+          "queue_ms": 0.020960113033652306,
+          "preparation_ms": 0.04078797064721584,
+          "worker_roundtrip_ms": 258.1283600302413,
+          "validation_ms": 0.06781890988349915,
+          "resume_ms": 0.01583003904670477,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "monitor_started": 0.020960113033652306,
+            "request_sent": 0.06174808368086815,
+            "answer_received": 258.1901081139222,
+            "provider_request_started": 0.09428011253476143,
+            "provider_answer_received": 258.1330400425941,
+            "decision_validated": 258.2579270238057,
+            "execution_resumed": 258.2737570628524
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "multi_file_implementation",
+      "decision_boundary_ms": 278.73250807169825,
+      "result": {
+        "selected_action": "sequential",
+        "confidence": 0.98,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "agent": 0.02,
+          "sequential": 0.98,
+          "parallel": 0.0
+        },
+        "timing": {
+          "rtt_ms": 278.4587179776281,
+          "catalog_ms": 0.00016996636986732483,
+          "useful_overlap_ms": 0.0,
+          "request_body_bytes": 984,
+          "blocking_ms": 278.7132620578632,
+          "queue_ms": 0.029745977371931076,
+          "preparation_ms": 0.03622903022915125,
+          "worker_roundtrip_ms": 278.5571049898863,
+          "validation_ms": 0.07279904093593359,
+          "resume_ms": 0.01738301943987608,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "monitor_started": 0.029745977371931076,
+            "request_sent": 0.06597500760108232,
+            "answer_received": 278.62307999748737,
+            "provider_request_started": 0.09614299051463604,
+            "provider_answer_received": 278.55486096814275,
+            "decision_validated": 278.6958790384233,
+            "execution_resumed": 278.7132620578632
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "tool_heavy",
+      "decision_boundary_ms": 269.5444879354909,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.6,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "sufficient": 0.04,
+          "inspect": 0.7,
+          "retrieve": 0.0,
+          "agent": 0.26
+        },
+        "timing": {
+          "rtt_ms": 269.2587149795145,
+          "catalog_ms": 0.00024097971618175507,
+          "useful_overlap_ms": 0.0,
+          "request_body_bytes": 1085,
+          "blocking_ms": 269.52777698170394,
+          "queue_ms": 0.023935921490192413,
+          "preparation_ms": 0.0404770253226161,
+          "worker_roundtrip_ms": 269.3809870397672,
+          "validation_ms": 0.06663694512099028,
+          "resume_ms": 0.01574005000293255,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "monitor_started": 0.023935921490192413,
+            "request_sent": 0.06441294681280851,
+            "answer_received": 269.44539998658,
+            "provider_request_started": 0.11785398237407207,
+            "provider_answer_received": 269.37656896188855,
+            "decision_validated": 269.512036931701,
+            "execution_resumed": 269.52777698170394
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "skill_heavy",
+      "decision_boundary_ms": 0.04758092109113932,
+      "result": {
+        "selected_action": null,
+        "confidence": null,
+        "evidence": "unsupported_decision",
+        "fallback_required": true,
+        "timing": {
+          "blocking_ms": 0.03792298957705498,
+          "useful_overlap_ms": 0.0,
+          "rtt_ms": null,
+          "queue_ms": 0.019197002984583378,
+          "preparation_ms": null,
+          "worker_roundtrip_ms": null,
+          "validation_ms": null,
+          "resume_ms": null,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "monitor_started": 0.019197002984583378,
+            "execution_resumed": 0.03792298957705498
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "subagent_worthy",
+      "decision_boundary_ms": 261.388499988243,
+      "result": {
+        "selected_action": "parallel",
+        "confidence": 0.95,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "sequential": 0.02,
+          "agent": 0.01,
+          "parallel": 0.97
+        },
+        "timing": {
+          "rtt_ms": 261.1093180021271,
+          "catalog_ms": 0.000200001522898674,
+          "useful_overlap_ms": 0.0,
+          "request_body_bytes": 979,
+          "blocking_ms": 261.3724790280685,
+          "queue_ms": 0.011621974408626556,
+          "preparation_ms": 0.03959599416702986,
+          "worker_roundtrip_ms": 261.2098790705204,
+          "validation_ms": 0.08271797560155392,
+          "resume_ms": 0.028664013370871544,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "monitor_started": 0.011621974408626556,
+            "request_sent": 0.051217968575656414,
+            "answer_received": 261.26109703909606,
+            "provider_request_started": 0.08496199734508991,
+            "provider_answer_received": 261.1942799994722,
+            "decision_validated": 261.3438150146976,
+            "execution_resumed": 261.3724790280685
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "failing_test_repair",
+      "decision_boundary_ms": 308.960122987628,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.34,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "change_strategy": 0.56,
+          "retry": 0.0,
+          "agent": 0.44
+        },
+        "timing": {
+          "rtt_ms": 308.6554129840806,
+          "catalog_ms": 0.00030105002224445343,
+          "useful_overlap_ms": 0.0,
+          "request_body_bytes": 991,
+          "blocking_ms": 308.9379599550739,
+          "queue_ms": 0.023644999600946903,
+          "preparation_ms": 0.04788092337548733,
+          "worker_roundtrip_ms": 308.7771140271798,
+          "validation_ms": 0.07409101817756891,
+          "resume_ms": 0.015228986740112305,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "monitor_started": 0.023644999600946903,
+            "request_sent": 0.07152592297643423,
+            "answer_received": 308.8486399501562,
+            "provider_request_started": 0.13412500265985727,
+            "provider_answer_received": 308.78953798674047,
+            "decision_validated": 308.9227309683338,
+            "execution_resumed": 308.9379599550739
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "research_retrieval",
+      "decision_boundary_ms": 256.60561490803957,
+      "result": {
+        "selected_action": "retrieve",
+        "confidence": 0.95,
+        "evidence": "native_choice_probabilities",
+        "fallback_required": false,
+        "probabilities": {
+          "inspect": 0.01,
+          "sufficient": 0.0,
+          "agent": 0.03,
+          "retrieve": 0.96
+        },
+        "timing": {
+          "rtt_ms": 256.31106505170465,
+          "catalog_ms": 0.0002310844138264656,
+          "useful_overlap_ms": 0.0,
+          "request_body_bytes": 1076,
+          "blocking_ms": 256.5886030206457,
+          "queue_ms": 0.021741027012467384,
+          "preparation_ms": 0.04387402441352606,
+          "worker_roundtrip_ms": 256.4377359813079,
+          "validation_ms": 0.07222697604447603,
+          "resume_ms": 0.013025011867284775,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "monitor_started": 0.021741027012467384,
+            "request_sent": 0.06561505142599344,
+            "answer_received": 256.5033510327339,
+            "provider_request_started": 0.11774396989494562,
+            "provider_answer_received": 256.4288090215996,
+            "decision_validated": 256.5755780087784,
+            "execution_resumed": 256.5886030206457
+          }
+        }
+      }
+    },
+    {
+      "sample": 0,
+      "mode": "COOPERATIVE",
+      "case": "validation_heavy",
+      "decision_boundary_ms": 258.36735393386334,
+      "result": {
+        "selected_action": null,
+        "confidence": 0.81,
+        "evidence": "uncertain",
+        "fallback_required": true,
+        "probabilities": {
+          "continue": 0.05,
+          "agent": 0.03,
+          "validate": 0.86,
+          "more_context": 0.06
+        },
+        "timing": {
+          "rtt_ms": 258.0217869253829,
+          "catalog_ms": 0.000300002284348011,
+          "useful_overlap_ms": 0.0,
+          "request_body_bytes": 1062,
+          "blocking_ms": 258.3481380715966,
+          "queue_ms": 0.019508064724504948,
+          "preparation_ms": 0.04178890958428383,
+          "worker_roundtrip_ms": 258.17690207622945,
+          "validation_ms": 0.08041295222938061,
+          "resume_ms": 0.029526068828999996,
+          "timeline_ms": {
+            "request_queued": 0.0,
+            "monitor_started": 0.019508064724504948,
+            "request_sent": 0.061296974308788776,
+            "answer_received": 258.23819905053824,
+            "provider_request_started": 0.12195203453302383,
+            "provider_answer_received": 258.14373895991594,
+            "decision_validated": 258.3186120027676,
+            "execution_resumed": 258.3481380715966
+          }
+        }
+      }
+    }
+  ]
+}

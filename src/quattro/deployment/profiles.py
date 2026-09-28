@@ -12,6 +12,12 @@ CORE_DEPLOYMENT_MAPPINGS = {
     "release": ("src/quattro_release.py", ".local/bin/quattro_release.py"),
     "memory": ("src/quattro_memory.py", ".local/bin/quattro_memory.py"),
     "pr-review": ("src/quattro_pr_review.py", ".local/bin/quattro_pr_review.py"),
+    "shared-intelligence-cli": ("src/quattro-intelligence", ".local/bin/quattro-intelligence"),
+    "shared-intelligence-mcp": ("src/quattro-intelligence-mcp", ".local/bin/quattro-intelligence-mcp"),
+    "shared-intelligence-mcp-module": ("src/quattro_intelligence_mcp.py", ".local/bin/quattro_intelligence_mcp.py"),
+    "shared-intelligence-pi": ("adapters/pi/quattro-intelligence.ts", ".pi/agent/extensions/quattro-intelligence.ts"),
+    "image-mcp": ("src/quattro-image-mcp", ".local/bin/quattro-image-mcp"),
+    "image-mcp-module": ("src/quattro_image_mcp.py", ".local/bin/quattro_image_mcp.py"),
     "model-catalog": (
         "src/quattro/omniroute-model-catalog.json",
         ".local/share/quattro-ai/codex/omniroute-model-catalog.json",
@@ -23,10 +29,12 @@ CORE_DEPLOYMENT_MAPPINGS = {
             "__init__.py", "__main__.py", "adapters.py", "adaptive_routing.py",
             "benchmark.py", "cli.py", "interactive.py", "codex_turn_bridge.py",
             "native_session.py", "turn_gate.py", "turn_transport.py", "turn_routing.py",
-            "jev.py", "jev_shadow.py", "jev_worker.py",
+            "jev.py", "jev_shadow.py", "jev_worker.py", "jev_preferences.py", "provider_access.py",
+            "decision_taxonomy.py", "decision_service.py", "decision_mcp.py", "decision_launch.py", "runtime_milestones.py",
+            "bounded_command.py", "bounded_command_worker.py", "recovering_test.py", "tool_cli.py",
             "collaboration.py", "config.py", "containment.py", "delegation.py", "errors.py",
             "mandatory_context.py", "model_registry.py", "models.py", "omniroute.py", "paths.py", "policy.py",
-            "privacy.py", "recovery.py", "retrieval.py", "routing.py",
+            "privacy.py", "recovery.py", "retrieval.py", "shared_intelligence.py", "routing.py",
             "routing_intelligence.py", "routing_signals.py", "scheduler.py",
             "sessions.py", "store.py", "supervisor.py", "terminal_lifecycle.py",
             "validators.py", "workflow.py",
@@ -55,6 +63,10 @@ CORE_DEPLOYMENT_MAPPINGS = {
     "core-pi-turn-gate": (
         "src/quattro_agent/data/pi-turn-gate.ts",
         ".local/bin/quattro_agent/data/pi-turn-gate.ts",
+    ),
+    "core-pi-recovery-tools": (
+        "src/quattro_agent/data/pi-recovery-tools.ts",
+        ".local/bin/quattro_agent/data/pi-recovery-tools.ts",
     ),
     **{
         f"namespace-{relative.replace('/', '-').removesuffix('.py')}":

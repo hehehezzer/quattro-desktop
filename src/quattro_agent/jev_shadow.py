@@ -6,6 +6,7 @@ independent projection, never the task store or human-gold label store.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from contextlib import closing
 from contextvars import ContextVar
 from functools import wraps
@@ -21,6 +22,7 @@ import time
 from typing import Any
 import uuid
 
+from .provider_access import resolve_typesafe_credential
 from .jev import MODEL, SCHEMA_VERSION, JevFailure, decode, serialize_state, validate_response
 
 _SCOPE: ContextVar[list | None] = ContextVar("jev_scope", default=None)
@@ -32,6 +34,56 @@ FAILURES = frozenset({
     "http_error", "response_too_large", "invalid_json", "schema_mismatch", "unknown_choice",
     "catalog_schema", "model_unavailable", "invalid_state", "worker_failure", "cancelled",
 })
+
+
+class FailureCooldown:
+    """Bounded process-local provider suppression, isolated by evidence store.
+
+    No timer threads, persistence, retries, credentials or request text. Ordinary
+    cancellation and local telemetry failures are not provider health evidence.
+    """
+    PROVIDER_FAILURES = FAILURES - {"missing_credential", "cancelled"}
+
+    def __init__(self, *, threshold=3, cooldown_seconds=30.0, capacity=128,
+                 clock=time.monotonic):
+        self.threshold = threshold
+        self.cooldown_seconds = cooldown_seconds
+        self.capacity = capacity
+        self.clock = clock
+        self.lock = threading.Lock()
+        self.states: OrderedDict[Path, tuple[int, float]] = OrderedDict()
+
+    def suppressed(self, database: Path) -> bool:
+        with self.lock:
+            state = self.states.get(database)
+            if state is None:
+                return False
+            self.states.move_to_end(database)
+            failures, until = state
+            if until and self.clock() >= until:
+                del self.states[database]
+                return False
+            return failures >= self.threshold
+
+    def observe(self, database: Path, failure: str | None) -> None:
+        if failure is not None and failure not in self.PROVIDER_FAILURES:
+            return
+        with self.lock:
+            if failure is None:
+                self.states.pop(database, None)
+                return
+            failures, until = self.states.get(database, (0, 0.0))
+            # In-flight failures must not extend an already active cooldown.
+            failures = min(self.threshold, failures + 1)
+            if failures == self.threshold and not until:
+                until = self.clock() + self.cooldown_seconds
+            self.states[database] = (failures, until)
+            self.states.move_to_end(database)
+            while len(self.states) > self.capacity:
+                self.states.popitem(last=False)
+
+
+_COOLDOWN = FailureCooldown()
 
 
 def persist(database: Path, record: dict[str, Any]) -> bool:
@@ -108,7 +160,7 @@ class ShadowRun:
                 return
             if self.cancel.is_set():
                 raise JevFailure(self.stop_reason)
-            key = os.environ.get("TYPESAFE_API_KEY", "")
+            key = resolve_typesafe_credential()
             if not key:
                 raise JevFailure("missing_credential")
             serialization_started = time.perf_counter()
@@ -123,11 +175,13 @@ class ShadowRun:
             with self.lock:
                 if self.cancel.is_set():
                     raise JevFailure(self.stop_reason)
+                process_started = time.perf_counter()
                 self.process = self.popen(
                     [sys.executable, str(Path(__file__).with_name("jev_worker.py").resolve())],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                     env=env, cwd=str(Path(__file__).resolve().parent),
                 )
+                self.record["process_creation_ms"] = (time.perf_counter() - process_started) * 1000
             try:
                 remaining = max(0.001, self.timeout_ms / 1000 - (time.perf_counter() - self.started))
                 output, _ = self.process.communicate(payload, timeout=remaining)
@@ -142,10 +196,18 @@ class ShadowRun:
             result = decode(output)
             if not isinstance(result, dict):
                 raise JevFailure("worker_failure")
-            for name in ("jev_latency_ms", "catalog_latency_ms", "worker_latency_ms"):
+            for name in ("jev_latency_ms", "catalog_latency_ms", "worker_latency_ms", "client_construction_ms"):
                 value = result.get(name)
                 if type(value) in (int, float) and 0 <= value <= 60_000:
                     self.record[name] = value
+            worker_started = result.get("worker_started")
+            if type(worker_started) in (int, float) and process_started <= worker_started <= time.perf_counter():
+                self.record["worker_startup_ms"] = (worker_started - process_started) * 1000
+            for name in ("jev_request_started", "jev_request_finished"):
+                value = result.get(name)
+                if type(value) in (int, float) and self.started <= value <= time.perf_counter():
+                    self.record[name] = value
+            self.record["jev_rtt_ms"] = self.record["jev_latency_ms"]
             if result.get("failure_category"):
                 category = result["failure_category"]
                 raise JevFailure(category if category in FAILURES else "worker_failure")
@@ -173,6 +235,7 @@ class ShadowRun:
             self.request = ""
             self.record["finished_at"] = time.time()
             self.record["status"] = "failed" if self.record["failure_category"] else "success"
+            _COOLDOWN.observe(self.database, self.record["failure_category"])
             self.record["timeout_count"] = int(self.record["failure_category"] == "timeout")
             self.record["shadow_elapsed_ms"] = (time.perf_counter() - started) * 1000
             self.persistence_ok = persist(self.database, self.record)
@@ -191,6 +254,16 @@ class ShadowRun:
         self.thread.join()
         if self.annotations:
             self.record.update(self.annotations)
+            # Intersect actual evaluation and useful preparation intervals. Do
+            # not label process startup, catalog I/O or cancellation as Jev RTT.
+            begin = self.record.get("jev_request_started")
+            end = self.record.get("jev_request_finished")
+            local_begin = self.record.get("local_preparation_started")
+            local_end = self.record.get("local_preparation_finished")
+            self.record["jev_overlap_ms"] = (
+                max(0.0, min(end, local_end) - max(begin, local_begin)) * 1000
+                if all(value is not None for value in (begin, end, local_begin, local_end)) else None
+            )
             self.persistence_ok = persist(self.database, self.record)
             if not self.persistence_ok:
                 _LOG.warning("Jev telemetry annotations unavailable")
@@ -222,6 +295,18 @@ def lifecycle(function):
         runs: list[ShadowRun] = []
         token = _SCOPE.set(runs)
         evidence_token = _EVIDENCE.set({})
+        # Propagate only validated launcher options to execution adapters. This
+        # context survives routing into run_task, but never crosses sessions.
+        from .decision_launch import OPTIONS
+        options = None
+        try:
+            owner_config = getattr(args[0], "config", None) if args else None
+            config = owner_config() if callable(owner_config) else owner_config
+            if isinstance(config, dict):
+                options = dict(config.get("routing", {}).get("jev", {}))
+        except Exception:
+            pass  # Optional tool registration cannot prevent normal execution.
+        decision_token = OPTIONS.set(options)
         try:
             return function(*args, **kwargs)
         finally:
@@ -235,6 +320,7 @@ def lifecycle(function):
             finally:
                 _SCOPE.reset(token)
                 _EVIDENCE.reset(evidence_token)
+                OPTIONS.reset(decision_token)
     return wrapped
 
 
@@ -245,6 +331,9 @@ def start_shadow(*, config, database, request, decision, record_id=None,
     options = config.get("routing", {}).get("jev", {})
     if options.get("mode", "OFF") not in {"SHADOW", "COOPERATIVE"} or runs is None or runs:
         return
+    if _COOLDOWN.suppressed(database):
+        annotate(jev_suppressed="circuit_open", jev_requested=False)
+        return None
     if not _CAPACITY.acquire(blocking=False):
         _LOG.warning("Jev skipped: shadow capacity unavailable")
         return
@@ -252,7 +341,7 @@ def start_shadow(*, config, database, request, decision, record_id=None,
         run = ShadowRun(
             database=database, request=request, decision=decision,
             record_id=record_id, source_task_id=source_task_id,
-            authoritative_tier=authoritative_tier, timeout_ms=options.get("timeoutMs", 300),
+            authoritative_tier=authoritative_tier, timeout_ms=options.get("timeoutMs", 1500),
             state_json=state_json,
         )
         run.start()
