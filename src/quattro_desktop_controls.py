@@ -296,7 +296,10 @@ def eq_graph_active(target=None):
         return False
     if configured_target:
         links = run(["pw-link", "-l"], timeout=3)
-        if (EQ_NAME + "_output:output_") not in links or (configured_target + ":playback_") not in links:
+        relationship = re.compile(
+            rf"(?m)^quattro_eq_output:output_[^\n]*\n\s*\|-> {re.escape(configured_target)}:playback_"
+        )
+        if not relationship.search(links):
             return False
     return True
 
@@ -387,6 +390,50 @@ def eq_service_stopped(result):
     return eq_recover("DSP stopped unexpectedly; EQ bypassed")
 
 
+def eq_supervise():
+    """Own and continuously validate the DSP process and its physical link."""
+    state = load(CONFIG / "equalizer.json", {})
+    if state.get("enabled") is not True:
+        return {"enabled": False}
+    child = subprocess.Popen(["/usr/bin/pipewire", "-c", str(CONFIG / "equalizer.conf")])
+    stopping = False
+
+    def stop(_signum, _frame):
+        nonlocal stopping
+        stopping = True
+        child.terminate()
+
+    prior = {signal.SIGTERM: signal.signal(signal.SIGTERM, stop),
+             signal.SIGINT: signal.signal(signal.SIGINT, stop)}
+    try:
+        eq_activate()
+        while not stopping and child.poll() is None:
+            if not eq_graph_active(state.get("target")):
+                try:
+                    run(["pactl", "info"], timeout=2)
+                except RuntimeError:
+                    # The core graph is restarting. Preserve enabled state so
+                    # systemd can retry once Pulse/WirePlumber return.
+                    raise RuntimeError("Core audio graph is restarting")
+                eq_recover("DSP graph disconnected; EQ bypassed")
+                return {"enabled": False, "degraded": True}
+            time.sleep(1)
+        if stopping:
+            eq_recover("DSP service stopped; EQ bypassed")
+            return {"enabled": False, "degraded": True}
+        raise RuntimeError("Equalizer process exited unexpectedly")
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=2)
+        for signum, handler in prior.items():
+            signal.signal(signum, handler)
+
+
 def eq_apply(gains, preset="Custom", enabled=True, target=None):
     gains = gains_valid(gains)
     old = load(CONFIG / "equalizer.json", {})
@@ -453,13 +500,14 @@ def main():
     app.add_argument("start")
     eq = sub.add_parser("eq")
     eq.add_argument("action", choices=["status", "preset", "custom", "disable", "output",
-                                      "activate", "recover", "should-start", "service-stopped"])
+                                      "activate", "recover", "should-start", "service-stopped",
+                                      "supervise"])
     eq.add_argument("values", nargs="*")
     args = parser.parse_args()
     lock = None
     try:
         if args.command == "eq" and args.action not in {
-                "status", "activate", "recover", "should-start", "service-stopped"}:
+                "status", "activate", "recover", "should-start", "service-stopped", "supervise"}:
             CONFIG.mkdir(parents=True, exist_ok=True)
             lock = (CONFIG / "equalizer.lock").open("a")
             try:
@@ -491,6 +539,8 @@ def main():
             result = eq_should_start()
         elif args.action == "service-stopped":
             result = eq_service_stopped(" ".join(args.values))
+        elif args.action == "supervise":
+            result = eq_supervise()
         else:
             state = eq_status()
             if args.action == "preset":

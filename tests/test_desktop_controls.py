@@ -95,6 +95,10 @@ class DesktopControlsTests(unittest.TestCase):
             run.side_effect = [json.dumps([capture, playback]),
                 "quattro_eq_output:output_FL\n  |-> alsa_output.speakers:playback_FL\n"]
             self.assertTrue(desktop.eq_graph_active("alsa_output.speakers"))
+            run.side_effect = [json.dumps([capture, playback]),
+                "quattro_eq_output:output_FL\n  |-> alsa_output.wrong:playback_FL\n"
+                "unrelated:output_FL\n  |-> alsa_output.speakers:playback_FL\n"]
+            self.assertFalse(desktop.eq_graph_active("alsa_output.speakers"))
 
     def test_eq_activation_waits_through_session_manager_startup(self):
         sinks = [{"index": 12, "name": "alsa_output.pci-hdmi"}]
