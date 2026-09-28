@@ -32,6 +32,7 @@ PRESETS = {
     "Movie": [4, 3, 2, 0, -1, 1, 2, 1, 1, 0],
 }
 EQ_NAME = "quattro_eq"
+EQ_RESTART_MARKER = CONFIG / "equalizer.restarting"
 
 
 def run(argv, timeout=8):
@@ -434,6 +435,8 @@ def eq_supervise():
                 missing_since = None
             time.sleep(1)
         if stopping:
+            if EQ_RESTART_MARKER.exists():
+                return {"restarting": True}
             eq_recover("DSP service stopped; EQ bypassed")
             return {"enabled": False, "degraded": True}
         try:
@@ -476,7 +479,11 @@ def eq_apply(gains, preset="Custom", enabled=True, target=None):
             nodes = eq_nodes()
             if not eq_graph_active(target) or target != old.get("target"):
                 run(["systemctl", "--user", "enable", "quattro-equalizer.service"])
-                run(["systemctl", "--user", "restart", "quattro-equalizer.service"])
+                atomic(EQ_RESTART_MARKER, "reconfigure\n")
+                try:
+                    run(["systemctl", "--user", "restart", "quattro-equalizer.service"])
+                finally:
+                    EQ_RESTART_MARKER.unlink(missing_ok=True)
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline:
                     nodes = eq_nodes()
