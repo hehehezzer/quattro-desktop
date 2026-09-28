@@ -407,6 +407,7 @@ def eq_supervise():
              signal.SIGINT: signal.signal(signal.SIGINT, stop)}
     try:
         eq_activate()
+        missing_since = None
         while not stopping and child.poll() is None:
             if not eq_graph_active(state.get("target")):
                 try:
@@ -415,8 +416,12 @@ def eq_supervise():
                     # The core graph is restarting. Preserve enabled state so
                     # systemd can retry once Pulse/WirePlumber return.
                     raise RuntimeError("Core audio graph is restarting")
-                eq_recover("DSP graph disconnected; EQ bypassed")
-                return {"enabled": False, "degraded": True}
+                missing_since = missing_since or time.monotonic()
+                if time.monotonic() - missing_since >= 5:
+                    eq_recover("DSP graph disconnected; EQ bypassed")
+                    return {"enabled": False, "degraded": True}
+            else:
+                missing_since = None
             time.sleep(1)
         if stopping:
             eq_recover("DSP service stopped; EQ bypassed")
