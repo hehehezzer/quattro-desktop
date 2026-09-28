@@ -16,7 +16,7 @@ from .turn_gate import TurnGate
 from .turn_transport import TurnTransport
 
 
-def _codex_remote_arguments(command):
+def _codex_remote_arguments(command, *, resume=False):
     """Move local-only roots to the server and mirror the selected access policy."""
     frontend, backend, roots = [command[0]], [], []
     policy_flags = {'-s': 'sandbox_mode', '--sandbox': 'sandbox_mode',
@@ -41,14 +41,16 @@ def _codex_remote_arguments(command):
                 if value not in roots:
                     roots.append(value)
             else:
-                frontend.extend(command[index:index + consumed])
+                if not (resume and flag in policy_flags):
+                    frontend.extend(command[index:index + consumed])
                 if flag in policy_flags:
                     backend.extend(['-c', f'{policy_flags[flag]}={json.dumps(value, ensure_ascii=False)}'])
                 elif value.startswith('developer_instructions='):
                     backend.extend(['-c', value])
             index += consumed
             continue
-        frontend.append(arg)
+        if not (resume and arg == '--dangerously-bypass-approvals-and-sandbox'):
+            frontend.append(arg)
         if arg == '--dangerously-bypass-approvals-and-sandbox':
             # This flag is emitted only after the caller's explicit confirmation.
             backend.extend(['-c', 'sandbox_mode="danger-full-access"',
@@ -62,7 +64,7 @@ def _codex_remote_arguments(command):
 
 def launch_routed_native(*, agent, binary, command, env, config, directory,
                          session_id, account, state_root, runtime_factory,
-                         profile_name=None, confirm_full_access=False):
+                         profile_name=None, confirm_full_access=False, resume=False):
     """Keep the actual TUI on inherited terminal handles; own only its backend."""
     if config.get('routing', {}).get('jev', {}).get('mode', 'OFF') != 'OFF':
         if typesafe_credential_status() == 'missing':
@@ -149,7 +151,7 @@ def launch_routed_native(*, agent, binary, command, env, config, directory,
                 ]
                 socket_path = Path(temporary) / 'rpc.sock'
                 # Remote TUI rejects --add-dir; workspace grants belong to its server.
-                command, policy_overrides = _codex_remote_arguments(command)
+                command, policy_overrides = _codex_remote_arguments(command, resume=resume)
                 decision_policy = policy_profile(
                     profile_name or config.get('defaultPolicyProfile', 'workspace-write'),
                     project_root=directory,
