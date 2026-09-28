@@ -16,7 +16,7 @@ done
 pkill -TERM -x qs 2>/dev/null || true
 pkill -TERM -x quickshell 2>/dev/null || true
 
-nohup quickshell -p /home/heartdev/.config/quickshell/shell.qml \
+nohup quickshell -p "$HOME/.config/quickshell/shell.qml" \
     > /tmp/quickshell.log 2>&1 < /dev/null &
 
 disown
