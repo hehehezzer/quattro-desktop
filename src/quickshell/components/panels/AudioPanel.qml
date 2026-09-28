@@ -64,7 +64,12 @@ Item {
         function status(): string {
             return JSON.stringify({output: root.sink ? root.sink.name : "", input: root.source ? root.source.name : "",
                 volume: root.sinkVolume, muted: root.sinkMuted, microphoneVolume: root.sourceVolume,
-                microphoneMuted: root.sourceMuted, eq: equalizer.snapshot})
+                microphoneMuted: root.sourceMuted, eq: {
+                    active: equalizer.active,
+                    enabled: equalizer.snapshot.enabled === true,
+                    degraded: equalizer.snapshot.degraded === true,
+                    preset: equalizer.snapshot.preset || ""
+                }})
         }
         function volume(percent: int): void { root.setSinkVolume(percent / 100) }
         function mute(muted: bool): void { if (root.sink && root.sink.audio) root.sink.audio.muted = muted }

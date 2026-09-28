@@ -16,6 +16,12 @@ if sys.platform == "linux":
 
 @unittest.skipUnless(sys.platform == "linux", "Desktop controls require Linux")
 class DesktopControlsTests(unittest.TestCase):
+    def test_audio_ipc_serializes_only_stable_eq_fields(self):
+        qml = (Path(__file__).parents[1] / "src/quickshell/components/panels/AudioPanel.qml").read_text()
+        self.assertNotIn("eq: equalizer.snapshot}", qml)
+        for field in ("active", "enabled", "degraded", "preset"):
+            self.assertIn(field + ": equalizer.", qml)
+
     def test_coordinates_validate_finiteness_and_bounds(self):
         for lat, lon in [(91, 0), (0, 181), (float("nan"), 0), (0, float("inf"))]:
             with self.subTest(lat=lat, lon=lon), self.assertRaises(ValueError):
