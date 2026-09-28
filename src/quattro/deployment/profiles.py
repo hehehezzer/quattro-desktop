@@ -100,6 +100,7 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
     },
     "menu-helper": ("src/quattro-menu", ".local/bin/quattro-menu"),
     "session-helper": ("src/quattro-session", ".local/bin/quattro-session"),
+    "quickshell-restart-helper": ("src/restart-quickshell", ".local/bin/restart-quickshell"),
     "theme-helper": ("src/quattro-theme", ".local/bin/quattro-theme"),
     "night-light-helper": ("src/quattro-night-light", ".local/bin/quattro-night-light"),
     "screenshot-helper": ("src/quattro-screenshot", ".local/bin/quattro-screenshot"),
