@@ -458,7 +458,8 @@ def main():
     args = parser.parse_args()
     lock = None
     try:
-        if args.command == "eq" and args.action not in {"status", "activate", "recover"}:
+        if args.command == "eq" and args.action not in {
+                "status", "activate", "recover", "should-start", "service-stopped"}:
             CONFIG.mkdir(parents=True, exist_ok=True)
             lock = (CONFIG / "equalizer.lock").open("a")
             try:
