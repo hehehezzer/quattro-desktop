@@ -81,10 +81,13 @@ ColumnLayout {
                 font.bold: true
             }
             Text {
-                text: root.error ? "Unavailable" : root.active
-                    ? (root.outputName === "quattro_eq" ? "Active · " : "Select Equalizer output · ") + root.snapshot.preset
+                text: root.error ? "Unavailable" : root.snapshot.degraded
+                    ? "Bypassed · DSP unavailable"
+                    : root.active
+                    ? (root.outputName === "quattro_eq" ? "Active · " : "Bypassed · ") + root.snapshot.preset
                     : "Off · original audio path"
-                color: root.error ? QuattroTheme.Theme.danger : root.active ? QuattroTheme.Theme.success : QuattroTheme.Theme.textMuted
+                color: root.error || root.snapshot.degraded ? QuattroTheme.Theme.danger
+                    : root.active ? QuattroTheme.Theme.success : QuattroTheme.Theme.textMuted
                 font.pixelSize: 10
             }
         }

@@ -5,8 +5,9 @@ Requires=pipewire.service
 
 [Service]
 ExecStart=/usr/bin/pipewire -c %h/.config/quattro/equalizer.conf
-Restart=on-failure
-RestartSec=3
+ExecStartPost=/usr/bin/python3 %h/.local/bin/quattro_desktop_controls.py eq activate
+ExecStopPost=/usr/bin/python3 %h/.local/bin/quattro_desktop_controls.py eq recover
+Restart=no
 
 [Install]
 WantedBy=default.target

@@ -275,9 +275,75 @@ def eq_nodes():
             and node.get("info", {}).get("props", {}).get("node.name") == EQ_NAME]
 
 
+def physical_sinks(sinks):
+    """Return stable ALSA sink names, excluding unrelated virtual sinks."""
+    return [sink["name"] for sink in sinks
+            if isinstance(sink.get("name"), str)
+            and sink["name"].startswith("alsa_output.")]
+
+
+def eq_move_streams(sinks, target, source_sink=None):
+    source_index = next((sink.get("index") for sink in sinks
+                         if sink.get("name") == source_sink), None)
+    for stream in json.loads(run(["pactl", "-f", "json", "list", "sink-inputs"])):
+        if source_sink is None or stream.get("sink") == source_index:
+            if stream.get("properties", {}).get("node.name") != "quattro_eq_output":
+                run(["pactl", "move-sink-input", str(stream["index"]), target])
+
+
+def eq_recover(reason="DSP unavailable"):
+    """Bypass a missing DSP graph to an available physical output."""
+    state = load(CONFIG / "equalizer.json", {})
+    sinks = json.loads(run(["pactl", "-f", "json", "list", "sinks"]))
+    physical = physical_sinks(sinks)
+    default = run(["pactl", "get-default-sink"]).strip()
+    target = state.get("target") if state.get("target") in physical else None
+    if target is None and default in physical:
+        target = default
+    if target is None and physical:
+        target = physical[0]
+    if target is None:
+        raise RuntimeError("No physical audio output is available")
+    if default == EQ_NAME or default not in physical:
+        run(["pactl", "set-default-sink", target])
+    eq_move_streams(sinks, target, EQ_NAME)
+    recovered = {**state, "enabled": False, "target": target, "degraded": True,
+                 "error": reason[:160]}
+    atomic(CONFIG / "equalizer.json", json.dumps(recovered))
+    return {**recovered, "bands": BANDS, "presets": list(PRESETS), "active": False}
+
+
+def eq_activate():
+    """Fail startup unless the persisted target and DSP sink are both live."""
+    state = load(CONFIG / "equalizer.json", {})
+    sinks = json.loads(run(["pactl", "-f", "json", "list", "sinks"]))
+    target = state.get("target")
+    if target not in physical_sinks(sinks):
+        eq_recover("Saved output is unavailable; EQ bypassed")
+        raise RuntimeError("Saved equalizer output is unavailable")
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        if eq_nodes():
+            break
+        time.sleep(.1)
+    else:
+        eq_recover("DSP did not start; EQ bypassed")
+        raise RuntimeError("PipeWire equalizer did not become available")
+    run(["pactl", "set-default-sink", EQ_NAME])
+    eq_move_streams(sinks, EQ_NAME)
+    active = {**state, "enabled": True, "degraded": False}
+    active.pop("error", None)
+    atomic(CONFIG / "equalizer.json", json.dumps(active))
+    return {**active, "bands": BANDS, "presets": list(PRESETS), "active": True}
+
+
 def eq_status():
     state = load(CONFIG / "equalizer.json", {"gains": [0] * 10, "preset": "Flat", "enabled": False})
-    state.update({"bands": BANDS, "presets": list(PRESETS), "active": bool(eq_nodes())})
+    active = bool(eq_nodes())
+    state.update({"bands": BANDS, "presets": list(PRESETS), "active": active})
+    if state.get("enabled") and not active:
+        state.update({"enabled": False, "degraded": True,
+                      "error": "DSP unavailable; using physical output"})
     return state
 
 
@@ -285,7 +351,7 @@ def eq_apply(gains, preset="Custom", enabled=True, target=None):
     gains = gains_valid(gains)
     old = load(CONFIG / "equalizer.json", {})
     sinks = json.loads(run(["pactl", "-f", "json", "list", "sinks"]))
-    physical = [s["name"] for s in sinks if s["name"] != EQ_NAME]
+    physical = physical_sinks(sinks)
     default = run(["pactl", "get-default-sink"]).strip()
     target = target or (default if default != EQ_NAME else old.get("target"))
     if enabled and target not in physical:
@@ -294,13 +360,12 @@ def eq_apply(gains, preset="Custom", enabled=True, target=None):
         if default == EQ_NAME and old.get("target") in physical:
             run(["pactl", "set-default-sink", old["target"]])
         if old.get("target") in physical:
-            eq_sink = next((s["index"] for s in sinks if s["name"] == EQ_NAME), None)
-            for stream in json.loads(run(["pactl", "-f", "json", "list", "sink-inputs"])):
-                if stream.get("sink") == eq_sink:
-                    run(["pactl", "move-sink-input", str(stream["index"]), old["target"]])
+            eq_move_streams(sinks, old["target"], EQ_NAME)
         run(["systemctl", "--user", "disable", "--now", "quattro-equalizer.service"])
     else:
         atomic(CONFIG / "equalizer.conf", eq_config(gains, target))
+        atomic(CONFIG / "equalizer.json", json.dumps({"gains": gains, "preset": preset,
+            "enabled": True, "target": target, "headroom": sum(max(0, g) for g in gains)}))
         nodes = eq_nodes()
         if not nodes or target != old.get("target"):
             run(["systemctl", "--user", "enable", "quattro-equalizer.service"])
@@ -320,11 +385,9 @@ def eq_apply(gains, preset="Custom", enabled=True, target=None):
         run(["pw-cli", "set-param", str(nodes[0]["id"]), "Props", spa({"params": params})])
         if default != EQ_NAME:
             run(["pactl", "set-default-sink", EQ_NAME])
-            for stream in json.loads(run(["pactl", "-f", "json", "list", "sink-inputs"])):
-                if stream.get("properties", {}).get("node.name") != "quattro_eq_output":
-                    run(["pactl", "move-sink-input", str(stream["index"]), EQ_NAME])
+            eq_move_streams(sinks, EQ_NAME)
     state = {"gains": gains, "preset": preset, "enabled": enabled, "target": target or old.get("target", ""),
-             "headroom": sum(max(0, g) for g in gains)}
+             "headroom": sum(max(0, g) for g in gains), "degraded": False}
     atomic(CONFIG / "equalizer.json", json.dumps(state))
     return {**state, "bands": BANDS, "presets": list(PRESETS), "active": enabled}
 
@@ -345,12 +408,13 @@ def main():
     app.add_argument("pid", type=int)
     app.add_argument("start")
     eq = sub.add_parser("eq")
-    eq.add_argument("action", choices=["status", "preset", "custom", "disable", "output"])
+    eq.add_argument("action", choices=["status", "preset", "custom", "disable", "output",
+                                      "activate", "recover"])
     eq.add_argument("values", nargs="*")
     args = parser.parse_args()
     lock = None
     try:
-        if args.command == "eq" and args.action != "status":
+        if args.command == "eq" and args.action not in {"status", "activate", "recover"}:
             CONFIG.mkdir(parents=True, exist_ok=True)
             lock = (CONFIG / "equalizer.lock").open("a")
             try:
@@ -374,6 +438,10 @@ def main():
             result = application_action(args.action, args.address, args.pid, args.start)
         elif args.action == "status":
             result = eq_status()
+        elif args.action == "activate":
+            result = eq_activate()
+        elif args.action == "recover":
+            result = eq_recover("DSP stopped; EQ bypassed")
         else:
             state = eq_status()
             if args.action == "preset":

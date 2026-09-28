@@ -25,6 +25,33 @@ class DeploymentManifestTests(unittest.TestCase):
     REVISION = "a" * 40
     PREVIOUS_REVISION = "b" * 40
 
+    def test_status_detects_manifest_inventory_missing_from_installed_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "source"; deployed = root / "home"
+            source.mkdir(); deployed.mkdir()
+            mappings = {
+                "first": ("src/first", ".local/bin/first"),
+                "new-desktop-file": ("src/new", ".config/quickshell/new.qml"),
+            }
+            for source_path, deployed_path in mappings.values():
+                left = source / source_path; right = deployed / deployed_path
+                left.parent.mkdir(parents=True, exist_ok=True); right.parent.mkdir(parents=True, exist_ok=True)
+                left.write_text("same", encoding="utf-8"); right.write_text("same", encoding="utf-8")
+            manifest_path = root / "desktop-manifest.json"
+            deployment.write_manifest_atomic(manifest_path, deployment.build_manifest(
+                source, deployed, {"first": mappings["first"]}, revision=self.REVISION,
+            ))
+            with mock.patch.multiple(
+                cli, HOME=deployed, DEFAULT_WORKSPACE=source,
+                DESKTOP_DEPLOYMENT_MANIFEST=manifest_path,
+                DESKTOP_DEPLOYMENT_MAPPINGS=mappings,
+            ), mock.patch.object(cli, "_source_checkout_revision", return_value=(self.REVISION, "clean")):
+                status = cli._deployment_status("desktop")
+            self.assertEqual(status["status"], "drift")
+            self.assertEqual(status["inventoryParity"]["missing"], ["new-desktop-file"])
+            self.assertFalse(status["inventoryParity"]["allMatch"])
+
     def test_profile_rollback_is_isolated_and_rewrites_healthy_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

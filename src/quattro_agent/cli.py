@@ -3232,13 +3232,41 @@ def _deployment_status(profile: str) -> dict[str, Any]:
         if source_revision == manifest["gitRevision"]
         else verify_manifest_deployed_files(manifest, HOME)
     )
+    expected_inventory = {
+        name: {"sourcePath": source, "deployedPath": deployed}
+        for name, (source, deployed) in mappings.items()
+    }
+    manifest_inventory = {
+        record["name"]: {
+            "sourcePath": record["sourcePath"],
+            "deployedPath": record["deployedPath"],
+        }
+        for record in manifest["files"]
+    }
+    absent_paths = set(manifest.get("absentPaths", []))
+    missing_inventory = sorted(
+        name for name, record in expected_inventory.items()
+        if name not in manifest_inventory and record["deployedPath"] not in absent_paths
+    )
+    extra_inventory = sorted(set(manifest_inventory) - set(expected_inventory))
+    changed_inventory = sorted(
+        name for name in set(expected_inventory) & set(manifest_inventory)
+        if expected_inventory[name] != manifest_inventory[name]
+    )
+    inventory_match = not (missing_inventory or extra_inventory or changed_inventory)
     return {
         "profile": profile,
         "installed": True,
-        "status": "ok" if manifest["parity"]["allMatch"] and live["allMatch"] else "drift",
+        "status": "ok" if manifest["parity"]["allMatch"] and live["allMatch"] and inventory_match else "drift",
         "manifestPath": str(manifest_path),
         "manifest": manifest,
         "liveParity": live,
+        "inventoryParity": {
+            "allMatch": inventory_match,
+            "missing": missing_inventory,
+            "extra": extra_inventory,
+            "changed": changed_inventory,
+        },
     }
 
 

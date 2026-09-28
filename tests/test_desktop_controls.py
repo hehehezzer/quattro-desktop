@@ -37,6 +37,33 @@ class DesktopControlsTests(unittest.TestCase):
         self.assertNotIn(",", graph)
         self.assertIn('"Gain 1" = 1.0', desktop.eq_config([0] * 10, "sink"))
 
+    def test_eq_recovery_bypasses_dead_virtual_sink(self):
+        sinks = [
+            {"index": 10, "name": "quattro_eq"},
+            {"index": 11, "name": "talker_meeting_mix"},
+            {"index": 12, "name": "alsa_output.pci-hdmi"},
+        ]
+        streams = [{"index": 20, "sink": 10, "properties": {"node.name": "spotify"}}]
+        with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp)), \
+                patch.object(desktop, "run") as run:
+            desktop.atomic(desktop.CONFIG / "equalizer.json", json.dumps({
+                "enabled": True, "target": "missing-ephemeral-id", "gains": [0] * 10,
+            }))
+            run.side_effect = [json.dumps(sinks), "quattro_eq\n", "", json.dumps(streams), ""]
+            result = desktop.eq_recover("test failure")
+        self.assertFalse(result["enabled"])
+        self.assertTrue(result["degraded"])
+        self.assertEqual(result["target"], "alsa_output.pci-hdmi")
+        self.assertIn((["pactl", "set-default-sink", "alsa_output.pci-hdmi"],),
+                      [call.args for call in run.call_args_list])
+        self.assertIn((["pactl", "move-sink-input", "20", "alsa_output.pci-hdmi"],),
+                      [call.args for call in run.call_args_list])
+
+    def test_only_alsa_outputs_are_eligible_eq_targets(self):
+        sinks = [{"name": "quattro_eq"}, {"name": "talker_meeting_mix"},
+                 {"name": "alsa_output.usb-speakers"}]
+        self.assertEqual(desktop.physical_sinks(sinks), ["alsa_output.usb-speakers"])
+
     def test_weather_fresh_setup_uses_explicit_generic_manila(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp) / "config"), patch.object(desktop, "CACHE", Path(temp) / "cache"), patch.object(desktop.urllib.request, "urlopen", side_effect=OSError("offline")):
             result = desktop.weather()
