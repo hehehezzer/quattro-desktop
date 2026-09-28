@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+"""Fetch, normalize, and cache conservative LRCLIB matches for Quickshell."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import tempfile
+import time
+import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any, Callable
+
+SCHEMA_VERSION = 1
+PROVIDER = "LRCLIB"
+BASE_URL = "https://lrclib.net"
+USER_AGENT = "QuattroDesktop/1.0 (https://github.com/hehehezzer/quattro-desktop)"
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+REQUEST_TIMEOUT = 8
+POSITIVE_TTL = 30 * 24 * 60 * 60
+NEGATIVE_TTL = 6 * 60 * 60
+MAX_CACHE_ENTRIES = 256
+MAX_METADATA_CHARS = 300
+MAX_PLAIN_CHARS = 256 * 1024
+MAX_SYNCED_LINES = 2000
+LRC_TIMESTAMP = re.compile(r"\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]")
+LRC_METADATA = re.compile(r"^\[[A-Za-z][^]]*:")
+SPACE = re.compile(r"\s+")
+PUNCTUATION = re.compile(r"[^\w]+", re.UNICODE)
+ARTIST_SEPARATOR = re.compile(r"\s*(?:,|&|\band\b|\bfeat(?:uring)?\.?\b|\bft\.?\b|\bx\b)\s*", re.IGNORECASE)
+
+
+def cache_root() -> Path:
+    base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return base / "quattro" / "lyrics"
+
+
+def normalized_text(value: object) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return SPACE.sub(" ", PUNCTUATION.sub(" ", text)).strip()
+
+
+def normalized_artists(value: object) -> tuple[str, ...]:
+    raw = unicodedata.normalize("NFKC", str(value or ""))
+    artists: list[str] = []
+    for part in ARTIST_SEPARATOR.split(raw):
+        item = normalized_text(part)
+        if item and item not in artists:
+            artists.append(item)
+    return tuple(artists)
+
+
+def track_identity(title: str, artist: str, duration: float | None) -> str:
+    payload = {"artist": normalized_artists(artist), "duration": round(duration or 0),
+               "title": normalized_text(title), "version": SCHEMA_VERSION}
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def active_line_index(lines: list[dict[str, Any]], position_ms: int) -> int:
+    low, high, result = 0, len(lines) - 1, -1
+    while low <= high:
+        middle = (low + high) // 2
+        if int(lines[middle].get("timestampMs", 0)) <= position_ms:
+            result = middle
+            low = middle + 1
+        else:
+            high = middle - 1
+    return result
+
+
+def parse_lrc(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, str):
+        return []
+    parsed: list[dict[str, Any]] = []
+    for raw_line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if LRC_METADATA.match(raw_line):
+            continue
+        matches = list(LRC_TIMESTAMP.finditer(raw_line))
+        if not matches:
+            continue
+        text = LRC_TIMESTAMP.sub("", raw_line).strip()
+        if not text:
+            continue
+        for match in matches:
+            fraction = (match.group(3) or "0")[:3].ljust(3, "0")
+            timestamp = (int(match.group(1)) * 60 + int(match.group(2))) * 1000 + int(fraction)
+            if len(parsed) >= MAX_SYNCED_LINES:
+                break
+            parsed.append({"timestampMs": timestamp, "text": text[:2000]})
+    parsed.sort(key=lambda line: line["timestampMs"])
+    deduplicated: list[dict[str, Any]] = []
+    for line in parsed:
+        if not deduplicated or line != deduplicated[-1]:
+            deduplicated.append(line)
+    return deduplicated
+
+
+def record_matches(record: object, title: str, artist: str, duration: float | None) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if normalized_text(record.get("trackName") or record.get("name")) != normalized_text(title):
+        return False
+    wanted_artists = normalized_artists(artist)
+    found_artists = normalized_artists(record.get("artistName"))
+    if not wanted_artists or not found_artists or set(wanted_artists) != set(found_artists):
+        return False
+    if duration and 1 <= duration <= 3600:
+        try:
+            provider_duration = float(record["duration"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if abs(provider_duration - duration) > 2.1:
+            return False
+    return True
+
+
+def record_rank(record: dict[str, Any], album: str, duration: float | None) -> tuple[int, int, float]:
+    album_match = int(bool(album) and normalized_text(record.get("albumName")) == normalized_text(album))
+    synced = int(bool(parse_lrc(record.get("syncedLyrics"))))
+    try:
+        difference = abs(float(record.get("duration", 0)) - float(duration or 0))
+    except (TypeError, ValueError):
+        difference = 9999.0
+    return (album_match, synced, -difference)
+
+
+def select_record(records: object, title: str, artist: str, album: str, duration: float | None) -> dict[str, Any] | None:
+    if isinstance(records, dict):
+        records = [records]
+    if not isinstance(records, list):
+        return None
+    matches = [record for record in records if record_matches(record, title, artist, duration)]
+    if not matches:
+        return None
+    matches.sort(key=lambda record: record_rank(record, album, duration), reverse=True)
+    return matches[0]
+
+
+def normalize_record(record: dict[str, Any], key: str) -> dict[str, Any]:
+    lines = parse_lrc(record.get("syncedLyrics"))
+    plain = record.get("plainLyrics")
+    plain_text = plain.replace("\r\n", "\n").replace("\r", "\n").strip()[:MAX_PLAIN_CHARS] if isinstance(plain, str) else ""
+    instrumental = bool(record.get("instrumental"))
+    if instrumental:
+        state, lines, plain_text = "instrumental", [], ""
+    elif lines:
+        state = "synced"
+    elif plain_text:
+        state = "plain"
+    else:
+        state = "unavailable"
+    return {
+        "schemaVersion": SCHEMA_VERSION, "state": state, "trackKey": key,
+        "synced": state == "synced", "instrumental": instrumental,
+        "lines": lines, "plainText": plain_text or None, "source": PROVIDER,
+        "providerId": record.get("id") if isinstance(record.get("id"), int) else None,
+        "matchedTrack": {"title": str(record.get("trackName") or record.get("name") or ""),
+                         "artist": str(record.get("artistName") or ""),
+                         "album": str(record.get("albumName") or ""),
+                         "duration": record.get("duration")},
+    }
+
+
+def unavailable(key: str, *, cached: bool = False) -> dict[str, Any]:
+    return {"schemaVersion": SCHEMA_VERSION, "state": "unavailable", "trackKey": key,
+            "synced": False, "instrumental": False, "lines": [], "plainText": None,
+            "source": PROVIDER, "cached": cached}
+
+
+def error_result(key: str, message: str, *, retry_after: int | None = None) -> dict[str, Any]:
+    result = {"schemaVersion": SCHEMA_VERSION, "state": "error", "trackKey": key,
+              "synced": False, "instrumental": False, "lines": [], "plainText": None,
+              "source": PROVIDER, "message": message}
+    if retry_after is not None:
+        result["retryAfter"] = retry_after
+    return result
+
+
+def atomic_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = ""
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=".lyrics-", delete=False) as handle:
+            temporary = handle.name
+            json.dump(value, handle, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        if path.stat().st_size > MAX_RESPONSE_BYTES:
+            return None
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def cache_path(key: str, root: Path) -> Path:
+    return root / f"{key}.json"
+
+
+def read_cache(key: str, root: Path, now: float) -> dict[str, Any] | None:
+    path = cache_path(key, root)
+    payload = read_json(path)
+    if not payload or payload.get("schemaVersion") != SCHEMA_VERSION or payload.get("trackKey") != key:
+        return None
+    try:
+        if float(payload["expiresAt"]) <= now:
+            path.unlink(missing_ok=True)
+            return None
+    except (KeyError, TypeError, ValueError, OSError):
+        return None
+    result = payload.get("result")
+    return {**result, "cached": True} if isinstance(result, dict) else None
+
+
+def write_cache(key: str, result: dict[str, Any], root: Path, now: float) -> None:
+    ttl = NEGATIVE_TTL if result.get("state") == "unavailable" else POSITIVE_TTL
+    atomic_json(cache_path(key, root), {"schemaVersion": SCHEMA_VERSION, "trackKey": key,
+                "fetchedAt": int(now), "expiresAt": int(now + ttl),
+                "result": {**result, "cached": False, "fetchedAt": int(now)}})
+    entries = sorted((p for p in root.glob("*.json") if p.name != "rate-limit.json"),
+                     key=lambda path: path.stat().st_mtime, reverse=True)
+    for old in entries[MAX_CACHE_ENTRIES:]:
+        old.unlink(missing_ok=True)
+
+
+def throttle_remaining(root: Path, now: float) -> int:
+    payload = read_json(root / "rate-limit.json")
+    try:
+        return max(0, int(float(payload["until"]) - now)) if payload else 0
+    except (KeyError, TypeError, ValueError):
+        return 0
+
+
+def fetch_json(url: str, opener: Callable[..., Any] = urllib.request.urlopen) -> object:
+    request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": USER_AGENT})
+    with opener(request, timeout=REQUEST_TIMEOUT) as response:
+        final = urllib.parse.urlsplit(response.geturl())
+        if final.scheme != "https" or final.netloc != "lrclib.net":
+            raise ValueError("Unexpected provider redirect")
+        if "application/json" not in response.headers.get("Content-Type", "").lower():
+            raise ValueError("Unexpected provider response")
+        data = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(data) > MAX_RESPONSE_BYTES:
+        raise ValueError("Provider response is too large")
+    return json.loads(data.decode("utf-8"))
+
+
+def provider_lookup(title: str, artist: str, album: str, duration: float | None,
+                    fetcher: Callable[[str], object] = fetch_json) -> object:
+    parameters: dict[str, str] = {"track_name": title, "artist_name": artist}
+    if album:
+        parameters["album_name"] = album
+    if duration and 1 <= duration <= 3600:
+        parameters["duration"] = str(round(duration))
+    try:
+        return fetcher(f"{BASE_URL}/api/get?{urllib.parse.urlencode(parameters)}")
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+        error.close()
+    time.sleep(0.25)
+    search = {"track_name": title, "artist_name": artist}
+    return fetcher(f"{BASE_URL}/api/search?{urllib.parse.urlencode(search)}")
+
+
+def lookup(title: str, artist: str, album: str = "", duration: float | None = None, *,
+           root: Path | None = None, now: float | None = None,
+           provider: Callable[[str, str, str, float | None], object] = provider_lookup) -> dict[str, Any]:
+    title, artist, album = title.strip(), artist.strip(), album.strip()
+    duration = duration if duration and 1 <= duration <= 3600 else None
+    key = track_identity(title, artist, duration)
+    if (not title or not artist or len(title) > MAX_METADATA_CHARS
+            or len(artist) > MAX_METADATA_CHARS or len(album) > MAX_METADATA_CHARS):
+        return unavailable(key)
+    root = root or cache_root()
+    now = time.time() if now is None else now
+    cached = read_cache(key, root, now)
+    if cached:
+        return cached
+    remaining = throttle_remaining(root, now)
+    if remaining:
+        return error_result(key, "Lyrics provider is temporarily unavailable", retry_after=remaining)
+    try:
+        records = provider(title, artist, album, duration)
+        record = select_record(records, title, artist, album, duration)
+        result = normalize_record(record, key) if record else unavailable(key)
+    except urllib.error.HTTPError as error:
+        try:
+            if error.code == 429:
+                try:
+                    retry_after = min(3600, max(1, int(error.headers.get("Retry-After", "60"))))
+                except (TypeError, ValueError):
+                    retry_after = 60
+                try:
+                    atomic_json(root / "rate-limit.json", {"schemaVersion": SCHEMA_VERSION,
+                                                           "until": int(now + retry_after)})
+                except OSError:
+                    pass
+                return error_result(key, "Lyrics provider is temporarily unavailable", retry_after=retry_after)
+            return error_result(key, "Lyrics provider is unavailable")
+        finally:
+            error.close()
+    except (OSError, ValueError, urllib.error.URLError):
+        return error_result(key, "Lyrics provider is unavailable")
+    try:
+        write_cache(key, result, root, now)
+    except OSError:
+        pass
+    return {**result, "cached": False, "fetchedAt": int(now)}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    command = subparsers.add_parser("lookup")
+    command.add_argument("--title", required=True)
+    command.add_argument("--artist", required=True)
+    command.add_argument("--album", default="")
+    command.add_argument("--duration", type=float)
+    args = parser.parse_args(argv)
+    print(json.dumps(lookup(args.title, args.artist, args.album, args.duration),
+                     ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Pipewire
@@ -19,6 +21,9 @@ PanelWindow {
         left: true
         right: true
     }
+
+    readonly property bool inlineLyricsAvailable: LyricsController.state === "synced"
+        && LyricsController.lines.length > 0
 
     implicitHeight: QuattroTheme.Theme.barHeight
     color: "transparent"
@@ -192,8 +197,9 @@ PanelWindow {
         id: leftGroup
         anchors {
             left: parent.left
-            verticalCenter: parent.verticalCenter
+            top: parent.top
             leftMargin: QuattroTheme.Theme.spaceSm
+            topMargin: (QuattroTheme.Theme.barHeight - QuattroTheme.Theme.barControlHeight) / 2
         }
 
         spacing: QuattroTheme.Theme.space2xs
@@ -307,8 +313,9 @@ PanelWindow {
     // ========================================================
 
     MediaStrip {
+        id: mediaStrip
         x: leftGroup.x + leftGroup.width + QuattroTheme.Theme.spaceSm
-        anchors.verticalCenter: parent.verticalCenter
+        y: (QuattroTheme.Theme.barHeight - height) / 2
         width: Math.max(0, Math.min(player ? 390 : 136,
             clockArea.x - x - QuattroTheme.Theme.spaceSm))
         visible: width >= (player ? 220 : 126)
@@ -316,11 +323,58 @@ PanelWindow {
     }
 
     Item {
+        id: inlineLyrics
+        x: mediaStrip.x + mediaStrip.width + QuattroTheme.Theme.spaceMd
+        y: 0
+        width: Math.max(0, clockArea.x - x - QuattroTheme.Theme.spaceSm)
+        height: QuattroTheme.Theme.barHeight
+        visible: root.inlineLyricsAvailable && width >= 220
+        clip: true
+        Accessible.role: Accessible.StaticText
+        Accessible.name: "Synchronized Spotify lyrics"
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: QuattroTheme.Theme.structuralLine
+            height: QuattroTheme.Theme.barControlHeight - QuattroTheme.Theme.spaceSm
+            color: QuattroTheme.Theme.border
+        }
+
+        Text {
+            anchors.fill: parent
+            anchors.leftMargin: QuattroTheme.Theme.spaceSm
+            anchors.rightMargin: QuattroTheme.Theme.spaceXs
+            text: LyricsController.lines.length > 0
+                ? LyricsController.lines[Math.min(LyricsController.lines.length - 1,
+                    Math.max(0, LyricsController.activeIndex))].text : ""
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            maximumLineCount: 2
+            elide: Text.ElideNone
+            horizontalAlignment: Text.AlignLeft
+            verticalAlignment: Text.AlignVCenter
+            color: QuattroTheme.Theme.textStrong
+            font.family: root.fontFamily
+            font.pixelSize: QuattroTheme.Theme.typeMeta
+            font.bold: true
+            fontSizeMode: Text.Fit
+            minimumPixelSize: QuattroTheme.Theme.typeMicro
+        }
+
+        HoverHandler { id: inlineLyricsHover }
+        TapHandler { onTapped: PopupManager.request("spotify") }
+        ToolTip.visible: inlineLyricsHover.hovered
+        ToolTip.delay: 700
+        ToolTip.text: "Open Spotify and full lyrics"
+    }
+
+    Item {
         id: clockArea
         x: Math.max(leftGroup.x + leftGroup.width + QuattroTheme.Theme.spaceSm,
             Math.min((root.width - width) / 2,
                 rightGroup.x - width - QuattroTheme.Theme.spaceMd))
-        anchors.verticalCenter: parent.verticalCenter
+        y: 0
 
         width: clockButton.implicitWidth
         height: QuattroTheme.Theme.barHeight
@@ -431,8 +485,9 @@ PanelWindow {
         id: rightGroup
         anchors {
             right: parent.right
-            verticalCenter: parent.verticalCenter
+            top: parent.top
             rightMargin: QuattroTheme.Theme.spaceSm
+            topMargin: (QuattroTheme.Theme.barHeight - QuattroTheme.Theme.barControlHeight) / 2
         }
 
         spacing: QuattroTheme.Theme.space2xs
@@ -744,7 +799,7 @@ PanelWindow {
         color: "transparent"
         anchor.window: root
         anchor.rect.x: Math.round(root.systemStatsPopupX)
-        anchor.rect.y: QuattroTheme.Theme.barHeight + 4
+        anchor.rect.y: root.implicitHeight + 4
         implicitWidth: 190
         implicitHeight: 52
 
@@ -788,7 +843,7 @@ PanelWindow {
         color: "transparent"
         anchor.window: root
         anchor.rect.x: Math.round(agentUsageButton.mapToItem(root.contentItem, 0, 0).x + agentUsageButton.width - implicitWidth)
-        anchor.rect.y: QuattroTheme.Theme.barHeight + 4
+        anchor.rect.y: root.implicitHeight + 4
         implicitWidth: 122
         implicitHeight: Math.max(24, root.usageWindowList.length * 15 + 8)
 

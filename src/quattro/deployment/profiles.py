@@ -84,6 +84,7 @@ CORE_DEPLOYMENT_MAPPINGS = {
 DESKTOP_DEPLOYMENT_MAPPINGS = {
     "desktop-helper": ("src/quattro_desktop_controls.py", ".local/bin/quattro_desktop_controls.py"),
     "spotify-art-helper": ("src/quattro_spotify_art.py", ".local/bin/quattro_spotify_art.py"),
+    "lyrics-helper": ("src/quattro-lyrics", ".local/bin/quattro-lyrics"),
     "bluetooth-helper": ("src/quattro_bluetooth.py", ".local/bin/quattro_bluetooth.py"),
     "equalizer-service": ("src/systemd/quattro-equalizer.service", ".config/systemd/user/quattro-equalizer.service"),
     "surfshark-service": ("src/systemd/quattro-surfshark.service", ".config/systemd/user/quattro-surfshark.service"),
@@ -92,8 +93,10 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
             ("src/quickshell/" + name, ".config/quickshell/" + name)
         for name in (
             "services/qmldir", "services/DesktopMedia.qml", "services/DesktopWeather.qml",
-            "services/PopupManager.qml", "components/shared/TemporaryPanel.qml",
+            "services/LyricsController.qml", "services/PopupManager.qml",
+            "components/shared/TemporaryPanel.qml",
             "components/panels/WeatherLocationPicker.qml", "components/panels/SpotifyPanel.qml",
+            "components/panels/LyricsView.qml",
             "components/MediaStrip.qml", "components/RunningApps.qml",
             "components/shared/DesktopButton.qml", "components/shared/DesktopField.qml",
             "components/shared/DesktopCombo.qml", "components/panels/Equalizer.qml",

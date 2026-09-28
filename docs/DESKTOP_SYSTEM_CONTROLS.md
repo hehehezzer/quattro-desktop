@@ -28,6 +28,36 @@ The strip collapses without a player or when insufficient width remains.
 `qs ipc call media status|playPause|next|previous` uses the same state/actions as
 the buttons. The status is display-safe media metadata, not a diagnostic dump.
 
+The expanded Spotify panel also provides optional synchronized lyrics. MPRIS
+remains authoritative for track metadata, playback state, position, seeking and
+transport controls. `services/LyricsController.qml` invalidates lyrics as soon as
+the normalized Spotify track identity changes, rejects responses from older
+requests, and derives the active line directly from `DesktopMedia.position`.
+It does not run an independent playback clock.
+
+`quattro-lyrics` is a bounded one-shot provider/cache adapter. It uses LRCLIB's
+documented HTTPS `/api/get` signature endpoint and conservative structured
+`/api/search` fallback, identifies Quattro in the User-Agent, requires exact
+Unicode-normalized title and artist sets plus a ±2.1 second duration match when
+MPRIS supplies duration, and normalizes provider responses before QML sees them.
+The private cache is under `~/.cache/quattro/lyrics/`: positive entries expire
+after 30 days, misses after six hours, and the oldest entries are trimmed above
+256. LRCLIB 429 `Retry-After` state is persisted so rapid track changes cannot
+continue calling a rate-limited service. Network, parse, timeout, unavailable and
+instrumental states are enrichment-only and cannot gate media controls.
+
+The panel displays a restrained five-line region around the active lyric, plain
+lyrics when timing is absent, and intentional loading, instrumental, unavailable
+and failure states. Manual scrolling pauses auto-follow until **Current line** is
+used. A lyric line seeks only through the existing MPRIS player and only when
+that player advertises seeking support.
+
+When synchronized lyrics are available, the active lyric occupies the unused
+horizontal space between Spotify controls and the centered date/time. It wraps
+to two lines and scales within the existing type floor rather than truncating.
+The bar stays 40 px tall and the lyric region disappears when less than 220 px
+remains, preserving Spotify, clock, and system controls at constrained widths.
+
 ### Weather and clock
 
 The clock uses the system timezone, with seconds. Calendar retains month/week

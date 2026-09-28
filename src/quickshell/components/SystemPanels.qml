@@ -238,7 +238,7 @@ Scope {
 
         implicitWidth: Math.min(QuattroTheme.Theme.panelWidth,
             (screen ? screen.width : 1920) - QuattroTheme.Theme.spaceLg)
-        implicitHeight: Math.min(root.page === "spotify" ? 328
+        implicitHeight: Math.min(root.page === "spotify" ? 560
             : root.page === "bluetooth" ? bluetoothPanel.preferredHeight
             : root.page === "display" ? 285
             : root.page === "power" ? 430
