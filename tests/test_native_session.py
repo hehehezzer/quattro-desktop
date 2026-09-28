@@ -28,12 +28,34 @@ class NativeRemoteArgumentsTests(unittest.TestCase):
         policy = 'developer_instructions="literal --add-dir text"'
         command = ['codex', '--sandbox=read-only', '--ask-for-approval', 'on-request',
                    '--config', policy, '--add-dir', '/vault', 'resume', '--all', '-C', '/repo']
-        frontend, backend = native_session._codex_remote_arguments(command)
+        frontend, backend = native_session._codex_remote_arguments(command, resume=True)
         self.assertEqual(frontend[-4:], ['resume', '--all', '-C', '/repo'])
+        self.assertNotIn('--sandbox=read-only', frontend)
+        self.assertNotIn('--ask-for-approval', frontend)
         self.assertIn('sandbox_mode="read-only"', backend)
         self.assertIn(policy, backend)
         self.assertNotIn('--add-dir', frontend)
         self.assertNotIn('sandbox_mode="danger-full-access"', backend)
+
+    def test_full_access_resume_is_backend_only(self):
+        frontend, backend = native_session._codex_remote_arguments([
+            'codex', '--dangerously-bypass-approvals-and-sandbox',
+            'resume', '0199b724-06b7-7000-8000-000000000001', '-C', '/repo',
+        ], resume=True)
+        self.assertNotIn('--dangerously-bypass-approvals-and-sandbox', frontend)
+        self.assertIn('resume', frontend)
+        self.assertIn('sandbox_mode="danger-full-access"', backend)
+        self.assertIn('approval_policy="never"', backend)
+
+    def test_resume_like_values_do_not_change_non_resume_frontend(self):
+        for command in (
+            ['codex', '-C', 'resume', '-s', 'read-only'],
+            ['codex', '-c', 'resume', '-a', 'on-request'],
+            ['codex', '-s', 'read-only', '--', 'resume'],
+        ):
+            with self.subTest(command=command):
+                frontend, _backend = native_session._codex_remote_arguments(command)
+                self.assertTrue(any(arg in frontend for arg in ('-s', '-a')))
 
     def test_confirmed_full_access_is_mirrored_not_invented(self):
         _, backend = native_session._codex_remote_arguments(

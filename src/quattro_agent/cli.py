@@ -1069,6 +1069,7 @@ def native_interactive_handoff(
             state_root=STATE_ROOT, runtime_factory=harness,
             profile_name=selected_profile if agent == "pi" else profile_name,
             confirm_full_access=confirm_full_access,
+            resume=resume,
         )
         raise SystemExit(code)
     except BaseException:
