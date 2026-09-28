@@ -195,6 +195,76 @@ class BridgeTests(unittest.TestCase):
             pass
         self.assertEqual(self.gate.calls, [(thread_id, "Resumed", "codex")])
 
+    def test_failed_same_thread_refresh_resume_restores_binding_for_second_turn(self):
+        thread_id = "0199b724-06b7-7000-8000-000000000025"
+        self.send("thread/start", {"fixtureThreadId":thread_id}, 62)
+        self.receive()
+        self.gate.decision = "DELEGATE"
+        self.send("turn/start", {"input":[{"type":"text","text":"First"}]}, 63)
+        self.assertEqual(self.receive()["result"]["observed"]["threadId"], thread_id)
+        self.assertEqual(self.receive()["method"], "turn/completed")
+
+        self.send("thread/resume", {
+            "threadId":thread_id, "fixtureLifecycleError":True,
+        }, 64)
+        self.assertIn("error", self.receive())
+        self.send("turn/start", {"input":[{"type":"text","text":"Second"}]}, 65)
+        self.assertEqual(self.receive()["result"]["observed"]["threadId"], thread_id)
+        self.assertEqual(self.receive()["method"], "turn/completed")
+        self.assertEqual(self.gate.calls, [
+            (thread_id, "First", "codex"), (thread_id, "Second", "codex"),
+        ])
+
+    def test_successful_same_thread_refresh_commits_binding_for_second_turn(self):
+        thread_id = "0199b724-06b7-7000-8000-000000000028"
+        self.send("thread/start", {"fixtureThreadId":thread_id}, 73)
+        self.receive()
+        self.send("thread/resume", {"threadId":thread_id, "includeTurns":False}, 74)
+        self.assertEqual(self.receive()["result"]["thread"]["id"], thread_id)
+        self.send("turn/start", {"input":[{"type":"text","text":"Second"}]}, 75)
+        while self.receive().get("method") != "turn/completed":
+            pass
+        self.assertEqual(self.gate.calls, [(thread_id, "Second", "codex")])
+
+    def test_pending_same_thread_refresh_blocks_turn_then_error_rolls_back(self):
+        messages = []
+        self.bridge._current_thread_id = THREAD_ID
+        self.bridge._lifecycle_generation = 1
+        self.bridge._lifecycle_requests[66] = (
+            "thread/resume", THREAD_ID, 1, THREAD_ID,
+        )
+        self.bridge._current_thread_id = None
+        original_send = self.bridge._send
+        self.bridge._send = messages.append
+        try:
+            self.bridge.handle({"id":67, "method":"turn/start", "params":{
+                "threadId":THREAD_ID, "input":[{"type":"text","text":"Pending"}],
+            }})
+            self.assertIn("canonical thread binding", messages.pop()["error"]["message"])
+            self.bridge._bind_lifecycle_response(66, {"id":66, "error":{
+                "code":-32000, "message":"refresh failed",
+            }})
+        finally:
+            self.bridge._send = original_send
+        self.assertEqual(self.bridge._current_thread_id, THREAD_ID)
+
+    def test_failed_identity_changing_resume_or_fork_cannot_restore_old_binding(self):
+        old = "0199b724-06b7-7000-8000-000000000026"
+        other = "0199b724-06b7-7000-8000-000000000027"
+        for lifecycle_id, method, params in (
+            (68, "thread/resume", {"threadId":other, "fixtureLifecycleError":True}),
+            (71, "thread/fork", {"threadId":old, "fixtureLifecycleError":True}),
+        ):
+            with self.subTest(method=method):
+                self.send("thread/start", {"fixtureThreadId":old}, lifecycle_id - 1)
+                self.receive()
+                self.send(method, params, lifecycle_id)
+                self.assertIn("error", self.receive())
+                self.send("turn/start", {"threadId":old,
+                          "input":[{"type":"text","text":"No stale reuse"}]}, lifecycle_id + 1)
+                self.assertIn("error", self.receive())
+        self.assertEqual(self.gate.calls, [])
+
     def test_failed_lifecycle_does_not_bind_or_inherit_stale_thread(self):
         self.send("thread/start", {"fixtureLifecycleError":True}, 70)
         self.assertIn("error", self.receive())
@@ -206,8 +276,8 @@ class BridgeTests(unittest.TestCase):
         first = "0199b724-06b7-7000-8000-000000000015"
         second = "0199b724-06b7-7000-8000-000000000016"
         other = CodexTurnBridge(Path(self.tmp.name) / "other.sock", [], {}, Gate())
-        self.bridge._lifecycle_requests[90] = ("thread/start", None, 0)
-        other._lifecycle_requests[90] = ("thread/start", None, 0)
+        self.bridge._lifecycle_requests[90] = ("thread/start", None, 0, None)
+        other._lifecycle_requests[90] = ("thread/start", None, 0, None)
         self.bridge._bind_lifecycle_response(90, {"id":90,"result":{"thread":{"id":first}}})
         other._bind_lifecycle_response(90, {"id":90,"result":{"thread":{"id":second}}})
         self.assertEqual(self.bridge._current_thread_id, first)
@@ -216,11 +286,12 @@ class BridgeTests(unittest.TestCase):
     def test_mismatched_resume_response_cannot_replace_binding(self):
         original = "0199b724-06b7-7000-8000-000000000017"
         unrelated = "0199b724-06b7-7000-8000-000000000018"
-        self.bridge._lifecycle_requests[91] = ("thread/start", None, 0)
+        self.bridge._lifecycle_requests[91] = ("thread/start", None, 0, None)
         self.bridge._bind_lifecycle_response(91, {"id":91,"result":{"thread":{"id":original}}})
-        self.bridge._lifecycle_requests[92] = ("thread/resume", original, 0)
+        self.bridge._lifecycle_requests[92] = ("thread/resume", original, 0, None)
+        self.bridge._current_thread_id = None
         self.bridge._bind_lifecycle_response(92, {"id":92,"result":{"thread":{"id":unrelated}}})
-        self.assertEqual(self.bridge._current_thread_id, original)
+        self.assertIsNone(self.bridge._current_thread_id)
 
     def test_explicit_id_cannot_bypass_failed_or_mismatched_lifecycle(self):
         old = "0199b724-06b7-7000-8000-000000000023"
@@ -233,7 +304,7 @@ class BridgeTests(unittest.TestCase):
                   "input":[{"type":"text","text":"Stale"}]}, 102)
         self.assertIn("error", self.receive())
         self.bridge._lifecycle_requests[103] = ("thread/resume", old,
-                                                self.bridge._lifecycle_generation)
+                                                self.bridge._lifecycle_generation, None)
         self.bridge._bind_lifecycle_response(
             103, {"id":103,"result":{"thread":{"id":other}}},
         )
@@ -245,7 +316,7 @@ class BridgeTests(unittest.TestCase):
     def test_invalid_lifecycle_identity_cannot_authorize_explicit_turn(self):
         self.bridge._current_thread_id = None
         self.bridge._lifecycle_requests[105] = ("thread/start", None,
-                                                self.bridge._lifecycle_generation)
+                                                self.bridge._lifecycle_generation, None)
         self.bridge._bind_lifecycle_response(
             105, {"id":105,"result":{"thread":{"id":"not-a-canonical-id"}}},
         )
@@ -259,11 +330,60 @@ class BridgeTests(unittest.TestCase):
         bridge = CodexTurnBridge(Path(self.tmp.name) / "duplicate.sock", [], {}, Gate())
         bridge._current_thread_id = THREAD_ID
         bridge._lifecycle_generation = 1
-        bridge._lifecycle_requests[107] = ("thread/start", None, 1)
+        bridge._lifecycle_requests[107] = ("thread/resume", THREAD_ID, 1, THREAD_ID)
+        bridge._views[107] = ("thread/resume", {"threadId":THREAD_ID})
         bridge._send = messages.append
-        bridge.handle({"id":107,"method":"thread/start","params":{}})
+        other = "0199b724-06b7-7000-8000-000000000029"
+        bridge.handle({"id":107,"method":"thread/resume","params":{"threadId":other}})
         self.assertIsNone(bridge._current_thread_id)
+        self.assertEqual(bridge._lifecycle_generation, 2)
         self.assertIn("error", messages[0])
+        self.assertEqual(bridge._views[107][1]["threadId"], THREAD_ID)
+        bridge._bind_lifecycle_response(
+            107, {"id":107,"result":{"thread":{"id":THREAD_ID}}},
+        )
+        self.assertIsNone(bridge._current_thread_id)
+        self.assertEqual(bridge._views[107][1]["threadId"], THREAD_ID)
+
+    def test_lifecycle_id_collision_cannot_overwrite_pending_non_lifecycle_view(self):
+        messages = []
+        bridge = CodexTurnBridge(Path(self.tmp.name) / "view-collision.sock", [], {}, Gate())
+        bridge._current_thread_id = THREAD_ID
+        bridge._views[108] = ("thread/read", {"threadId":THREAD_ID})
+        bridge._send = messages.append
+        other = "0199b724-06b7-7000-8000-000000000030"
+        bridge.handle({"id":108,"method":"thread/resume","params":{"threadId":other}})
+        self.assertIn("error", messages[0])
+        self.assertEqual(bridge._views[108], ("thread/read", {"threadId":THREAD_ID}))
+        self.assertNotIn(108, bridge._lifecycle_requests)
+        self.assertEqual(bridge._current_thread_id, THREAD_ID)
+
+    def test_lifecycle_is_rejected_during_planning_direct_or_delegated_turn(self):
+        for stage in ("planning", "direct", "delegated"):
+            with self.subTest(stage=stage):
+                messages = []
+                bridge = CodexTurnBridge(Path(self.tmp.name) / (stage + ".sock"), [], {}, Gate())
+                bridge._current_thread_id = THREAD_ID
+                turn_request_id = 109
+                bridge._active[THREAD_ID] = {"delegated": stage == "delegated"}
+                if stage != "direct":
+                    bridge._frontend_requests.add(turn_request_id)
+                if stage == "delegated":
+                    bridge._delegate_requests[turn_request_id] = THREAD_ID
+                bridge._send = messages.append
+                bridge.handle({"id":turn_request_id, "method":"thread/resume",
+                               "params":{"threadId":THREAD_ID}})
+                expected = "active turn" if stage == "direct" else "pending"
+                self.assertIn(expected, messages[0]["error"]["message"])
+                self.assertEqual(bridge._current_thread_id, THREAD_ID)
+                self.assertNotIn(turn_request_id, bridge._lifecycle_requests)
+
+                messages.clear()
+                bridge.handle({"id":110, "method":"thread/resume",
+                               "params":{"threadId":THREAD_ID}})
+                self.assertIn("active turn", messages[0]["error"]["message"])
+                self.assertEqual(bridge._current_thread_id, THREAD_ID)
+                self.assertNotIn(110, bridge._lifecycle_requests)
 
     def test_pending_or_failed_new_thread_cannot_reuse_previous_binding(self):
         original = "0199b724-06b7-7000-8000-000000000019"
@@ -279,8 +399,8 @@ class BridgeTests(unittest.TestCase):
         old = "0199b724-06b7-7000-8000-000000000020"
         new = "0199b724-06b7-7000-8000-000000000021"
         self.bridge._lifecycle_generation = 2
-        self.bridge._lifecycle_requests[96] = ("thread/start", None, 1)
-        self.bridge._lifecycle_requests[97] = ("thread/start", None, 2)
+        self.bridge._lifecycle_requests[96] = ("thread/start", None, 1, None)
+        self.bridge._lifecycle_requests[97] = ("thread/start", None, 2, None)
         self.bridge._bind_lifecycle_response(97, {"id":97,"result":{"thread":{"id":new}}})
         self.bridge._bind_lifecycle_response(96, {"id":96,"result":{"thread":{"id":old}}})
         self.assertEqual(self.bridge._current_thread_id, new)
