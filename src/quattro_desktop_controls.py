@@ -118,6 +118,11 @@ def save_place(value):
     place = normalize_place(value)
     if not place["name"]:
         raise ValueError("Select a named location")
+    if not place["timezone"]:
+        raise ValueError("Selected location has no timezone")
+    # Apply the system timezone first so a denied or invalid change never leaves
+    # weather configured for a place whose clock could not be selected.
+    run(["timedatectl", "set-timezone", place["timezone"]])
     atomic(CONFIG / "weather.json", json.dumps(place, ensure_ascii=False))
     return place
 

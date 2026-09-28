@@ -16,6 +16,8 @@ QtObject {
     property bool pendingRefresh: false
     property bool pendingForce: false
     property var pendingPlace: null
+    property var stableSnapshot: null
+    property var rollbackSnapshot: null
     property string searchQuery: ""
     property var searchResults: []
     property string searchError: ""
@@ -68,6 +70,7 @@ QtObject {
     function selectPlace(place) {
         revision++;
         pendingPlace = place;
+        rollbackSnapshot = stableSnapshot || snapshot;
         pendingRefresh = true;
         pendingForce = true;
         // Never show the previous city's temperature beneath the new name.
@@ -127,10 +130,18 @@ QtObject {
                 try {
                     const s = JSON.parse(text);
                     root.error = s.error || "";
-                    if (s.available !== undefined)
+                    if (s.available !== undefined) {
                         root.snapshot = s;
+                        root.stableSnapshot = s;
+                    } else if (s.error && root.rollbackSnapshot) {
+                        root.snapshot = root.rollbackSnapshot;
+                    }
+                    root.rollbackSnapshot = null;
                 } catch (e) {
                     root.error = "Weather helper unavailable. Try refreshing.";
+                    if (root.rollbackSnapshot)
+                        root.snapshot = root.rollbackSnapshot;
+                    root.rollbackSnapshot = null;
                 }
             }
         }
