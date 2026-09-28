@@ -12,7 +12,6 @@ import json
 import os
 from pathlib import Path
 import queue
-import re
 import tempfile
 import socket
 import subprocess
@@ -25,6 +24,78 @@ from typing import Any, Mapping, Sequence
 from .privacy import redact_secret_text
 
 MAX_FRAME = 16 * 1024 * 1024
+
+# Classify native app-server requests by capability, not by caller or prefix.
+# The remote TUI and model turns share this connection, so unknown requests must
+# fail closed rather than inherit authority from the Codex process.
+CONTROL_PLANE_METHODS = frozenset({
+    "initialize", "initialized", "server/diagnostics",
+    "userVerification/status", "userVerification/enroll", "userVerification/delete",
+    "userVerification/verify", "userVerification/cancel",
+    "thread/start", "thread/resume", "thread/fork", "thread/archive",
+    "thread/delete", "thread/unsubscribe", "thread/increment_elicitation",
+    "thread/decrement_elicitation", "thread/name/set",
+    "thread/goal/get", "thread/goal/clear", "thread/metadata/update",
+    "thread/attachment/add", "thread/attachment/list", "thread/attachment/remove",
+    "thread/section/move", "thread/unarchive", "thread/approveGuardianDeniedAction",
+    "thread/revert", "thread/list",
+    "threadSection/list", "threadSection/create", "threadSection/update",
+    "threadSection/delete", "thread/loaded/list", "thread/read",
+    "thread/turns/list", "thread/items/list", "thread/settings/update",
+    "thread/queue/list", "thread/queue/delete", "thread/queue/reorder",
+    "thread/memoryMode/set", "memory/status", "memory/reset",
+    "thread/backgroundTerminals/list", "thread/search", "thread/searchOccurrences",
+    "thread/timeline/list", "thread/realtime/listVoices",
+    "project/list", "project/read", "project/create", "project/import",
+    "project/update", "project/move", "project/delete",
+    "skills/list", "skills/extraRoots/set", "skills/config/write", "hooks/list",
+    "marketplace/add", "marketplace/remove", "marketplace/upgrade",
+    "plugin/list", "plugin/search", "plugin/installed", "plugin/reconcile", "plugin/read",
+    "plugin/skill/read", "plugin/install", "plugin/uninstall",
+    "plugin/share/save", "plugin/share/updateTargets", "plugin/share/list",
+    "plugin/share/checkout", "plugin/share/delete",
+    "app/read", "app/list", "app/installed", "model/list", "collaborationMode/list",
+    "modelProvider/capabilities/read", "experimentalFeature/list",
+    "experimentalFeature/enablement/set", "permissionProfile/list",
+    "mcpServer/oauth/login", "config/mcpServer/reload", "mcpServerStatus/list",
+    "mcpServer/resource/read", "mcpServer/event/stream/start",
+    "mcpServer/event/stream/stop",
+    "account/gatewayOAuth/read", "account/gatewayOAuth/login",
+    "account/gatewayOAuth/cancel", "account/login/start", "account/login/cancel",
+    "account/logout", "account/bedrock/discover", "account/bedrock/setup",
+    "account/rateLimits/read", "account/rateLimitResetCredit/consume", "account/usage/read",
+    "account/workspaceMessages/read", "account/sendAddCreditsNudgeEmail",
+    "account/read", "config/read", "config/value/write", "config/batchWrite",
+    "configRequirements/read", "externalAgentConfig/detect",
+    "externalAgentConfig/import", "externalAgentConfig/import/recordHistory",
+    "externalAgentConfig/import/readHistories", "feedback/upload",
+    "windowsSandbox/setupStart", "windowsSandbox/readiness", "fuzzyFileSearch",
+    "fuzzyFileSearch/sessionStart", "fuzzyFileSearch/sessionUpdate",
+    "fuzzyFileSearch/sessionStop", "getConversationSummary", "gitDiffToRemote",
+    "getAuthStatus", "environment/info", "environment/status",
+    "fs/readFile", "fs/getMetadata", "fs/readDirectory", "fs/watch", "fs/unwatch",
+})
+
+# These methods execute a model, tool, or host command outside the normal user
+# turn boundary. `turn/settings/update` can mutate a running turn's target and
+# therefore remains execution-plane even though its name resembles settings.
+EXECUTION_PLANE_METHODS = frozenset({
+    "thread/queue/start", "thread/queue/add", "thread/queue/update",
+    "thread/goal/set", "thread/compact/start", "review/start", "userInput",
+    "userInputWithAttachments", "sendUserMessage", "sendUserTurn",
+    "execOneOffCommand", "thread/shellCommand", "thread/realtime/start",
+    "thread/realtime/appendAudio", "thread/realtime/appendText",
+    "thread/realtime/appendSpeech", "turn/settings/update", "command/exec",
+    "command/exec/write", "command/exec/terminate", "command/exec/resize",
+    "process/spawn", "process/writeStdin", "process/kill", "process/resizePty",
+    "mcpServer/tool/call", "thread/inject_items", "rollout/compress",
+    "thread/backgroundTerminals/clean", "thread/backgroundTerminals/terminate",
+    "thread/realtime/stop", "environment/add", "fs/writeFile", "fs/createDirectory",
+    "fs/remove", "fs/copy", "remoteControl/enable", "remoteControl/disable",
+    "remoteControl/status/read", "remoteControl/pairing/start",
+    "remoteControl/pairing/status", "remoteControl/client/list",
+    "remoteControl/client/revoke", "mock/experimentalMethod",
+})
 
 
 class _WebSocket:
@@ -487,13 +558,12 @@ class CodexTurnBridge:
         method = request.get("method")
         params = request.get("params") or {}
         thread_id = params.get("threadId")
-        if method == "config/value/write":
-            key = params.get("keyPath", "")
-            if (isinstance(key, str) and re.fullmatch(r'projects\."/[^"\\]+"\.trust_level', key)
-                    and params.get("value") in {"trusted", "untrusted"}
-                    and params.get("filePath") is None):
-                self._forward(request)
-                return
+        # Approval and user-input answers are JSON-RPC response frames rather
+        # than method calls. They complete backend-originated native requests
+        # and cannot initiate execution by themselves.
+        if method is None and "id" in request and ("result" in request or "error" in request):
+            self._forward(request)
+            return
         if method in {"thread/read", "thread/resume", "thread/turns/list", "thread/items/list"}:
             with self._state_lock:
                 self._views[request.get("id")] = (method, copy.deepcopy(params))
@@ -505,13 +575,7 @@ class CodexTurnBridge:
                     self._views.pop(request.get("id"), None)
                     self._send({"id": request.get("id"), "result": result})
                     return
-        if method in {"thread/queue/start", "thread/compact/start", "review/start", "userInput",
-                      "userInputWithAttachments", "sendUserMessage", "sendUserTurn", "execOneOffCommand",
-                      "thread/queue/add", "thread/queue/update", "thread/goal/set", "thread/shellCommand",
-                      "thread/realtime/start", "thread/realtime/appendAudio", "thread/realtime/appendText",
-                      "thread/realtime/appendSpeech", "turn/settings/update", "thread/settings/update",
-                      "command/exec", "process/spawn", "mcpServer/tool/call", "thread/inject_items",
-                      "config/value/write", "config/batchWrite", "config/mcpServer/reload"}:
+        if method in EXECUTION_PLANE_METHODS:
             self._error(request.get("id"), "This native operation requires a Quattro execution plan; submit a normal turn")
             return
         if method in {"thread/start", "thread/resume", "thread/fork"}:
@@ -548,7 +612,12 @@ class CodexTurnBridge:
                     if not state.get("delegated"):
                         self._send({"id": request.get("id"), "result": {}})
                         return
-        self._forward(request)
+            self._forward(request)
+            return
+        if method in CONTROL_PLANE_METHODS:
+            self._forward(request)
+            return
+        self._error(request.get("id"), "Unsupported native Codex protocol operation")
 
     def stop(self) -> None:
         """Wake an idle listener/frontend so launcher failures cannot orphan backend."""

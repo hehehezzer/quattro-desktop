@@ -23,6 +23,16 @@ bridge → fresh turn classification and immutable plan → DIRECT Responses cal
 or delegated native app-server turn. The bridge never forwards a DIRECT
 `turn/start` to the native backend.
 
+The bridge classifies app-server operations by capability. Native control-plane
+requests such as thread/session lifecycle, `thread/settings/update`, model and
+permission profile listing, account status, configuration writes, and MCP
+configuration pass through without an execution plan. `turn/start` remains the
+only normal model-execution entry point and receives a fresh locked plan.
+Alternate execution paths—including live-turn settings changes, queued prompts,
+review/compaction/realtime generation, shell or standalone command execution,
+MCP tool calls, and raw model-history injection—remain denied. Unknown protocol
+methods fail closed until classified against the installed Codex protocol.
+
 New Pi path: chooser → real Pi TUI → trusted pre-agent input hook → the same
 Quattro gate → DIRECT Responses call or durable Codex harness task. Every input
 is consumed by the hook, including failures, so an unavailable gate cannot fall
