@@ -4,9 +4,10 @@ After=pipewire.service pipewire-pulse.service wireplumber.service
 Requires=pipewire.service
 
 [Service]
+ExecCondition=/usr/bin/python3 %h/.local/bin/quattro_desktop_controls.py eq should-start
 ExecStart=/usr/bin/pipewire -c %h/.config/quattro/equalizer.conf
 ExecStartPost=/usr/bin/python3 %h/.local/bin/quattro_desktop_controls.py eq activate
-ExecStopPost=/usr/bin/python3 %h/.local/bin/quattro_desktop_controls.py eq recover
+ExecStopPost=/usr/bin/python3 %h/.local/bin/quattro_desktop_controls.py eq service-stopped ${SERVICE_RESULT}
 Restart=always
 RestartSec=2
 

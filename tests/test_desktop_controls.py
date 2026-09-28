@@ -35,6 +35,20 @@ class DesktopControlsTests(unittest.TestCase):
         for values in desktop.PRESETS.values():
             self.assertEqual(len(desktop.gains_valid(values)), 10)
 
+    def test_eq_service_start_is_gated_by_persisted_enabled_state(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp)):
+            with self.assertRaises(RuntimeError):
+                desktop.eq_should_start()
+            desktop.atomic(desktop.CONFIG / "equalizer.json", '{"enabled": true}')
+            self.assertTrue(desktop.eq_should_start()["enabled"])
+
+    def test_clean_service_restart_preserves_enabled_but_crash_recovers(self):
+        with patch.object(desktop, "eq_recover") as recover:
+            self.assertTrue(desktop.eq_service_stopped("success")["recovering"])
+            recover.assert_not_called()
+            desktop.eq_service_stopped("signal")
+            recover.assert_called_once()
+
     def test_eq_graph_and_safe_preamp(self):
         graph = desktop.eq_config([6] + [0] * 9, "sink.with-safe-name")
         self.assertIn('"Gain 1" = 0.501187', graph)

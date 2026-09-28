@@ -374,6 +374,19 @@ def eq_status():
     return state
 
 
+def eq_should_start():
+    state = load(CONFIG / "equalizer.json", {})
+    if state.get("enabled") is not True:
+        raise RuntimeError("Equalizer is bypassed")
+    return {"enabled": True}
+
+
+def eq_service_stopped(result):
+    if result == "success":
+        return {"recovering": True}
+    return eq_recover("DSP stopped unexpectedly; EQ bypassed")
+
+
 def eq_apply(gains, preset="Custom", enabled=True, target=None):
     gains = gains_valid(gains)
     old = load(CONFIG / "equalizer.json", {})
@@ -440,7 +453,7 @@ def main():
     app.add_argument("start")
     eq = sub.add_parser("eq")
     eq.add_argument("action", choices=["status", "preset", "custom", "disable", "output",
-                                      "activate", "recover"])
+                                      "activate", "recover", "should-start", "service-stopped"])
     eq.add_argument("values", nargs="*")
     args = parser.parse_args()
     lock = None
@@ -473,6 +486,10 @@ def main():
             result = eq_activate()
         elif args.action == "recover":
             result = eq_recover("DSP stopped; EQ bypassed")
+        elif args.action == "should-start":
+            result = eq_should_start()
+        elif args.action == "service-stopped":
+            result = eq_service_stopped(" ".join(args.values))
         else:
             state = eq_status()
             if args.action == "preset":
