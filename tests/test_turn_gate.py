@@ -73,6 +73,16 @@ class TurnGateTests(unittest.TestCase):
         with self.assertRaises(Exception):
             plans[0].plan_id = 'replacement'
 
+    def test_native_context_requires_a_planned_delegate(self):
+        turn = self.gate.begin(
+            'thread', 'Inspect this attachment', 'codex',
+            requires_native_delegate=True,
+        )
+        self.assertEqual(turn.decision, 'DELEGATE')
+        self.assertIsNone(turn.budget)
+        self.assertEqual(turn.routing_evidence['final_decision']['execution'], 'DELEGATE')
+        self.gate.finish(turn)
+
     def test_concurrent_thread_guard_and_cancellation(self):
         first = self.gate.begin('thread', 'Hello', 'codex')
         with self.assertRaises(ValueError):

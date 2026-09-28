@@ -152,7 +152,8 @@ class TurnGate:
             return fallback  # Optional advice cannot break execution.
 
     @jev_lifecycle
-    def begin(self, thread_id: str, prompt: str, frontend: str, params=None) -> Turn:
+    def begin(self, thread_id: str, prompt: str, frontend: str, params=None,
+              requires_native_delegate: bool = False) -> Turn:
         started = time.monotonic()
         if frontend not in {"codex", "pi"} or not isinstance(prompt, str):
             raise ValueError("unsupported turn input")
@@ -166,6 +167,7 @@ class TurnGate:
                 database=self.telemetry_path.parent / 'intelligence' / 'intelligence.sqlite3',
                 selected_model=(params or {}).get('model'), agent='codex',
                 workflow='interactive-turn', policy_name='audit-read-only',
+                execution_type='DELEGATE' if requires_native_delegate else None,
                 unavailable_routes=frozenset(active_account_health(
                     self.telemetry_path.parent / 'routing' / 'account-health.json',
                 )),

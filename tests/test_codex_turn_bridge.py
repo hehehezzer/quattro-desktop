@@ -40,9 +40,10 @@ class Gate:
         self.finished = []
         self.calls = []
 
-    def begin(self, thread_id, prompt, frontend, params):
+    def begin(self, thread_id, prompt, frontend, params, requires_native_delegate=False):
         self.calls.append((thread_id, prompt, frontend))
-        return SimpleNamespace(decision=self.decision, sensitive=self.sensitive, turn_id="direct-turn",
+        decision = "DELEGATE" if requires_native_delegate else self.decision
+        return SimpleNamespace(decision=decision, sensitive=self.sensitive, turn_id="direct-turn",
                                plan=SimpleNamespace(plan_id="plan-1", reasoning_effort="low",
                                                     target=SimpleNamespace(route="exact/route")))
 
@@ -377,10 +378,61 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(self.receive()["result"]["method"], None)
         self.assertEqual(self.gate.calls, [])
 
-    def test_attachments_are_not_silently_ignored(self):
-        self.send("turn/start", {"threadId":"thread-1","input":[{"type":"localImage","path":"/synthetic.png"}]})
-        self.assertIn("error", self.receive())
-        self.assertEqual(self.gate.calls, [])
+    def test_native_context_inputs_are_planned_and_locked_without_rewriting(self):
+        variants = (
+            {"type":"localImage","path":"/synthetic.png"},
+            {"type":"localImage","path":"/synthetic-null.png","detail":None},
+            {"type":"image","url":"https://example.invalid/image.png"},
+            {"type":"image","url":"https://example.invalid/null.png","detail":None},
+            {"type":"image","fileId":"file-fixture"},
+            {"type":"image","url":"https://example.invalid/image.png",
+             "fileId":"file-fixture", "detail":"original"},
+            {"type":"skill","name":"fixture","path":"/skills/fixture/SKILL.md"},
+            {"type":"mention","name":"fixture.py","path":"/workspace/fixture.py"},
+        )
+        for request_id, native in enumerate(variants, 200):
+            with self.subTest(native=native):
+                inputs = [{"type":"text","text":"Inspect this", "text_elements":[]}, native]
+                self.send("turn/start", {"threadId":"thread-1","input":inputs,
+                          "model":"unapproved", "effort":"ultra"}, request_id)
+                actual = self.receive()["result"]["observed"]
+                self.assertEqual(actual["input"], inputs)
+                self.assertEqual(actual["model"], "exact/route")
+                self.assertEqual(actual["effort"], "low")
+                self.assertEqual(actual["responsesapiClientMetadata"]["quattro_plan_id"], "plan-1")
+                self.assertEqual(self.receive()["method"], "turn/completed")
+
+    def test_native_input_validation_fails_closed_with_precise_errors(self):
+        cases = (
+            ([{"type":"localImage","path":"/synthetic.png"}], "requires bounded text"),
+            ([{"type":"text","text":"Explain"},{"type":"audio","url":"https://example.invalid/a"}],
+             "does not yet support native audio"),
+            ([{"type":"text","text":"Explain"},{"type":"future"}], "unsupported native user input"),
+            ([{"type":"text","text":"Explain"},{"type":"localImage","path":""}],
+             "malformed native image"),
+            ([{"type":"text","text":"Explain","text_elements":[{
+                "byteRange":{"start":0,"end":100},"placeholder":None}]}],
+             "malformed native text elements"),
+            ([{"type":"text","text":"Explain"},{"type":"image",
+               "url":"https://example.invalid/a","detail":"future"}],
+             "malformed native image"),
+            ([{"type":"text","text":"Explain"},{"type":"skill",
+               "name":"bad\x00name","path":"/skill"}], "malformed native context"),
+        )
+        for request_id, (inputs, fragment) in enumerate(cases, 220):
+            with self.subTest(inputs=inputs):
+                self.send("turn/start", {"threadId":"thread-1","input":inputs}, request_id)
+                self.assertIn(fragment, self.receive()["error"]["message"])
+
+    def test_turn_rejection_distinguishes_binding_and_tool_output(self):
+        self.bridge._current_thread_id = None
+        self.send("turn/start", {"threadId":THREAD_ID,
+                  "input":[{"type":"text","text":"Explain"}]}, 230)
+        self.assertIn("canonical thread binding", self.receive()["error"]["message"])
+        self.bridge._current_thread_id = THREAD_ID
+        self.send("turn/start", {"threadId":THREAD_ID, "toolOutput":{},
+                  "input":[{"type":"text","text":"Explain"}]}, 231)
+        self.assertIn("tool-output turns", self.receive()["error"]["message"])
 
     def test_gate_failure_does_not_reach_backend(self):
         def fail(*args, **kwargs):

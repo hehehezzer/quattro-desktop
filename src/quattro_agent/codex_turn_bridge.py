@@ -429,6 +429,69 @@ class CodexTurnBridge:
                 return
             self._current_thread_id = canonical
 
+    @staticmethod
+    def _user_turn_input(items: Any) -> tuple[str, bool]:
+        """Validate the bounded Codex 0.158 user-input union without rewriting it."""
+        if not isinstance(items, list) or not items or len(items) > 64:
+            raise ValueError("Quattro requires a non-empty bounded user input")
+        text, native = [], False
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError("Quattro received malformed native user input")
+            kind = item.get("type")
+            if kind == "text":
+                value = item.get("text")
+                if not isinstance(value, str) or "\x00" in value:
+                    raise ValueError("Quattro received malformed native text input")
+                elements = item.get("text_elements", [])
+                if not isinstance(elements, list) or len(elements) > 64:
+                    raise ValueError("Quattro received malformed native text elements")
+                byte_length = len(value.encode("utf-8"))
+                for element in elements:
+                    byte_range = element.get("byteRange") if isinstance(element, dict) else None
+                    start = byte_range.get("start") if isinstance(byte_range, dict) else None
+                    end = byte_range.get("end") if isinstance(byte_range, dict) else None
+                    placeholder = element.get("placeholder") if isinstance(element, dict) else None
+                    if (not isinstance(start, int) or isinstance(start, bool)
+                            or not isinstance(end, int) or isinstance(end, bool)
+                            or start < 0 or start > end or end > byte_length
+                            or (placeholder is not None and (
+                                not isinstance(placeholder, str) or len(placeholder) > 512
+                                or "\x00" in placeholder))):
+                        raise ValueError("Quattro received malformed native text elements")
+                text.append(value)
+                continue
+            native = True
+            if kind == "image":
+                url, file_id = item.get("url"), item.get("fileId")
+                valid_url = isinstance(url, str) and 0 < len(url) <= 16_384 and "\x00" not in url
+                valid_file = (isinstance(file_id, str) and 0 < len(file_id) <= 1_024
+                              and "\x00" not in file_id)
+                if (not (valid_url or valid_file)
+                        or url is not None and not valid_url
+                        or file_id is not None and not valid_file
+                        or item.get("detail", "auto") not in {None, "auto", "low", "high", "original"}):
+                    raise ValueError("Quattro received malformed native image input")
+            elif kind == "localImage":
+                path = item.get("path")
+                if (not isinstance(path, str) or not path or len(path) > 4_096 or "\x00" in path
+                        or item.get("detail", "auto") not in {None, "auto", "low", "high", "original"}):
+                    raise ValueError("Quattro received malformed native image input")
+            elif kind in {"skill", "mention"}:
+                name, path = item.get("name"), item.get("path")
+                if (not isinstance(name, str) or not name or len(name) > 512 or "\x00" in name
+                        or not isinstance(path, str) or not path or len(path) > 4_096
+                        or "\x00" in path):
+                    raise ValueError("Quattro received malformed native context input")
+            elif kind in {"audio", "localAudio"}:
+                raise ValueError("Quattro does not yet support native audio turns")
+            else:
+                raise ValueError("Quattro received an unsupported native user input type")
+        prompt = "\n".join(text)
+        if not prompt.strip() or len(prompt) > 64_000:
+            raise ValueError("Quattro requires bounded text with native user input")
+        return prompt, native
+
     def _backend_reader(self) -> None:
         try:
             while not self.closed.is_set():
@@ -539,10 +602,12 @@ class CodexTurnBridge:
     def _start(self, request: dict[str, Any], thread_id: str, state: dict[str, Any]) -> None:
         try:
             params = request["params"]
-            prompt = "\n".join(item["text"] for item in params.get("input", [])
-                               if item.get("type") == "text" and isinstance(item.get("text"), str))
+            prompt = state["prompt"]
             state["prompt"] = prompt
-            turn = self.gate.begin(thread_id, prompt, "codex", params=params)
+            turn = self.gate.begin(
+                thread_id, prompt, "codex", params=params,
+                requires_native_delegate=state["requires_native_delegate"],
+            )
             state["turn"] = turn
             if state["cancelled"].is_set():
                 self._error(request["id"], "Quattro turn cancelled before agent execution")
@@ -644,17 +709,25 @@ class CodexTurnBridge:
                 params["threadId"] = thread_id
             else:
                 thread_id = None
-            if (not isinstance(thread_id, str) or not thread_id or params.get("toolOutput") is not None
-                    or not isinstance(params.get("input"), list) or not params["input"]
-                    or any(not isinstance(item, dict) or item.get("type") != "text"
-                           or not isinstance(item.get("text"), str) for item in params["input"])):
-                self._error(request.get("id"), "Quattro requires a user turn with a thread ID")
+            if not isinstance(thread_id, str) or not thread_id:
+                self._error(request.get("id"), "Quattro has no matching canonical thread binding")
+                return
+            if params.get("toolOutput") is not None:
+                self._error(request.get("id"), "Quattro does not authorize tool-output turns without a fresh plan")
+                return
+            try:
+                prompt, requires_native_delegate = self._user_turn_input(params.get("input"))
+            except ValueError as error:
+                self._error(request.get("id"), str(error))
                 return
             with self._state_lock:
                 if thread_id in self._active:
                     self._error(request.get("id"), "Wait for the current Quattro turn before submitting another")
                     return
-                state: dict[str, Any] = {"cancelled": threading.Event()}
+                state: dict[str, Any] = {
+                    "cancelled": threading.Event(), "prompt": prompt,
+                    "requires_native_delegate": requires_native_delegate,
+                }
                 self._active[thread_id] = state
             threading.Thread(target=self._start, args=(request, thread_id, state), daemon=True).start()
             return
