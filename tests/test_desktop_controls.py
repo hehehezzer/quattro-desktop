@@ -53,7 +53,7 @@ class DesktopControlsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "EQ_RESTART_MARKER", Path(temp) / "marker"):
             desktop.atomic(desktop.EQ_RESTART_MARKER, "reconfigure\n")
             self.assertEqual(desktop.EQ_RESTART_MARKER.stat().st_mode & 0o777, 0o600)
-            desktop.EQ_RESTART_MARKER.unlink(missing_ok=True)
+            desktop.eq_consume_restart_marker()
             self.assertFalse(desktop.EQ_RESTART_MARKER.exists())
 
     def test_eq_graph_and_safe_preamp(self):

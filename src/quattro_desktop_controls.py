@@ -400,6 +400,10 @@ def eq_service_stopped(result):
     return eq_recover("DSP stopped unexpectedly; EQ bypassed")
 
 
+def eq_consume_restart_marker():
+    EQ_RESTART_MARKER.unlink(missing_ok=True)
+
+
 def eq_supervise():
     """Own and continuously validate the DSP process and its physical link."""
     state = load(CONFIG / "equalizer.json", {})
@@ -417,6 +421,9 @@ def eq_supervise():
              signal.SIGINT: signal.signal(signal.SIGINT, stop)}
     try:
         eq_activate()
+        # The replacement supervisor starts only after the old process exits,
+        # so it can safely consume even a marker left by an interrupted caller.
+        eq_consume_restart_marker()
         missing_since = None
         while not stopping and child.poll() is None:
             if not eq_graph_active(state.get("target")):
