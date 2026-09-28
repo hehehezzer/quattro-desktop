@@ -93,6 +93,7 @@ local menu        = "hyprlauncher"
 --
 hl.on("hyprland.start", function () 
   hl.exec_cmd(terminal)
+  hl.exec_cmd("systemctl --user start plasma-polkit-agent.service")
   hl.exec_cmd("quickshell -p ~/.config/quickshell/shell.qml")
 end)
 

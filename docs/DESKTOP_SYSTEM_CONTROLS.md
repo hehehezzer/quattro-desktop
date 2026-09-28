@@ -51,7 +51,9 @@ Philippines**, not a claim about the user's city. Selection atomically stores th
 canonical name, coordinates, region/country, provider ID and timezone. It changes
 the system timezone to match before saving the selection, clears the old displayed
 weather and immediately requests the new city's weather. If the system timezone
-change is rejected, the new weather location is not saved.
+change is rejected, the new weather location is not saved. The desktop starts its
+PolicyKit authentication agent and uses the standard graphical authorization flow,
+which may ask for the account password before changing the system timezone.
 
 `quattro_desktop_controls.py weather` uses HTTPS Open-Meteo current weather,
 Celsius and WMO weather codes. No API key is required or exposed. Location is
