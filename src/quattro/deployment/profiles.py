@@ -86,6 +86,7 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
     "spotify-art-helper": ("src/quattro_spotify_art.py", ".local/bin/quattro_spotify_art.py"),
     "bluetooth-helper": ("src/quattro_bluetooth.py", ".local/bin/quattro_bluetooth.py"),
     "equalizer-service": ("src/systemd/quattro-equalizer.service", ".config/systemd/user/quattro-equalizer.service"),
+    "surfshark-service": ("src/systemd/quattro-surfshark.service", ".config/systemd/user/quattro-surfshark.service"),
     **{
         "desktop-" + name.replace("/", "-").replace(".", "-"):
             ("src/quickshell/" + name, ".config/quickshell/" + name)

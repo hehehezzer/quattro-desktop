@@ -140,23 +140,23 @@ class DesktopControlsTests(unittest.TestCase):
             self.assertFalse(result["available"])
             self.assertFalse((desktop.CONFIG / "weather.json").exists())
 
-    def test_geocode_worldwide_unicode_and_bounded_request(self):
-        response = MagicMock()
-        place = {**desktop.DEFAULT_LOCATION, "name": "東京", "country": "Japan", "country_code": "JP"}
-        response.__enter__.return_value.read.return_value = json.dumps({"results": [place] * 12}).encode()
-        with patch.object(desktop.urllib.request, "urlopen", return_value=response) as request:
-            result = desktop.geocode("  東京  ")
-        self.assertEqual(result["query"], "東京")
-        self.assertEqual(len(result["results"]), 8)
-        self.assertIn("Japan", result["results"][0]["label"])
-        url = request.call_args.args[0].full_url
-        self.assertTrue(url.startswith("https://geocoding-api.open-meteo.com/v1/search?"))
-        params = desktop.urllib.parse.parse_qs(desktop.urllib.parse.urlsplit(url).query)
-        self.assertEqual(params["name"], ["東京"])
-        self.assertEqual(params["count"], ["8"])
-        self.assertNotIn("countryCode", params)
-        self.assertEqual(request.call_args.kwargs["timeout"], 8)
-        response.__enter__.return_value.read.assert_called_once_with(65536)
+    def test_geocode_uses_only_generic_surfshark_locations_sorted_by_load(self):
+        rows = [
+            {"id": "slow", "country": "Japan", "countryCode": "JP", "location": "Tokyo",
+             "connectionName": "jp-tok.example", "type": "generic", "load": 44,
+             "coordinates": {"latitude": 35.6, "longitude": 139.6}},
+            {"id": "fast", "country": "Japan", "countryCode": "JP", "location": "Osaka",
+             "connectionName": "jp-osa.example", "type": "generic", "load": 12,
+             "coordinates": {"latitude": 34.6, "longitude": 135.5}},
+            {"id": "static", "country": "Japan", "countryCode": "JP", "location": "Tokyo",
+             "connectionName": "jp-static.example", "type": "static", "load": 1,
+             "coordinates": {"latitude": 35.6, "longitude": 139.6}},
+        ]
+        with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "SURFSHARK_CACHE", Path(temp) / "cache.json"):
+            desktop.SURFSHARK_CACHE.write_text(json.dumps({"/v5/server/clusters/all": {"value": rows}}))
+            result = desktop.geocode("  Japan  ")
+        self.assertEqual([row["name"] for row in result["results"]], ["Osaka", "Tokyo"])
+        self.assertEqual(result["results"][0]["vpn_id"], "fast")
 
     def test_geocode_short_query_and_invalid_inputs(self):
         with patch.object(desktop.urllib.request, "urlopen") as request:
@@ -167,25 +167,22 @@ class DesktopControlsTests(unittest.TestCase):
             request.assert_not_called()
 
     def test_geocode_empty_and_network_failure_are_distinct(self):
-        response = MagicMock()
-        response.__enter__.return_value.read.return_value = b'{"generationtime_ms": 1}'
-        with patch.object(desktop.urllib.request, "urlopen", return_value=response):
+        with patch.object(desktop, "_surfshark_catalog", return_value=[]):
             self.assertEqual(desktop.geocode("nowhere")["results"], [])
             self.assertNotIn("error", desktop.geocode("nowhere"))
-        with patch.object(desktop.urllib.request, "urlopen", side_effect=OSError("offline")):
+        with patch.object(desktop, "_surfshark_catalog", side_effect=OSError("missing")):
             self.assertIn("retry", desktop.geocode("Manila")["error"])
 
     def test_geocode_malformed_and_out_of_range_results(self):
-        for data in [[], {"results": {}}, {"results": [{"name": "bad", "latitude": 91, "longitude": 0}]}, {"results": [None]}]:
-            response = MagicMock()
-            response.__enter__.return_value.read.return_value = json.dumps(data).encode()
-            with patch.object(desktop.urllib.request, "urlopen", return_value=response):
-                self.assertIn("error", desktop.geocode("query"))
+        with patch.object(desktop, "_surfshark_catalog", side_effect=ValueError("bad schema")):
+            self.assertIn("error", desktop.geocode("query"))
 
     def test_location_persistence_refresh_cache_and_timezone(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp) / "config"), \
-                patch.object(desktop, "CACHE", Path(temp) / "cache"), patch.object(desktop, "run") as run:
-            place = {**desktop.DEFAULT_LOCATION, "name": "Tokyo", "country": "Japan", "country_code": "JP", "admin1": "Tokyo", "latitude": 35.6895, "longitude": 139.6917, "timezone": "Asia/Tokyo"}
+                patch.object(desktop, "CACHE", Path(temp) / "cache"), patch.object(desktop, "run") as run, \
+                patch.object(desktop, "resolve_timezone", return_value="Asia/Tokyo"), \
+                patch.object(desktop, "configure_surfshark", return_value=(Path(temp) / "settings.json", "{}")):
+            place = {**desktop.DEFAULT_LOCATION, "name": "Tokyo", "country": "Japan", "country_code": "JP", "admin1": "Tokyo", "latitude": 35.6895, "longitude": 139.6917, "timezone": "", "vpn_id": "id-1", "vpn_connection": "jp-tok.example", "vpn_load": 12}
             saved = desktop.save_place(place)
             run.assert_called_once_with(
                 ["pkexec", "timedatectl", "set-timezone", "Asia/Tokyo"], timeout=120)
@@ -196,31 +193,27 @@ class DesktopControlsTests(unittest.TestCase):
             with patch.object(desktop.urllib.request, "urlopen", return_value=response) as request:
                 result = desktop.weather(True)
                 self.assertFalse(result["defaultLocation"])
-                self.assertEqual(result["place"], saved)
+                self.assertEqual(result["place"]["name"], saved["name"])
+                self.assertEqual(result["place"]["timezone"], saved["timezone"])
                 self.assertEqual(result["temperature"], 23)
                 self.assertIn("timezone=Asia%2FTokyo", request.call_args.args[0].full_url)
                 self.assertTrue(desktop.weather()["cached"])
                 self.assertEqual(request.call_count, 1)
-                desktop.save_place(desktop.DEFAULT_LOCATION)
-                self.assertEqual(run.call_args.args[0],
-                                 ["pkexec", "timedatectl", "set-timezone", "Asia/Manila"])
-                self.assertEqual(run.call_args.kwargs, {"timeout": 120})
-                result = desktop.weather()
-                self.assertEqual(request.call_count, 2)
-                self.assertEqual(result["place"]["name"], "Manila")
 
     def test_location_is_not_saved_when_system_timezone_change_fails(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp)), \
-                patch.object(desktop, "run", side_effect=RuntimeError("Not authorized")):
+                patch.object(desktop, "run", side_effect=RuntimeError("Not authorized")), \
+                patch.object(desktop, "resolve_timezone", return_value="Asia/Manila"), \
+                patch.object(desktop, "configure_surfshark", return_value=(Path(temp) / "settings.json", "{}")):
             with self.assertRaisesRegex(RuntimeError, "Not authorized"):
-                desktop.save_place(desktop.DEFAULT_LOCATION)
+                desktop.save_place({**desktop.DEFAULT_LOCATION, "vpn_id": "id", "vpn_connection": "ph.example"})
             self.assertFalse((desktop.CONFIG / "weather.json").exists())
 
-    def test_named_location_requires_timezone(self):
+    def test_named_location_requires_vpn_identity(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp)), \
                 patch.object(desktop, "run") as run:
-            with self.assertRaisesRegex(ValueError, "has no timezone"):
-                desktop.save_place({**desktop.DEFAULT_LOCATION, "timezone": ""})
+            with self.assertRaisesRegex(ValueError, "Surfshark VPN location"):
+                desktop.save_place(desktop.DEFAULT_LOCATION)
             run.assert_not_called()
             self.assertFalse((desktop.CONFIG / "weather.json").exists())
 
@@ -229,6 +222,35 @@ class DesktopControlsTests(unittest.TestCase):
         agent = config.index('hl.exec_cmd("systemctl --user start plasma-polkit-agent.service")')
         quickshell = config.index('hl.exec_cmd("quickshell -p ~/.config/quickshell/shell.qml")')
         self.assertLess(agent, quickshell)
+
+    def test_surfshark_startup_chooses_lowest_load_manila_timezone_exit(self):
+        rows = [
+            {"country_code": "PH", "vpn_load": 31, "name": "Manila", "label": "Manila A"},
+            {"country_code": "PH", "vpn_load": 12, "name": "Manila", "label": "Manila B"},
+            {"country_code": "SG", "vpn_load": 1, "name": "Singapore", "label": "Singapore"},
+        ]
+        with patch.object(desktop, "_surfshark_catalog", return_value=rows), \
+                patch.object(desktop, "configure_surfshark") as configure:
+            result = desktop.surfshark_startup()
+        configure.assert_called_once_with(rows[1], restart=False)
+        self.assertEqual(result["location"], "Manila B")
+
+    def test_surfshark_reload_waits_for_new_process_and_wireguard_tunnel(self):
+        outputs = iter(["101", "", "101", "", "202", "surfshark_wg:wireguard\n"])
+        with patch.object(desktop, "run", side_effect=lambda *_args, **_kwargs: next(outputs)) as run, \
+                patch.object(desktop.time, "sleep"):
+            desktop._reload_surfshark()
+        self.assertEqual(run.call_args_list[1].args[0], ["systemctl", "--user", "kill",
+            "--kill-whom=main", "--signal=SIGKILL", "quattro-surfshark.service"])
+
+    def test_surfshark_service_is_started_with_the_desktop(self):
+        config = (Path(__file__).parents[1] / "src/hypr/hyprland.lua").read_text()
+        setup = config.index("surfshark-startup")
+        start = config.index("systemctl --user start quattro-surfshark.service")
+        self.assertLess(setup, start)
+        self.assertIn('systemctl --user start quattro-surfshark.service', config)
+        unit = (Path(__file__).parents[1] / "src/systemd/quattro-surfshark.service").read_text()
+        self.assertIn("/opt/Surfshark/surfshark --hidden", unit)
 
     def test_place_metadata_is_bounded_and_not_trusted_html(self):
         for value in [None, {**desktop.DEFAULT_LOCATION, "name": "x" * 161}, {**desktop.DEFAULT_LOCATION, "timezone": "Asia/Manila?bad"}]:

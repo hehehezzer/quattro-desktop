@@ -19,6 +19,8 @@ import urllib.request
 
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "quattro"
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "quattro"
+SURFSHARK_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "Surfshark"
+SURFSHARK_CACHE = SURFSHARK_CONFIG / "cache.json"
 BANDS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 PRESETS = {
     "Flat": [0] * 10,
@@ -89,40 +91,153 @@ def normalize_place(value):
     return result
 
 
+def _safe_vendor_json(path, maximum=2_000_000):
+    stat = path.lstat()
+    if path.is_symlink() or not path.is_file() or stat.st_uid != os.getuid() or stat.st_size > maximum:
+        raise ValueError("Unsafe Surfshark data file")
+    return json.loads(path.read_text())
+
+
+def _surfshark_catalog():
+    data = _safe_vendor_json(SURFSHARK_CACHE)
+    rows = data.get("/v5/server/clusters/all", {}).get("value", [])
+    if not isinstance(rows, list) or len(rows) > 1000:
+        raise ValueError("Surfshark location catalog is unavailable")
+    results, seen = [], set()
+    for row in rows:
+        try:
+            if row.get("type") != "generic" or row["id"] in seen:
+                continue
+            lat, lon = coordinates(row["coordinates"]["latitude"], row["coordinates"]["longitude"])
+            fields = {key: row[key] for key in ("id", "country", "countryCode", "location", "connectionName")}
+            if not all(isinstance(item, str) and 0 < len(item) <= 160 and not any(ord(c) < 32 for c in item)
+                       for item in fields.values()):
+                continue
+            load_value = int(row.get("load", 101))
+            if not 0 <= load_value <= 100:
+                load_value = 101
+            seen.add(row["id"])
+            results.append({"name": row["location"], "country": row["country"],
+                "country_code": row["countryCode"], "admin1": "", "admin2": "", "timezone": "",
+                "latitude": lat, "longitude": lon, "label": f'{row["location"]}, {row["country"]}',
+                "vpn_id": row["id"], "vpn_connection": row["connectionName"], "vpn_load": load_value})
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+    if not results:
+        raise ValueError("Surfshark location catalog is unavailable")
+    return results
+
+
 def geocode(query):
     query = query.strip()
     if len(query) < 2:
         return {"query": query, "results": []}
     if len(query) > 100 or any(ord(c) < 32 for c in query):
         raise ValueError("Search must be 2–100 characters")
-    params = urllib.parse.urlencode({"name": query, "count": 8, "language": "en", "format": "json"})
-    request = urllib.request.Request("https://geocoding-api.open-meteo.com/v1/search?" + params,
-                                     headers={"User-Agent": "QuattroDesktop/1.0"})
     try:
-        with urllib.request.urlopen(request, timeout=8) as response:
-            data = json.loads(response.read(65536))
-        rows = data.get("results", [])
-        if not isinstance(rows, list):
-            raise ValueError("Invalid geocoding results")
-        results = []
-        for row in rows[:8]:
-            place = normalize_place(row)
-            if place["name"]:
-                results.append(place)
+        needle = query.casefold()
+        results = [row for row in _surfshark_catalog()
+                   if needle in row["name"].casefold() or needle in row["country"].casefold()]
+        results.sort(key=lambda row: (row["vpn_load"], row["country"], row["name"]))
         return {"query": query, "results": results}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return {"query": query, "results": [], "error": "Location search unavailable. Check your connection and retry."}
+        return {"query": query, "results": [], "error": "Surfshark locations unavailable. Open Surfshark and retry."}
+
+
+def resolve_timezone(place):
+    params = urllib.parse.urlencode({"latitude": place["latitude"], "longitude": place["longitude"],
+                                     "timezone": "auto", "forecast_days": 1})
+    request = urllib.request.Request("https://api.open-meteo.com/v1/forecast?" + params,
+                                     headers={"User-Agent": "QuattroDesktop/1.0"})
+    with urllib.request.urlopen(request, timeout=8) as response:
+        timezone = json.loads(response.read(65536)).get("timezone", "")
+    if not isinstance(timezone, str) or not re.fullmatch(r"[A-Za-z0-9_+./-]{1,80}", timezone):
+        raise ValueError("Could not determine the VPN location timezone")
+    return timezone
+
+
+def _surfshark_settings_path():
+    paths = [path for path in SURFSHARK_CONFIG.glob("settings-*.json")
+             if path.name != "settings-undefined.json"]
+    if len(paths) != 1:
+        raise ValueError("Surfshark account settings are unavailable")
+    return paths[0]
+
+
+def _reload_surfshark():
+    before = run(["systemctl", "--user", "show", "--property=MainPID", "--value",
+                  "quattro-surfshark.service"]).strip()
+    run(["systemctl", "--user", "kill", "--kill-whom=main", "--signal=SIGKILL",
+         "quattro-surfshark.service"])
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            current = run(["systemctl", "--user", "show", "--property=MainPID", "--value",
+                           "quattro-surfshark.service"]).strip()
+            active = run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active"])
+            if current not in {"", "0", before} and "surfshark_wg:wireguard" in active.splitlines():
+                return
+        except RuntimeError:
+            pass
+        time.sleep(.25)
+    raise RuntimeError("Surfshark did not reconnect to the selected location")
+
+
+def configure_surfshark(place, restart=True):
+    vpn_id, connection = place.get("vpn_id", ""), place.get("vpn_connection", "")
+    match = next((row for row in _surfshark_catalog()
+                  if row["vpn_id"] == vpn_id and row["vpn_connection"] == connection), None)
+    if not match:
+        raise ValueError("Selected Surfshark location is no longer available")
+    path = _surfshark_settings_path()
+    settings = _safe_vendor_json(path, 262144)
+    previous = path.read_text()
+    target = {"type": "server", "target": {"id": vpn_id, "connectionName": connection}}
+    settings["autoconnect_enabled"] = True
+    settings["autoconnect_location"] = target
+    settings["quick_connect"] = target
+    atomic(path, json.dumps(settings, ensure_ascii=False))
+    if restart:
+        try:
+            _reload_surfshark()
+        except Exception:
+            atomic(path, previous)
+            raise
+    return path, previous
+
+
+def surfshark_startup():
+    candidates = [row for row in _surfshark_catalog() if row["country_code"] == "PH"]
+    if not candidates:
+        raise ValueError("No Surfshark location matches Asia/Manila")
+    selected = min(candidates, key=lambda row: (row["vpn_load"], row["name"]))
+    configure_surfshark(selected, restart=False)
+    return {"configured": True, "location": selected["label"], "load": selected["vpn_load"]}
 
 
 def save_place(value):
     place = normalize_place(value)
     if not place["name"]:
         raise ValueError("Select a named location")
-    if not place["timezone"]:
-        raise ValueError("Selected location has no timezone")
-    # Apply the system timezone first so a denied or invalid change never leaves
-    # weather configured for a place whose clock could not be selected.
-    run(["pkexec", "timedatectl", "set-timezone", place["timezone"]], timeout=120)
+    for key in ("vpn_id", "vpn_connection"):
+        text = value.get(key, "")
+        if not isinstance(text, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", text):
+            raise ValueError("Select a Surfshark VPN location")
+        place[key] = text
+    place["vpn_load"] = int(value.get("vpn_load", 101))
+    place["timezone"] = resolve_timezone(place)
+    settings_path, previous_settings = configure_surfshark(place)
+    # Persist weather only after both Surfshark and the system clock accept the
+    # selection. If PolicyKit rejects it, restore Surfshark's prior preference.
+    try:
+        run(["pkexec", "timedatectl", "set-timezone", place["timezone"]], timeout=120)
+    except Exception:
+        atomic(settings_path, previous_settings)
+        try:
+            _reload_surfshark()
+        except Exception:
+            pass
+        raise
     atomic(CONFIG / "weather.json", json.dumps(place, ensure_ascii=False))
     return place
 
@@ -547,6 +662,7 @@ def main():
     w.add_argument("--place", help="Selected geocoder location as JSON")
     search = sub.add_parser("geocode")
     search.add_argument("query")
+    sub.add_parser("surfshark-startup")
     sub.add_parser("applications")
     app = sub.add_parser("application")
     app.add_argument("action", choices=["open", "close", "terminate", "force"])
@@ -580,6 +696,8 @@ def main():
             result = weather(args.refresh or bool(args.location) or bool(args.place))
         elif args.command == "geocode":
             result = geocode(args.query)
+        elif args.command == "surfshark-startup":
+            result = surfshark_startup()
         elif args.command == "applications":
             result = applications()
         elif args.command == "application":

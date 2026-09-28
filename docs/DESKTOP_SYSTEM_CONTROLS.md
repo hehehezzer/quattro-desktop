@@ -35,10 +35,11 @@ navigation and offers a named Location picker, fixed Celsius units
 and Refresh weather. Coordinates are internal, not normal settings. No location
 is inferred from personal data, IP address or unrelated project content.
 
-Open-Meteo's HTTPS geocoder searches worldwide with Unicode names, city,
-province/state and country labels. Search has a 325 ms debounce, two-character
-minimum, 100-character maximum, eight-result cap, eight-second socket timeout and
-64 KiB response limit. Editing/closing cancels the worker; monotonically increasing
+The picker reads normal VPN exits from the installed Surfshark client's bounded
+local catalog and searches their city and country labels. Static and obfuscated
+entries are excluded, and matches are sorted by Surfshark's current server load.
+Search has a 325 ms debounce, two-character minimum and 100-character maximum.
+Editing/closing cancels the worker; monotonically increasing
 request revisions reject late data **and errors**, even if cancellation is ignored.
 There is one search worker, no per-keystroke request and no idle search polling.
 Loading, no-results and retryable network errors are distinct. Results support
@@ -47,13 +48,21 @@ Tab, arrows and Enter; the normal Location button opens the picker.
 Saved locations win, including legacy coordinate-only configurations (labelled
 “Saved location”). No authoritative system place provider is configured on this
 Hyprland desktop. Fresh setups use explicitly labelled **generic Manila,
-Philippines**, not a claim about the user's city. Selection atomically stores the
-canonical name, coordinates, region/country, provider ID and timezone. It changes
-the system timezone to match before saving the selection, clears the old displayed
-weather and immediately requests the new city's weather. If the system timezone
-change is rejected, the new weather location is not saved. The desktop starts its
+Philippines**, not a claim about the user's city. Selection validates the VPN ID
+against the latest catalog, makes it Surfshark's quick-connect and auto-connect
+target, reloads the managed client, verifies its NetworkManager WireGuard tunnel,
+resolves the timezone from the exit's
+coordinates, and stores the canonical weather location. It then changes the system
+timezone, clears the old displayed weather and immediately requests the new city's
+weather. If the system timezone change is rejected, the prior Surfshark preference
+is restored and the new weather location is not saved. The desktop starts its
 PolicyKit authentication agent and uses the standard graphical authorization flow,
 which may ask for the account password before changing the system timezone.
+
+`quattro-surfshark.service` opens the client with the graphical session. Before
+each start it selects the lowest-load Philippines exit, currently Manila, so the
+startup VPN preference remains in the `Asia/Manila` timezone. Surfshark's own
+auto-connect performs and maintains the tunnel.
 
 `quattro_desktop_controls.py weather` uses HTTPS Open-Meteo current weather,
 Celsius and WMO weather codes. No API key is required or exposed. Location is
