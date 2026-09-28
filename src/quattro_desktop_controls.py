@@ -406,10 +406,15 @@ def eq_consume_restart_marker():
 
 def eq_restart_in_progress():
     try:
-        creator = int(EQ_RESTART_MARKER.read_text().strip())
-        os.kill(creator, 0)
-        return True
-    except (OSError, ValueError):
+        marker = json.loads(EQ_RESTART_MARKER.read_text())
+        creator = int(marker["pid"])
+        start, _executable = process_identity(creator)
+        valid = start == marker["start"] and 0 <= time.time() - float(marker["created"]) <= 30
+        if valid:
+            return True
+        eq_consume_restart_marker()
+        return False
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
         eq_consume_restart_marker()
         return False
 
@@ -496,7 +501,10 @@ def eq_apply(gains, preset="Custom", enabled=True, target=None):
             nodes = eq_nodes()
             if not eq_graph_active(target) or target != old.get("target"):
                 run(["systemctl", "--user", "enable", "quattro-equalizer.service"])
-                atomic(EQ_RESTART_MARKER, f"{os.getpid()}\n")
+                creator_start, _executable = process_identity(os.getpid())
+                atomic(EQ_RESTART_MARKER, json.dumps({
+                    "pid": os.getpid(), "start": creator_start, "created": time.time(),
+                }))
                 run(["systemctl", "--user", "restart", "quattro-equalizer.service"])
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline:

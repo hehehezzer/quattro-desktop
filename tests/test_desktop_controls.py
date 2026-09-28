@@ -51,12 +51,17 @@ class DesktopControlsTests(unittest.TestCase):
 
     def test_reconfiguration_marker_is_private_and_removed(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "EQ_RESTART_MARKER", Path(temp) / "marker"):
-            desktop.atomic(desktop.EQ_RESTART_MARKER, f"{desktop.os.getpid()}\n")
+            start, _executable = desktop.process_identity(desktop.os.getpid())
+            desktop.atomic(desktop.EQ_RESTART_MARKER, json.dumps({
+                "pid": desktop.os.getpid(), "start": start, "created": desktop.time.time(),
+            }))
             self.assertEqual(desktop.EQ_RESTART_MARKER.stat().st_mode & 0o777, 0o600)
             self.assertTrue(desktop.eq_restart_in_progress())
             desktop.eq_consume_restart_marker()
             self.assertFalse(desktop.EQ_RESTART_MARKER.exists())
-            desktop.atomic(desktop.EQ_RESTART_MARKER, "999999999\n")
+            desktop.atomic(desktop.EQ_RESTART_MARKER, json.dumps({
+                "pid": desktop.os.getpid(), "start": "wrong", "created": desktop.time.time(),
+            }))
             self.assertFalse(desktop.eq_restart_in_progress())
             self.assertFalse(desktop.EQ_RESTART_MARKER.exists())
 
