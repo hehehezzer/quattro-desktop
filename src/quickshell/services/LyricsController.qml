@@ -103,6 +103,21 @@ QtObject {
     onTrackKeyChanged: resetForTrack()
     Component.onCompleted: resetForTrack()
 
+    property IpcHandler ipc: IpcHandler {
+        target: "lyrics"
+        function status(): string {
+            return JSON.stringify({
+                state: root.state,
+                title: root.title,
+                artist: root.artist,
+                activeIndex: root.activeIndex,
+                lineCount: root.lines.length,
+                cached: root.cached,
+                source: root.source
+            });
+        }
+    }
+
     property Timer lookupDebounce: Timer {
         interval: 220
         repeat: false
