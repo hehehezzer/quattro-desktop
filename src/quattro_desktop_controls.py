@@ -337,6 +337,15 @@ def eq_recover(reason="DSP unavailable"):
     return {**recovered, "bands": BANDS, "presets": list(PRESETS), "active": False}
 
 
+def eq_temporary_bypass(target):
+    """Keep sound alive during a supervised DSP rebuild without disabling EQ."""
+    sinks = json.loads(run(["pactl", "-f", "json", "list", "sinks"]))
+    if target not in physical_sinks(sinks):
+        raise RuntimeError("Saved physical output is unavailable")
+    run(["pactl", "set-default-sink", target])
+    eq_move_streams(sinks, target)
+
+
 def eq_activate():
     """Fail startup unless the persisted target and DSP sink are both live."""
     state = load(CONFIG / "equalizer.json", {})
@@ -418,14 +427,19 @@ def eq_supervise():
                     raise RuntimeError("Core audio graph is restarting")
                 missing_since = missing_since or time.monotonic()
                 if time.monotonic() - missing_since >= 5:
-                    eq_recover("DSP graph disconnected; EQ bypassed")
-                    return {"enabled": False, "degraded": True}
+                    eq_temporary_bypass(state.get("target"))
+                    child.terminate()
+                    raise RuntimeError("DSP graph disconnected; rebuilding")
             else:
                 missing_since = None
             time.sleep(1)
         if stopping:
             eq_recover("DSP service stopped; EQ bypassed")
             return {"enabled": False, "degraded": True}
+        try:
+            eq_temporary_bypass(state.get("target"))
+        except RuntimeError:
+            pass
         raise RuntimeError("Equalizer process exited unexpectedly")
     finally:
         if child.poll() is None:
