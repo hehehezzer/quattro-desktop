@@ -5,6 +5,8 @@ import Quickshell.Wayland
 import QtQuick
 import QtQuick.Layouts
 import "../theme" as QuattroTheme
+import "../services"
+import "shared"
 
 Scope {
     id: root
@@ -116,6 +118,12 @@ Scope {
         const busy = array(dashboard.sessions).some(item => item.agent === name)
             || array(dashboard.tasks).some(item => item.agent === name && activeStates.indexOf(item.state) >= 0)
         return busy ? "Busy" : "Ready"
+    }
+    Connections {
+        target: PopupManager
+        function onRequested(name) {
+            if (name === "agents") root.opened ? root.close() : root.open("home");
+        }
     }
     function open(pageName) {
         page = pageName || "home"
@@ -335,17 +343,18 @@ Scope {
         onTriggered: root.refreshAccountState()
     }
 
-    PanelWindow {
+    TemporaryPanel {
         id: agentsWindow
-        visible: root.opened
-        anchors { top: true; bottom: true; left: true; right: true }
-        aboveWindows: true; focusable: true; exclusionMode: ExclusionMode.Ignore
-        WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-        color: QuattroTheme.Theme.overlayLight
-        MouseArea { anchors.fill: parent; onClicked: root.close() }
+        panelName: "agents"
+        onDismissed: root.close()
+        opened: root.opened
+        anchors { top: true; bottom: true; right: true }
+        margins { top: 42; bottom: 12; right: 12 }
+        implicitWidth: 760
+        color: "transparent"
         Rectangle {
-            anchors { top: parent.top; bottom: parent.bottom; right: parent.right; topMargin: 42; bottomMargin: 12; rightMargin: 12 }
-            width: 760; color: QuattroTheme.Theme.background; border.width: 1; border.color: QuattroTheme.Theme.border
+            anchors.fill: parent
+            color: QuattroTheme.Theme.background; border.width: 1; border.color: QuattroTheme.Theme.border
             MouseArea { anchors.fill: parent }
             FocusScope {
                 id: keyScope

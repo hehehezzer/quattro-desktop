@@ -2,14 +2,17 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Pipewire
 import Quickshell.Hyprland
+import Quickshell.Wayland
 import Quickshell.Services.SystemTray
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme" as QuattroTheme
+import "../services"
 
 PanelWindow {
     id: root
+    WlrLayershell.namespace: "quattro-bar"
 
     anchors {
         top: true
@@ -17,10 +20,24 @@ PanelWindow {
         right: true
     }
 
-    implicitHeight: 32
-    color: QuattroTheme.Theme.background
+    implicitHeight: QuattroTheme.Theme.barHeight
+    color: "transparent"
 
-    property string fontFamily: "JetBrainsMono Nerd Font"
+    property string fontFamily: QuattroTheme.Theme.fontFamily
+
+    Rectangle {
+        anchors.fill: parent
+        color: QuattroTheme.Theme.barSurface
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: QuattroTheme.Theme.structuralLine
+            color: QuattroTheme.Theme.panelBorder
+            opacity: 0.72
+        }
+    }
 
     // Show the full date and time by default; right-click toggles to HH:mm.
     property bool alternateClockFormat: true
@@ -114,6 +131,12 @@ PanelWindow {
     }
 
     Component.onCompleted: usageProcess.running = true
+    TapHandler {
+        property int pressRevision: -1
+        acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+        onPressedChanged: if (pressed) pressRevision = PopupManager.revision
+        onTapped: PopupManager.barTapped(pressRevision)
+    }
 
     Process {
         id: usageProcess
@@ -148,7 +171,7 @@ PanelWindow {
         clock.text = Qt.formatDateTime(
             new Date(),
             alternateClockFormat
-                ? "ddd MMM d  hh:mm AP"
+                ? (root.width >= 1500 ? "dddd, MMM d  hh:mm:ss AP" : "MMM d  hh:mm:ss AP")
                 : "HH:mm"
         )
     }
@@ -166,23 +189,27 @@ PanelWindow {
     // ========================================================
 
     RowLayout {
+        id: leftGroup
         anchors {
             left: parent.left
             verticalCenter: parent.verticalCenter
-            leftMargin: 8
+            leftMargin: QuattroTheme.Theme.spaceSm
         }
 
-        spacing: 4
+        spacing: QuattroTheme.Theme.space2xs
 
         Rectangle {
-            width: 28
-            height: 26
+            width: QuattroTheme.Theme.compactTarget
+            height: QuattroTheme.Theme.barControlHeight
             radius: QuattroTheme.Theme.cornerRadius
 
             color:
                 menuMouse.containsMouse
-                ? QuattroTheme.Theme.border
+                ? QuattroTheme.Theme.hover
                 : "transparent"
+
+            Accessible.role: Accessible.Button
+            Accessible.name: "Open Quattro menu"
 
             Text {
                 anchors.centerIn: parent
@@ -192,7 +219,8 @@ PanelWindow {
                 color: QuattroTheme.Theme.textStrong
 
                 font.family: root.fontFamily
-                font.pixelSize: 17
+                font.pixelSize: QuattroTheme.Theme.iconMedium
+                anchors.verticalCenterOffset: QuattroTheme.Theme.iconOpticalOffsetY
             }
 
             MouseArea {
@@ -204,13 +232,7 @@ PanelWindow {
                 cursorShape: Qt.PointingHandCursor
 
                 onClicked: {
-                    Quickshell.execDetached([
-                        "qs",
-                        "ipc",
-                        "call",
-                        "menu",
-                        "toggle"
-                    ])
+                    PopupManager.request("menu")
                 }
             }
         }
@@ -233,19 +255,22 @@ PanelWindow {
 
                 implicitWidth:
                     modelData.active
-                    ? 24
-                    : 18
+                    ? 26
+                    : 20
 
-                implicitHeight: 24
+                implicitHeight: QuattroTheme.Theme.barControlHeight
 
                 radius: QuattroTheme.Theme.cornerRadius
 
                 color:
                     modelData.active
-                    ? QuattroTheme.Theme.textStrong
+                    ? QuattroTheme.Theme.accent
                     : workspaceMouse.containsMouse
-                    ? QuattroTheme.Theme.border
+                    ? QuattroTheme.Theme.hover
                     : "transparent"
+
+                Accessible.role: Accessible.Button
+                Accessible.name: "Workspace " + modelData.id
 
                 Text {
                     anchors.centerIn: parent
@@ -258,7 +283,7 @@ PanelWindow {
                         : QuattroTheme.Theme.text
 
                     font.family: root.fontFamily
-                    font.pixelSize: 11
+                    font.pixelSize: QuattroTheme.Theme.typeBody
                 }
 
                 MouseArea {
@@ -281,43 +306,76 @@ PanelWindow {
     // CENTER CLOCK
     // ========================================================
 
+    MediaStrip {
+        x: leftGroup.x + leftGroup.width + QuattroTheme.Theme.spaceSm
+        anchors.verticalCenter: parent.verticalCenter
+        width: Math.max(0, Math.min(player ? 390 : 136,
+            clockArea.x - x - QuattroTheme.Theme.spaceSm))
+        visible: width >= (player ? 220 : 126)
+        onOpenRequested: PopupManager.request("spotify")
+    }
+
     Item {
-        anchors.centerIn: parent
+        id: clockArea
+        x: Math.max(leftGroup.x + leftGroup.width + QuattroTheme.Theme.spaceSm,
+            Math.min((root.width - width) / 2,
+                rightGroup.x - width - QuattroTheme.Theme.spaceMd))
+        anchors.verticalCenter: parent.verticalCenter
 
         width: clockButton.implicitWidth
-        height: 32
+        height: QuattroTheme.Theme.barHeight
 
         Rectangle {
             id: clockButton
 
             anchors.centerIn: parent
 
-            implicitWidth: clock.implicitWidth + 14
-            implicitHeight: 26
+            implicitWidth: clockWeatherRow.implicitWidth + 16
+            implicitHeight: QuattroTheme.Theme.barControlHeight
 
             radius: QuattroTheme.Theme.cornerRadius
 
             color:
                 clockMouse.containsMouse
-                ? QuattroTheme.Theme.border
+                ? QuattroTheme.Theme.hover
                 : "transparent"
 
-            Text {
-                id: clock
-
+            Row {
+                id: clockWeatherRow
                 anchors.centerIn: parent
+                spacing: QuattroTheme.Theme.spaceSm
+
+                Text {
+                    id: clock
 
                 text: Qt.formatDateTime(
                     new Date(),
                     root.alternateClockFormat
-                        ? "ddd MMM d  hh:mm AP"
+                        ? (root.width >= 1500 ? "dddd, MMM d  hh:mm:ss AP" : "MMM d  hh:mm:ss AP")
                         : "HH:mm"
                 )
 
                 color: QuattroTheme.Theme.textStrong
 
                 font.family: root.fontFamily
-                font.pixelSize: 13
+                    font.pixelSize: QuattroTheme.Theme.typeLabel
+                }
+
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 1
+                    height: 12
+                    color: QuattroTheme.Theme.border
+                }
+
+                Text {
+                    id: weatherLabel
+                    text: DesktopWeather.label
+                    color: DesktopWeather.snapshot.stale
+                        ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
+                    font.family: root.fontFamily
+                    font.pixelSize: QuattroTheme.Theme.typeMeta
+                }
             }
 
             Timer {
@@ -346,13 +404,7 @@ PanelWindow {
 
                 onClicked: function(mouse) {
                     if (mouse.button === Qt.LeftButton) {
-                        Quickshell.execDetached([
-                            "qs",
-                            "ipc",
-                            "call",
-                            "panel",
-                            "clock"
-                        ])
+                        PopupManager.request("clock")
 
                         return
                     }
@@ -376,30 +428,34 @@ PanelWindow {
     // ========================================================
 
     RowLayout {
+        id: rightGroup
         anchors {
             right: parent.right
             verticalCenter: parent.verticalCenter
-            rightMargin: 8
+            rightMargin: QuattroTheme.Theme.spaceSm
         }
 
-        spacing: 5
+        spacing: QuattroTheme.Theme.space2xs
+
+        RunningApps { barWindow: root }
 
         Rectangle {
             id: systemStatsButton
+            visible: root.width >= 1000
             implicitWidth: systemStatsRow.implicitWidth + 14
-            implicitHeight: 26
+            implicitHeight: QuattroTheme.Theme.barControlHeight
             radius: QuattroTheme.Theme.cornerRadius
-            color: root.hoveredSystemStat !== "" ? QuattroTheme.Theme.border : "transparent"
+            color: root.hoveredSystemStat !== "" ? QuattroTheme.Theme.hover : "transparent"
 
             Row {
                 id: systemStatsRow
                 anchors.centerIn: parent
-                spacing: 8
+                spacing: QuattroTheme.Theme.spaceSm
 
                 Item {
                     id: cpuStatsItem
                     implicitWidth: cpuStatsLabel.implicitWidth
-                    implicitHeight: 26
+                    implicitHeight: QuattroTheme.Theme.barControlHeight
 
                     Text {
                         id: cpuStatsLabel
@@ -409,7 +465,7 @@ PanelWindow {
                             : "󰍛 --"
                         color: QuattroTheme.Theme.text
                         font.family: root.fontFamily
-                        font.pixelSize: 12
+                        font.pixelSize: QuattroTheme.Theme.typeBody
                     }
 
                     MouseArea {
@@ -423,7 +479,7 @@ PanelWindow {
                 Item {
                     id: ramStatsItem
                     implicitWidth: ramStatsLabel.implicitWidth
-                    implicitHeight: 26
+                    implicitHeight: QuattroTheme.Theme.barControlHeight
 
                     Text {
                         id: ramStatsLabel
@@ -433,7 +489,7 @@ PanelWindow {
                             : "󰘚 --"
                         color: QuattroTheme.Theme.text
                         font.family: root.fontFamily
-                        font.pixelSize: 12
+                        font.pixelSize: QuattroTheme.Theme.typeBody
                     }
 
                     MouseArea {
@@ -448,10 +504,11 @@ PanelWindow {
 
         Rectangle {
             id: agentUsageButton
+            visible: root.width >= 1200
             implicitWidth: agentLabel.implicitWidth + 14
-            implicitHeight: 26
+            implicitHeight: QuattroTheme.Theme.barControlHeight
             radius: QuattroTheme.Theme.cornerRadius
-            color: agentMouse.containsMouse ? QuattroTheme.Theme.border : "transparent"
+            color: agentMouse.containsMouse ? QuattroTheme.Theme.hover : "transparent"
 
             Text {
                 id: agentLabel
@@ -473,7 +530,7 @@ PanelWindow {
                     ? QuattroTheme.Theme.success
                     : QuattroTheme.Theme.text
                 font.family: root.fontFamily
-                font.pixelSize: 12
+                font.pixelSize: QuattroTheme.Theme.typeBody
             }
 
             MouseArea {
@@ -485,7 +542,7 @@ PanelWindow {
                     if (containsMouse)
                         root.countdownNow = Date.now()
                 }
-                onClicked: Quickshell.execDetached(["qs", "ipc", "call", "agents", "toggle"])
+                onClicked: PopupManager.request("agents")
             }
         }
 
@@ -497,26 +554,26 @@ PanelWindow {
 
                 required property var modelData
 
-                implicitWidth: 26
-                implicitHeight: 26
+                implicitWidth: QuattroTheme.Theme.compactTarget
+                implicitHeight: QuattroTheme.Theme.barControlHeight
 
                 radius: QuattroTheme.Theme.cornerRadius
 
                 color:
                     trayMouse.containsMouse
-                    ? QuattroTheme.Theme.border
+                    ? QuattroTheme.Theme.hover
                     : "transparent"
 
                 Image {
                     anchors.centerIn: parent
 
-                    width: 17
-                    height: 17
+                    width: QuattroTheme.Theme.iconMedium
+                    height: QuattroTheme.Theme.iconMedium
 
                     source: trayEntry.modelData.icon
 
-                    sourceSize.width: 17
-                    sourceSize.height: 17
+                    sourceSize.width: QuattroTheme.Theme.iconMedium
+                    sourceSize.height: QuattroTheme.Theme.iconMedium
 
                     fillMode: Image.PreserveAspectFit
 
@@ -548,6 +605,7 @@ PanelWindow {
                             trayEntry.height
                         )
 
+                        PopupManager.closeActive()
                         item.display(
                             root,
                             pos.x,
@@ -593,33 +651,24 @@ PanelWindow {
 
         BarIcon {
             glyph: "󰂯"
+            accessibleName: "Bluetooth"
 
             onClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "bluetooth"
-                ])
+                PopupManager.request("bluetooth")
             }
         }
 
         BarIcon {
             glyph: "󰖩"
+            accessibleName: "Network"
 
             onClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "network"
-                ])
+                PopupManager.request("network")
             }
         }
 
         BarIcon {
+            accessibleName: "Audio"
             glyph:
                 !Pipewire.defaultAudioSink
                 || !Pipewire.defaultAudioSink.audio
@@ -634,25 +683,8 @@ PanelWindow {
                 ? "󰖀"
                 : "󰕾"
 
-            onClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "audio"
-                ])
-            }
-
-            onMiddleClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "audio"
-                ])
-            }
+            onClicked: PopupManager.request("audio")
+            onMiddleClicked: PopupManager.request("audio")
 
             onRightClicked: {
                 Quickshell.execDetached([
@@ -688,29 +720,19 @@ PanelWindow {
 
         BarIcon {
             glyph: "󰍹"
+            accessibleName: "Display"
 
             onClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "display"
-                ])
+                PopupManager.request("display")
             }
         }
 
         BarIcon {
             glyph: ""
+            accessibleName: "Power"
 
             onClicked: {
-                Quickshell.execDetached([
-                    "qs",
-                    "ipc",
-                    "call",
-                    "panel",
-                    "power"
-                ])
+                PopupManager.request("power")
             }
         }
     }
@@ -718,18 +740,19 @@ PanelWindow {
     PopupWindow {
         id: systemStatsPopup
 
-        visible: root.hoveredSystemStat !== "" && root.systemStatsPopupPositioned
+        visible: !PopupManager.activePanel && root.hoveredSystemStat !== "" && root.systemStatsPopupPositioned
         color: "transparent"
         anchor.window: root
         anchor.rect.x: Math.round(root.systemStatsPopupX)
-        anchor.rect.y: 34
+        anchor.rect.y: QuattroTheme.Theme.barHeight + 4
         implicitWidth: 190
         implicitHeight: 52
 
         Rectangle {
             anchors.fill: parent
-            color: QuattroTheme.Theme.surface
-            border.color: QuattroTheme.Theme.border
+            radius: QuattroTheme.Theme.panelRadius
+            color: QuattroTheme.Theme.panelSurface
+            border.color: QuattroTheme.Theme.panelBorder
             border.width: 1
 
             Column {
@@ -761,18 +784,19 @@ PanelWindow {
     PopupWindow {
         id: agentUsagePopup
 
-        visible: agentMouse.containsMouse
+        visible: !PopupManager.activePanel && agentMouse.containsMouse
         color: "transparent"
         anchor.window: root
         anchor.rect.x: Math.round(agentUsageButton.mapToItem(root.contentItem, 0, 0).x + agentUsageButton.width - implicitWidth)
-        anchor.rect.y: 34
+        anchor.rect.y: QuattroTheme.Theme.barHeight + 4
         implicitWidth: 122
         implicitHeight: Math.max(24, root.usageWindowList.length * 15 + 8)
 
         Rectangle {
             anchors.fill: parent
-            color: QuattroTheme.Theme.surface
-            border.color: QuattroTheme.Theme.border
+            radius: QuattroTheme.Theme.panelRadius
+            color: QuattroTheme.Theme.panelSurface
+            border.color: QuattroTheme.Theme.panelBorder
             border.width: 1
 
             Column {
@@ -799,6 +823,7 @@ PanelWindow {
         id: iconRoot
 
         required property string glyph
+        required property string accessibleName
 
         signal clicked()
         signal rightClicked()
@@ -806,26 +831,34 @@ PanelWindow {
         signal wheelUp()
         signal wheelDown()
 
-        implicitWidth: 26
-        implicitHeight: 26
+        implicitWidth: QuattroTheme.Theme.compactTarget
+        implicitHeight: QuattroTheme.Theme.barControlHeight
 
         radius: QuattroTheme.Theme.cornerRadius
 
         color:
             iconMouse.containsMouse
-            ? QuattroTheme.Theme.border
+            ? QuattroTheme.Theme.hover
             : "transparent"
 
         Text {
             anchors.centerIn: parent
+            anchors.verticalCenterOffset: QuattroTheme.Theme.iconOpticalOffsetY
+            width: parent.width
+            height: parent.height
 
             text: iconRoot.glyph
 
             color: QuattroTheme.Theme.text
 
             font.family: root.fontFamily
-            font.pixelSize: 15
+            font.pixelSize: QuattroTheme.Theme.iconMedium
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
         }
+
+        Accessible.role: Accessible.Button
+        Accessible.name: iconRoot.accessibleName
 
         MouseArea {
             id: iconMouse
@@ -861,5 +894,9 @@ PanelWindow {
                 wheel.accepted = true
             }
         }
+
+        ToolTip.visible: iconMouse.containsMouse
+        ToolTip.delay: 700
+        ToolTip.text: iconRoot.accessibleName
     }
 }

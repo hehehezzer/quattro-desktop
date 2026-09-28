@@ -4,6 +4,8 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme" as QuattroTheme
+import "../services"
+import "shared"
 
 Scope {
     id: root
@@ -28,54 +30,19 @@ Scope {
     // WINDOW
     // ============================================================
 
-    PanelWindow {
+    TemporaryPanel {
         id: window
-
-        visible: root.opened
-
-        anchors {
-            top: true
-            bottom: true
-            left: true
-            right: true
-        }
+        panelName: "clipboard"
+        onDismissed: root.close()
+        opened: root.opened
+        implicitWidth: Math.min(900, (screen ? screen.width : 1920) - 80)
+        implicitHeight: Math.min(620, (screen ? screen.height : 1080) - 100)
 
         color: "transparent"
 
         exclusionMode:
             ExclusionMode.Ignore
 
-        focusable: true
-
-        Shortcut {
-            id: clipboardEscapeShortcut
-
-            sequence: "Escape"
-            enabled: root.opened
-            context: Qt.WindowShortcut
-
-            onActivated: {
-                root.close()
-            }
-        }
-
-        // ========================================================
-        // BACKDROP
-        // ========================================================
-
-        Rectangle {
-            anchors.fill: parent
-
-            color: QuattroTheme.Theme.overlay
-
-            MouseArea {
-                anchors.fill: parent
-
-                onClicked: {
-                    root.close()
-                }
-            }
-        }
 
         // ========================================================
         // MAIN CARD
@@ -84,19 +51,7 @@ Scope {
         Rectangle {
             id: card
 
-            anchors.centerIn: parent
-
-            width:
-                Math.min(
-                    window.width - 80,
-                    900
-                )
-
-            height:
-                Math.min(
-                    window.height - 100,
-                    620
-                )
+            anchors.fill: parent
 
             radius: QuattroTheme.Theme.cornerRadius
 
@@ -637,6 +592,8 @@ Scope {
 
                                 source:
                                     previewPanel.selected
+                                    && previewPanel.selected.type === "image"
+                                    && previewPanel.selected.path
                                         ? "file://"
                                             + previewPanel.selected.path
                                         : ""
@@ -886,6 +843,7 @@ Scope {
     // ============================================================
 
     function open() {
+        window.screen = PopupManager.focusedScreen()
         opened = true
 
         query = ""

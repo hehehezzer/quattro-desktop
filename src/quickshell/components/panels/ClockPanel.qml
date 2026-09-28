@@ -1,5 +1,8 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls
+import "../shared"
+import "../../services"
 import "../../theme" as QuattroTheme
 
 Item {
@@ -15,7 +18,22 @@ Item {
         1
     )
 
+    property bool choosingLocation: false
+    property bool compactHeight: calendarScroll.contentHeight > calendarScroll.height + 1
     signal requestFocus()
+    function scrollBy(amount) {
+        if (!compactHeight || choosingLocation)
+            return false
+        calendarScroll.contentY = Math.max(0, Math.min(
+            calendarScroll.contentHeight - calendarScroll.height,
+            calendarScroll.contentY + amount
+        ))
+        return true
+    }
+    onChoosingLocationChanged: {
+        if (choosingLocation) locationPicker.begin();
+        else DesktopWeather.searchQuery = "";
+    }
 
     // ========================================================
     // DATE HELPERS
@@ -115,6 +133,13 @@ Item {
         )
     }
 
+    function visibleWeeks() {
+        const year = shownMonth.getFullYear()
+        const month = shownMonth.getMonth()
+        const days = new Date(year, month + 1, 0).getDate()
+        return Math.ceil((mondayOffset(year, month) + days) / 7)
+    }
+
     function previousMonth() {
         shownMonth = new Date(
             shownMonth.getFullYear(),
@@ -150,6 +175,7 @@ Item {
     // Used whenever the popup is closed.
     // This ensures the next open always starts on today's month.
     function resetToToday() {
+        choosingLocation = false
         currentDate = new Date()
 
         shownMonth = new Date(
@@ -178,6 +204,7 @@ Item {
     // ========================================================
 
     WheelHandler {
+        enabled: !root.choosingLocation && !root.compactHeight
         target: null
 
         acceptedDevices:
@@ -199,10 +226,34 @@ Item {
     // CONTENT
     // ========================================================
 
-    ColumnLayout {
+    WeatherLocationPicker {
+        id: locationPicker
         anchors.fill: parent
+        visible: root.choosingLocation
+        onDone: { root.choosingLocation = false; root.requestFocus(); }
+    }
 
-        spacing: 14
+    Flickable {
+        id: calendarScroll
+        anchors.fill: parent
+        visible: !root.choosingLocation
+        clip: true
+        contentWidth: width
+        contentHeight: calendarContent.height
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+
+        ScrollBar.vertical: ScrollBar {
+            policy: calendarScroll.interactive ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+        }
+
+    ColumnLayout {
+        id: calendarContent
+        width: calendarScroll.width
+        height: implicitHeight
+
+        spacing: 10
 
         // ====================================================
         // CURRENT DATE
@@ -262,44 +313,14 @@ Item {
 
             spacing: 8
 
-            Rectangle {
+            DesktopButton {
                 implicitWidth: 36
                 implicitHeight: 34
-
-                radius: QuattroTheme.Theme.cornerRadius
-
-                color:
-                    previousMouse.containsMouse
-                    ? QuattroTheme.Theme.border
-                    : QuattroTheme.Theme.surface
-
-                Text {
-                    anchors.centerIn: parent
-
-                    text: "󰅁"
-
-                    color: QuattroTheme.Theme.text
-
-                    font.family:
-                        root.fontFamily
-
-                    font.pixelSize: 14
-                }
-
-                MouseArea {
-                    id: previousMouse
-
-                    anchors.fill: parent
-
-                    hoverEnabled: true
-
-                    cursorShape:
-                        Qt.PointingHandCursor
-
-                    onClicked: {
-                        root.previousMonth()
-                    }
-                }
+                text: "󰅁"
+                font.pixelSize: 14
+                Accessible.name: "Previous month"
+                ToolTip.text: Accessible.name
+                onClicked: root.previousMonth()
             }
 
             Text {
@@ -323,44 +344,14 @@ Item {
                 font.bold: true
             }
 
-            Rectangle {
+            DesktopButton {
                 implicitWidth: 36
                 implicitHeight: 34
-
-                radius: QuattroTheme.Theme.cornerRadius
-
-                color:
-                    nextMouse.containsMouse
-                    ? QuattroTheme.Theme.border
-                    : QuattroTheme.Theme.surface
-
-                Text {
-                    anchors.centerIn: parent
-
-                    text: "󰅂"
-
-                    color: QuattroTheme.Theme.text
-
-                    font.family:
-                        root.fontFamily
-
-                    font.pixelSize: 14
-                }
-
-                MouseArea {
-                    id: nextMouse
-
-                    anchors.fill: parent
-
-                    hoverEnabled: true
-
-                    cursorShape:
-                        Qt.PointingHandCursor
-
-                    onClicked: {
-                        root.nextMonth()
-                    }
-                }
+                text: "󰅂"
+                font.pixelSize: 14
+                Accessible.name: "Next month"
+                ToolTip.text: Accessible.name
+                onClicked: root.nextMonth()
             }
         }
 
@@ -430,7 +421,7 @@ Item {
             spacing: 6
 
             Repeater {
-                model: 6
+                model: root.visibleWeeks()
 
                 delegate: RowLayout {
                     id: weekRow
@@ -565,16 +556,90 @@ Item {
             }
         }
 
-        Item {
-            Layout.fillHeight: true
-        }
-
         Rectangle {
             Layout.fillWidth: true
 
             implicitHeight: 1
 
             color: QuattroTheme.Theme.border
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 7
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 10
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+                    Text {
+                        text: DesktopWeather.loading && !DesktopWeather.snapshot.temperature ? "—°" : DesktopWeather.label
+                        color: QuattroTheme.Theme.textStrong
+                        font.family: root.fontFamily
+                        font.pixelSize: 22
+                        font.bold: true
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: DesktopWeather.condition || (DesktopWeather.error ? "Weather unavailable" : "Loading conditions…")
+                        color: DesktopWeather.error ? QuattroTheme.Theme.warning : QuattroTheme.Theme.text
+                        font.family: root.fontFamily
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                    }
+                }
+                ColumnLayout {
+                    Layout.preferredWidth: 210
+                    Layout.maximumWidth: 210
+                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                    spacing: 1
+                    Text {
+                        Layout.fillWidth: true
+                        text: DesktopWeather.placeLabel
+                        textFormat: Text.PlainText
+                        elide: Text.ElideRight
+                        color: QuattroTheme.Theme.textStrong
+                        font.family: root.fontFamily
+                        font.pixelSize: 10
+                        horizontalAlignment: Text.AlignRight
+                    }
+                    Text {
+                        text: DesktopWeather.snapshot.updated
+                            ? (DesktopWeather.error ? "Cached" : "Updated") + " · " + Qt.formatDateTime(new Date(DesktopWeather.snapshot.updated * 1000), "hh:mm AP")
+                            : "Celsius"
+                        color: DesktopWeather.error ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
+                        font.family: root.fontFamily
+                        font.pixelSize: 9
+                        horizontalAlignment: Text.AlignRight
+                    }
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                visible: !!DesktopWeather.error || !!DesktopWeather.snapshot.defaultLocation
+                text: DesktopWeather.error || "Default location · choose your city for local conditions"
+                wrapMode: Text.Wrap
+                color: DesktopWeather.error ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
+                font.pixelSize: 9
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+                DesktopButton {
+                    Layout.fillWidth: true
+                    text: "Change location"
+                    Accessible.name: "Change weather location: " + DesktopWeather.placeLabel
+                    ToolTip.text: DesktopWeather.placeLabel
+                    onClicked: root.choosingLocation = true
+                }
+                DesktopButton {
+                    text: DesktopWeather.loading ? "Refreshing…" : "Refresh"
+                    enabled: !DesktopWeather.loading
+                    Accessible.name: "Refresh weather"
+                    onClicked: DesktopWeather.refresh(true)
+                }
+            }
         }
 
         // ====================================================
@@ -603,49 +668,13 @@ Item {
                 Layout.fillWidth: true
             }
 
-            Rectangle {
-                implicitWidth:
-                    todayText.implicitWidth + 22
-
+            DesktopButton {
                 implicitHeight: 32
-
-                radius: QuattroTheme.Theme.cornerRadius
-
-                color:
-                    todayMouse.containsMouse
-                    ? QuattroTheme.Theme.border
-                    : QuattroTheme.Theme.surface
-
-                Text {
-                    id: todayText
-
-                    anchors.centerIn: parent
-
-                    text: "Today"
-
-                    color: QuattroTheme.Theme.text
-
-                    font.family:
-                        root.fontFamily
-
-                    font.pixelSize: 11
-                }
-
-                MouseArea {
-                    id: todayMouse
-
-                    anchors.fill: parent
-
-                    hoverEnabled: true
-
-                    cursorShape:
-                        Qt.PointingHandCursor
-
-                    onClicked: {
-                        root.goToday()
-                    }
-                }
+                text: "Today"
+                Accessible.name: "Go to today"
+                onClicked: root.goToday()
             }
         }
+    }
     }
 }

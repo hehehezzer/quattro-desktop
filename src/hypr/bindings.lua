@@ -2,6 +2,8 @@
 -- QUATTRO SYSTEM PANELS
 -- ============================================================
 
+require("popup-dismissal")
+
 hl.bind(
     "SUPER + CTRL + A",
     hl.dsp.exec_cmd("qs ipc call panel audio")

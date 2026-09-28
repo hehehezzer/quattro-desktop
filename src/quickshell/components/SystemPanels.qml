@@ -1,12 +1,16 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
+import Quickshell.Wayland
 import Quickshell.Services.Pipewire
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme" as QuattroTheme
 
 import "panels"
+import "shared"
+import "../services"
 
 Scope {
     id: root
@@ -23,6 +27,13 @@ Scope {
         { "id": "warm", "label": "Warm", "temperature": 4200 },
         { "id": "deep", "label": "Deep", "temperature": 3400 }
     ]
+
+    function outputSummary() {
+        const outputs = []
+        for (const display of Quickshell.screens)
+            outputs.push(display.name + " " + display.width + "×" + display.height)
+        return outputs.join(" · ") || "No active display"
+    }
 
     function consumeNightLight(text) {
         try {
@@ -91,13 +102,25 @@ Scope {
         return Quickshell.screens[0]
     }
 
+    Connections {
+        target: PopupManager
+        function onRequested(name) {
+            if (name === "clock") root.toggleClock();
+            else if (["spotify", "audio", "bluetooth", "network", "display", "power"].indexOf(name) >= 0) {
+                if (popupHost.visible && root.page === name) root.close();
+                else root.openPage(name);
+            }
+        }
+    }
+
     function openPage(name) {
         root.closeClock()
 
+        if (popupHost.opened && root.page !== name) root.close()
         root.page = name
 
         popupHost.screen = focusedScreen()
-        popupHost.visible = true
+        popupHost.opened = true
 
         if (name === "network")
             networkPanel.refreshNetwork()
@@ -111,7 +134,7 @@ Scope {
     }
 
     function close() {
-        popupHost.visible = false
+        popupHost.opened = false
         root.page = ""
 
         networkPanel.resetTransientState()
@@ -129,7 +152,7 @@ Scope {
         clockPanel.resetToToday()
 
         clockHost.screen = focusedScreen()
-        clockHost.visible = true
+        clockHost.opened = true
 
         Qt.callLater(() => {
             clockKeyScope.forceActiveFocus()
@@ -140,7 +163,7 @@ Scope {
         // Reset first so any scroll/month navigation state is discarded.
         clockPanel.resetToToday()
 
-        clockHost.visible = false
+        clockHost.opened = false
     }
 
     function toggleClock() {
@@ -159,6 +182,10 @@ Scope {
 
         function audio(): void {
             root.openPage("audio")
+        }
+
+        function spotify(): void {
+            root.openPage("spotify")
         }
 
         function bluetooth(): void {
@@ -191,8 +218,10 @@ Scope {
     // RIGHT-SIDE SYSTEM PANEL HOST
     // ========================================================
 
-    PanelWindow {
+    TemporaryPanel {
         id: popupHost
+        panelName: root.page
+        onDismissed: root.close()
 
         visible: false
         color: "transparent"
@@ -203,48 +232,29 @@ Scope {
         }
 
         margins {
-            top: 32
-            right: 8
+            top: QuattroTheme.Theme.barHeight + QuattroTheme.Theme.spaceSm
+            right: QuattroTheme.Theme.spaceSm
         }
 
-        implicitWidth: 1
-        implicitHeight: 1
+        implicitWidth: Math.min(QuattroTheme.Theme.panelWidth,
+            (screen ? screen.width : 1920) - QuattroTheme.Theme.spaceLg)
+        implicitHeight: Math.min(root.page === "spotify" ? 328
+            : root.page === "bluetooth" ? bluetoothPanel.preferredHeight
+            : root.page === "display" ? 285
+            : root.page === "power" ? 430
+            : root.page === "network" ? (networkPanel.passwordPrompt || networkPanel.qrVisible
+                ? 500 : networkPanel.wifiEnabled
+                    ? Math.min(620, 290 + Math.min(networkPanel.wifiNetworks.length, 6) * 48)
+                    : 250) : 560,
+            (screen ? screen.height : 1080) - 60)
 
         exclusionMode:
             ExclusionMode.Ignore
 
-        PopupWindow {
+        Item {
             id: popup
-
-            visible:
-                popupHost.visible
-
-            color: "transparent"
-
-            anchor.window:
-                popupHost
-
-            anchor.rect.x:
-                root.page === "bluetooth"
-                ? -560
-                : root.page === "network"
-                ? -529
-                : root.page === "audio"
-                ? -498
-                : root.page === "display"
-                ? -467
-                : -436
-
-            anchor.rect.y: 6
-
-            width: 430
-
-            height:
-                root.page === "network"
-                ? 620
-                : 520
-
-            grabFocus: true
+            anchors.fill: parent
+            visible: popupHost.visible
 
             onVisibleChanged: {
                 if (!visible && popupHost.visible)
@@ -283,25 +293,33 @@ Scope {
             Rectangle {
                 anchors.fill: parent
 
-                radius: QuattroTheme.Theme.cornerRadius
+                radius: QuattroTheme.Theme.panelRadius
 
-                color: QuattroTheme.Theme.background
+                color: QuattroTheme.Theme.panelSurface
 
                 border.width: 1
-                border.color: QuattroTheme.Theme.border
+                border.color: QuattroTheme.Theme.panelBorder
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.margins: QuattroTheme.Theme.panelInset
 
-                    spacing: 10
+                    spacing: QuattroTheme.Theme.spaceSm
 
                     RowLayout {
                         Layout.fillWidth: true
 
+                        Rectangle {
+                            Layout.preferredWidth: 4
+                            Layout.preferredHeight: 4
+                            color: QuattroTheme.Theme.accent
+                        }
+
                         Text {
                             text:
-                                root.page === "audio"
+                                root.page === "spotify"
+                                ? "Spotify"
+                                : root.page === "audio"
                                 ? "Audio"
                                 : root.page === "bluetooth"
                                 ? "Bluetooth"
@@ -315,10 +333,9 @@ Scope {
 
                             color: QuattroTheme.Theme.textStrong
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
-                            font.pixelSize: 17
+                            font.pixelSize: QuattroTheme.Theme.typeTitle
                             font.bold: true
 
                             Layout.fillWidth: true
@@ -329,10 +346,9 @@ Scope {
 
                             color: QuattroTheme.Theme.textMuted
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
-                            font.pixelSize: 10
+                            font.pixelSize: QuattroTheme.Theme.typeMeta
                         }
                     }
 
@@ -355,6 +371,12 @@ Scope {
                         onRequestFocus: {
                             keyScope.forceActiveFocus()
                         }
+                    }
+
+                    SpotifyPanel {
+                        visible: root.page === "spotify"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
                     }
 
                     BluetoothPanel {
@@ -405,8 +427,7 @@ Scope {
                         }
 
                         Text {
-                            text:
-                                "DP-2 and HDMI-A-1 · 1920×1080 · scale 1.0"
+                            text: root.outputSummary()
 
                             color: QuattroTheme.Theme.textMuted
 
@@ -468,23 +489,32 @@ Scope {
                             Repeater {
                                 model: root.nightLightOptions
 
-                                delegate: Rectangle {
+                                delegate: Button {
                                     id: nightLightButton
                                     required property var modelData
                                     Layout.fillWidth: true
                                     implicitHeight: 54
-                                    color: root.nightLightPreset === modelData.id
-                                        ? QuattroTheme.Theme.accentMuted
-                                        : nightLightMouse.containsMouse
-                                        ? QuattroTheme.Theme.hover
-                                        : QuattroTheme.Theme.surface
-                                    border.width: 1
-                                    border.color: root.nightLightPreset === modelData.id
-                                        ? QuattroTheme.Theme.accent
-                                        : QuattroTheme.Theme.border
+                                    enabled: !root.nightLightBusy
+                                    hoverEnabled: true
+                                    Accessible.name: modelData.label + " night light, " + modelData.temperature + " kelvin"
+                                    ToolTip.text: Accessible.name
+                                    onClicked: root.setNightLight(modelData.id)
 
-                                    Column {
-                                        anchors.centerIn: parent
+                                    background: Rectangle {
+                                        color: root.nightLightPreset === modelData.id
+                                            ? QuattroTheme.Theme.accentMuted
+                                            : nightLightButton.hovered
+                                            ? QuattroTheme.Theme.hover
+                                            : QuattroTheme.Theme.surface
+                                        border.width: nightLightButton.activeFocus ? 2 : 1
+                                        border.color: nightLightButton.activeFocus
+                                            ? QuattroTheme.Theme.textStrong
+                                            : root.nightLightPreset === modelData.id
+                                            ? QuattroTheme.Theme.accent
+                                            : QuattroTheme.Theme.border
+                                    }
+
+                                    contentItem: Column {
                                         spacing: 2
 
                                         Text {
@@ -506,47 +536,6 @@ Scope {
                                             font.pixelSize: 8
                                         }
                                     }
-
-                                    MouseArea {
-                                        id: nightLightMouse
-                                        anchors.fill: parent
-                                        enabled: !root.nightLightBusy
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.setNightLight(nightLightButton.modelData.id)
-                                    }
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            implicitHeight: 70
-                            color: QuattroTheme.Theme.surface
-                            border.width: 1
-                            border.color: QuattroTheme.Theme.border
-
-                            Column {
-                                anchors.fill: parent
-                                anchors.margins: 10
-                                spacing: 4
-
-                                Text {
-                                    text: "SHARP OUTPUT"
-                                    color: QuattroTheme.Theme.accent
-                                    font.family: "JetBrainsMono Nerd Font"
-                                    font.pixelSize: 9
-                                    font.letterSpacing: 1
-                                    font.bold: true
-                                }
-
-                                Text {
-                                    width: parent.width
-                                    text: "Compositor blur is disabled. Night light is applied after capture, so screenshots remain neutral even while the display is warm."
-                                    color: QuattroTheme.Theme.textMuted
-                                    font.family: "JetBrainsMono Nerd Font"
-                                    font.pixelSize: 9
-                                    wrapMode: Text.Wrap
                                 }
                             }
                         }
@@ -699,23 +688,20 @@ Scope {
     // CLOCK / CALENDAR POPUP
     // ========================================================
 
-    PanelWindow {
+    TemporaryPanel {
         id: clockHost
+        panelName: "clock"
+        onDismissed: root.closeClock()
 
         visible: false
         color: "transparent"
 
-        anchors {
-            top: true
-            left: true
-            right: true
-        }
+        anchors { top: true }
+        margins { top: QuattroTheme.Theme.barHeight + QuattroTheme.Theme.spaceSm }
 
-        margins {
-            top: 32
-        }
-
-        implicitHeight: 1
+        implicitHeight: Math.min(660, (screen ? screen.height : 1080) - 60)
+        implicitWidth: Math.min(QuattroTheme.Theme.panelWidth,
+            (screen ? screen.width : 1920) - QuattroTheme.Theme.spaceLg)
 
         exclusionMode:
             ExclusionMode.Ignore
@@ -727,39 +713,17 @@ Scope {
             }
         }
 
-        PopupWindow {
+        Item {
             id: clockPopup
-
-            visible:
-                clockHost.visible
-
-            color: "transparent"
-
-            anchor.window:
-                clockHost
-
-            anchor.rect.x:
-                Math.round(
-                    (
-                        clockHost.width
-                        - clockPopup.width
-                    )
-                    / 2
-                )
-
-            anchor.rect.y: 6
-
-            width: 430
-            height: 560
-
-            grabFocus: true
+            anchors.fill: parent
+            visible: clockHost.visible
 
             onVisibleChanged: {
                 if (!visible) {
                     clockPanel.resetToToday()
 
                     if (clockHost.visible) {
-                        clockHost.visible = false
+                        clockHost.opened = false
                     }
                 }
             }
@@ -775,36 +739,48 @@ Scope {
                 Keys.onEscapePressed: {
                     root.closeClock()
                 }
+
+                Keys.onPressed: function(event) {
+                    if (event.key === Qt.Key_PageDown)
+                        event.accepted = clockPanel.scrollBy(clockPanel.height * 0.8)
+                    else if (event.key === Qt.Key_PageUp)
+                        event.accepted = clockPanel.scrollBy(-clockPanel.height * 0.8)
+                }
             }
 
             Rectangle {
                 anchors.fill: parent
 
-                radius: QuattroTheme.Theme.cornerRadius
+                radius: QuattroTheme.Theme.panelRadius
 
-                color: QuattroTheme.Theme.background
+                color: QuattroTheme.Theme.panelSurface
 
                 border.width: 1
-                border.color: QuattroTheme.Theme.border
+                border.color: QuattroTheme.Theme.panelBorder
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
+                    anchors.margins: QuattroTheme.Theme.panelInset
 
-                    spacing: 10
+                    spacing: QuattroTheme.Theme.spaceSm
 
                     RowLayout {
                         Layout.fillWidth: true
+
+                        Rectangle {
+                            Layout.preferredWidth: 4
+                            Layout.preferredHeight: 4
+                            color: QuattroTheme.Theme.accent
+                        }
 
                         Text {
                             text: "Calendar"
 
                             color: QuattroTheme.Theme.textStrong
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
-                            font.pixelSize: 17
+                            font.pixelSize: QuattroTheme.Theme.typeTitle
                             font.bold: true
 
                             Layout.fillWidth: true
@@ -815,10 +791,9 @@ Scope {
 
                             color: QuattroTheme.Theme.textMuted
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
-                            font.pixelSize: 10
+                            font.pixelSize: QuattroTheme.Theme.typeMeta
                         }
                     }
 
@@ -885,62 +860,4 @@ Scope {
         }
     }
 
-    component PanelButton: Rectangle {
-        id: button
-
-        required property string label
-
-        signal clicked()
-
-        Layout.fillWidth: true
-        implicitHeight: 42
-
-        radius: QuattroTheme.Theme.cornerRadius
-
-        color:
-            buttonMouse.containsMouse
-            ? QuattroTheme.Theme.border
-            : QuattroTheme.Theme.surface
-
-        Text {
-            anchors {
-                left: parent.left
-                right: parent.right
-
-                leftMargin: 12
-                rightMargin: 12
-
-                verticalCenter:
-                    parent.verticalCenter
-            }
-
-            text:
-                button.label
-
-            color: QuattroTheme.Theme.textStrong
-
-            font.family:
-                "JetBrainsMono Nerd Font"
-
-            font.pixelSize: 12
-
-            wrapMode:
-                Text.Wrap
-        }
-
-        MouseArea {
-            id: buttonMouse
-
-            anchors.fill: parent
-
-            hoverEnabled: true
-
-            cursorShape:
-                Qt.PointingHandCursor
-
-            onClicked: {
-                button.clicked()
-            }
-        }
-    }
 }

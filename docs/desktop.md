@@ -25,3 +25,9 @@ part of the hermetic CI gate.
 
 System panels and the calendar open on the currently focused Hyprland monitor,
 including when their controls are clicked on a secondary display.
+
+The bar's media control and the dedicated Now Playing panel select Spotify's
+MPRIS endpoint only. Cover art is fetched by `quattro_spotify_art.py` from
+Spotify's image CDN into the user's private cache and then displayed from a
+local file. A failed fetch leaves the Spotify fallback artwork visible. This
+avoids the host Qt/OpenSSL crash observed with direct HTTPS QML images.

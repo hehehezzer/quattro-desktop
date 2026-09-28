@@ -1,6 +1,8 @@
 import Quickshell
 import Quickshell.Services.Notifications
+import Quickshell.Wayland
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme" as QuattroTheme
 
@@ -17,32 +19,46 @@ Scope {
     }
 
     PanelWindow {
+        focusable: true
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
         anchors {
             top: true
             right: true
         }
 
         margins {
-            top: 42
-            right: 12
+            top: QuattroTheme.Theme.barHeight + QuattroTheme.Theme.spaceSm
+            right: QuattroTheme.Theme.spaceMd
         }
 
-        implicitWidth: 360
+        implicitWidth: Math.min(360, (screen ? screen.width : 1920) - 24)
 
-        implicitHeight:
-            notificationColumn.implicitHeight
+        implicitHeight: Math.min(notificationColumn.implicitHeight,
+            (screen ? screen.height : 1080) - 54)
 
         exclusionMode:
             ExclusionMode.Ignore
 
         color: "transparent"
 
-        ColumnLayout {
-            id: notificationColumn
+        Flickable {
+            id: notificationViewport
+            anchors.fill: parent
+            contentWidth: width
+            contentHeight: notificationColumn.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            interactive: contentHeight > height
+            ScrollBar.vertical: ScrollBar {
+                policy: notificationViewport.interactive ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+            }
 
-            width: parent.width
+            ColumnLayout {
+                id: notificationColumn
 
-            spacing: 8
+                width: notificationViewport.width
+
+                spacing: 8
 
             Repeater {
                 model:
@@ -59,12 +75,27 @@ Scope {
                     implicitHeight:
                         content.implicitHeight + 24
 
-                    radius: QuattroTheme.Theme.cornerRadius
+                    activeFocusOnTab: true
+                    Accessible.role: Accessible.Button
+                    Accessible.name: modelData.summary + (modelData.body ? ". " + modelData.body : "")
+                    Keys.onReturnPressed: notificationCard.activate()
+                    Keys.onSpacePressed: notificationCard.activate()
+                    Keys.onEscapePressed: modelData.dismiss()
 
-                    color: QuattroTheme.Theme.background
+                    function activate() {
+                        const actions = modelData.actions || []
+                        const defaultAction = actions.find(action => action.identifier === "default")
+                        if (defaultAction)
+                            defaultAction.invoke()
+                        modelData.dismiss()
+                    }
 
-                    border.width: 1
-                    border.color: QuattroTheme.Theme.border
+                    radius: QuattroTheme.Theme.panelRadius
+
+                    color: QuattroTheme.Theme.panelSurface
+
+                    border.width: activeFocus ? QuattroTheme.Theme.focusLine : 1
+                    border.color: activeFocus ? QuattroTheme.Theme.accent : QuattroTheme.Theme.panelBorder
 
                     property bool hovered:
                         notificationMouse.containsMouse
@@ -111,10 +142,13 @@ Scope {
                             text:
                                 modelData.summary
 
+                            textFormat: Text.PlainText
+                            maximumLineCount: 2
+                            elide: Text.ElideRight
+
                             color: QuattroTheme.Theme.textStrong
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
                             font.bold: true
 
@@ -134,10 +168,12 @@ Scope {
                             textFormat:
                                 Text.PlainText
 
+                            maximumLineCount: 5
+                            elide: Text.ElideRight
+
                             color: QuattroTheme.Theme.text
 
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                            font.family: QuattroTheme.Theme.fontFamily
 
                             Layout.fillWidth: true
 
@@ -156,20 +192,11 @@ Scope {
                         cursorShape:
                             Qt.PointingHandCursor
 
-                        onClicked: {
-                            // Discord and most notification senders expose their
-                            // message target as the D-Bus default action.
-                            // Invoke it before dismissing so a click opens the
-                            // exact message/channel instead of only clearing UI.
-                            const actions = modelData.actions || []
-                            const defaultAction = actions.find(action => action.identifier === "default")
-                            if (defaultAction)
-                                defaultAction.invoke()
-                            modelData.dismiss()
-                        }
+                        onClicked: notificationCard.activate()
                     }
                 }
             }
         }
     }
+}
 }

@@ -82,10 +82,27 @@ CORE_DEPLOYMENT_MAPPINGS = {
 }
 
 DESKTOP_DEPLOYMENT_MAPPINGS = {
+    "desktop-helper": ("src/quattro_desktop_controls.py", ".local/bin/quattro_desktop_controls.py"),
+    "spotify-art-helper": ("src/quattro_spotify_art.py", ".local/bin/quattro_spotify_art.py"),
+    "bluetooth-helper": ("src/quattro_bluetooth.py", ".local/bin/quattro_bluetooth.py"),
+    "equalizer-service": ("src/systemd/quattro-equalizer.service", ".config/systemd/user/quattro-equalizer.service"),
+    **{
+        "desktop-" + name.replace("/", "-").replace(".", "-"):
+            ("src/quickshell/" + name, ".config/quickshell/" + name)
+        for name in (
+            "services/qmldir", "services/DesktopMedia.qml", "services/DesktopWeather.qml",
+            "services/PopupManager.qml", "components/shared/TemporaryPanel.qml",
+            "components/panels/WeatherLocationPicker.qml", "components/panels/SpotifyPanel.qml",
+            "components/MediaStrip.qml", "components/RunningApps.qml",
+            "components/shared/DesktopButton.qml", "components/shared/DesktopField.qml",
+            "components/shared/DesktopCombo.qml", "components/panels/Equalizer.qml",
+        )
+    },
     "menu-helper": ("src/quattro-menu", ".local/bin/quattro-menu"),
     "session-helper": ("src/quattro-session", ".local/bin/quattro-session"),
     "theme-helper": ("src/quattro-theme", ".local/bin/quattro-theme"),
     "night-light-helper": ("src/quattro-night-light", ".local/bin/quattro-night-light"),
+    "screenshot-helper": ("src/quattro-screenshot", ".local/bin/quattro-screenshot"),
     "pointer-helper": ("src/quattro-pointer", ".local/bin/quattro-pointer"),
     "system-stats-helper": ("src/quattro-system-stats", ".local/bin/quattro-system-stats"),
     "agents-qml": ("src/quickshell/components/Agents.qml", ".config/quickshell/components/Agents.qml"),
@@ -106,6 +123,7 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
     "shell-qml": ("src/quickshell/shell.qml", ".config/quickshell/shell.qml"),
     "theme-qml": ("src/quickshell/theme/Theme.qml", ".config/quickshell/theme/Theme.qml"),
     "theme-qmldir": ("src/quickshell/theme/qmldir", ".config/quickshell/theme/qmldir"),
+    "hypr-popup-dismissal": ("src/hypr/popup-dismissal.lua", ".config/hypr/popup-dismissal.lua"),
     "hypr-bindings": ("src/hypr/bindings.lua", ".config/hypr/bindings.lua"),
     "hypr-config": ("src/hypr/hyprland.lua", ".config/hypr/hyprland.lua"),
     "foot-config": ("src/foot/foot.ini", ".config/foot/foot.ini"),

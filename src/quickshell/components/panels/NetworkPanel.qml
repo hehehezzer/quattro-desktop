@@ -1,6 +1,7 @@
 import Quickshell
 import Quickshell.Io
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import "../../theme" as QuattroTheme
 
@@ -15,6 +16,39 @@ ColumnLayout {
     property string ethernetStatus: "Checking..."
     property string wifiStatus: "Checking..."
     property bool wifiEnabled: true
+
+    function toggleWifi() {
+        if (wifiToggleProcess.running)
+            return
+        wifiToggleProcess.desiredState = !root.wifiEnabled
+        root.wifiEnabled = !root.wifiEnabled
+        wifiToggleProcess.running = true
+    }
+
+    function activateNetwork(network) {
+        if (network.active) {
+            wifiDisconnectProcess.running = false
+            wifiDisconnectProcess.running = true
+            return
+        }
+        const isOpen = network.security === "" || network.security.toLowerCase().includes("open")
+        if (isOpen) {
+            wifiConnectProcess.ssid = network.ssid
+            wifiConnectProcess.password = ""
+            wifiConnectProcess.running = false
+            wifiConnectProcess.running = true
+            return
+        }
+        root.showPasswordPrompt(network.ssid, network.security, "connect")
+    }
+
+    function showNetworkQr(network) {
+        const isOpen = network.security === "" || network.security.toLowerCase().includes("open")
+        if (isOpen)
+            root.generateWifiQr(network.ssid, "", network.security)
+        else
+            root.showPasswordPrompt(network.ssid, network.security, "qr")
+    }
 
     property bool passwordPrompt: false
     property bool showPassword: false
@@ -540,8 +574,18 @@ ColumnLayout {
             }
 
             Rectangle {
-                implicitWidth: 44
-                implicitHeight: 24
+                implicitWidth: 52
+                implicitHeight: 32
+
+                activeFocusOnTab: true
+                Accessible.role: Accessible.CheckBox
+                Accessible.name: "Wi-Fi power"
+                Accessible.checked: root.wifiEnabled
+                Keys.onReturnPressed: root.toggleWifi()
+                Keys.onSpacePressed: root.toggleWifi()
+
+                border.width: activeFocus ? 2 : 0
+                border.color: QuattroTheme.Theme.textStrong
 
                 radius: QuattroTheme.Theme.cornerRadius
 
@@ -551,8 +595,8 @@ ColumnLayout {
                     : QuattroTheme.Theme.border
 
                 Rectangle {
-                    width: 18
-                    height: 18
+                    width: 22
+                    height: 22
 
                     radius: QuattroTheme.Theme.cornerRadius
 
@@ -581,19 +625,8 @@ ColumnLayout {
                     cursorShape:
                         Qt.PointingHandCursor
 
-                    onClicked: {
-                        wifiToggleProcess.desiredState =
-                            !root.wifiEnabled
-
-                        root.wifiEnabled =
-                            !root.wifiEnabled
-
-                        wifiToggleProcess.running =
-                            false
-
-                        wifiToggleProcess.running =
-                            true
-                    }
+                    enabled: !wifiToggleProcess.running
+                    onClicked: root.toggleWifi()
                 }
             }
         }
@@ -813,6 +846,15 @@ ColumnLayout {
                         implicitWidth: 52
                         height: 34
 
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: root.showPassword ? "Hide Wi-Fi password" : "Show Wi-Fi password"
+                        Keys.onReturnPressed: root.showPassword = !root.showPassword
+                        Keys.onSpacePressed: root.showPassword = !root.showPassword
+
+                        border.width: activeFocus ? 2 : 0
+                        border.color: QuattroTheme.Theme.accent
+
                         anchors {
                             right: parent.right
                             rightMargin: 4
@@ -922,33 +964,11 @@ ColumnLayout {
                 Layout.fillWidth: true
             }
 
-            Text {
+            DesktopButton {
                 text: "󰑐  Refresh"
-
-                color:
-                    refreshMouse.containsMouse
-                    ? QuattroTheme.Theme.textStrong
-                    : QuattroTheme.Theme.textMuted
-
-                font.family:
-                    "JetBrainsMono Nerd Font"
-
-                font.pixelSize: 10
-
-                MouseArea {
-                    id: refreshMouse
-
-                    anchors.fill: parent
-
-                    hoverEnabled: true
-
-                    cursorShape:
-                        Qt.PointingHandCursor
-
-                    onClicked: {
-                        root.refreshNetwork()
-                    }
-                }
+                Accessible.name: "Refresh nearby Wi-Fi networks"
+                ToolTip.text: Accessible.name
+                onClicked: root.refreshNetwork()
             }
         }
 
@@ -972,6 +992,15 @@ ColumnLayout {
 
                 required property var modelData
 
+                activeFocusOnTab: true
+                Accessible.role: Accessible.Button
+                Accessible.name: modelData.ssid + (modelData.active ? ", connected" : ", connect")
+                Keys.onReturnPressed: root.activateNetwork(modelData)
+                Keys.onSpacePressed: root.activateNetwork(modelData)
+
+                border.width: activeFocus ? 2 : 0
+                border.color: QuattroTheme.Theme.accent
+
                 width:
                     wifiList.width
 
@@ -994,48 +1023,7 @@ ColumnLayout {
                     cursorShape:
                         Qt.PointingHandCursor
 
-                    onClicked: {
-                        const network =
-                            wifiRow.modelData
-
-                        if (network.active) {
-                            wifiDisconnectProcess.running =
-                                false
-
-                            wifiDisconnectProcess.running =
-                                true
-
-                            return
-                        }
-
-                        const isOpen =
-                            network.security === "" ||
-                            network.security
-                                .toLowerCase()
-                                .includes("open")
-
-                        if (isOpen) {
-                            wifiConnectProcess.ssid =
-                                network.ssid
-
-                            wifiConnectProcess.password =
-                                ""
-
-                            wifiConnectProcess.running =
-                                false
-
-                            wifiConnectProcess.running =
-                                true
-
-                            return
-                        }
-
-                        root.showPasswordPrompt(
-                            network.ssid,
-                            network.security,
-                            "connect"
-                        )
-                    }
+                    onClicked: root.activateNetwork(wifiRow.modelData)
                 }
 
                 RowLayout {
@@ -1137,6 +1125,14 @@ ColumnLayout {
                         implicitWidth: 30
                         implicitHeight: 28
 
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: "Share " + wifiRow.modelData.ssid + " with a QR code"
+                        Keys.onReturnPressed: root.showNetworkQr(wifiRow.modelData)
+                        Keys.onSpacePressed: root.showNetworkQr(wifiRow.modelData)
+                        border.width: activeFocus ? 2 : 0
+                        border.color: QuattroTheme.Theme.accent
+
                         radius: QuattroTheme.Theme.cornerRadius
 
                         color:
@@ -1168,32 +1164,7 @@ ColumnLayout {
                             cursorShape:
                                 Qt.PointingHandCursor
 
-                            onClicked: {
-                                const network =
-                                    wifiRow.modelData
-
-                                const isOpen =
-                                    network.security === "" ||
-                                    network.security
-                                        .toLowerCase()
-                                        .includes("open")
-
-                                if (isOpen) {
-                                    root.generateWifiQr(
-                                        network.ssid,
-                                        "",
-                                        network.security
-                                    )
-
-                                    return
-                                }
-
-                                root.showPasswordPrompt(
-                                    network.ssid,
-                                    network.security,
-                                    "qr"
-                                )
-                            }
+                            onClicked: root.showNetworkQr(wifiRow.modelData)
                         }
                     }
                 }

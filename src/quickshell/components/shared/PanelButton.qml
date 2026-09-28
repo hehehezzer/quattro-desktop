@@ -10,13 +10,15 @@ Rectangle {
     signal clicked()
 
     Layout.fillWidth: true
-    implicitHeight: 42
+    implicitHeight: QuattroTheme.Theme.primaryTarget
 
     radius: QuattroTheme.Theme.cornerRadius
 
     color:
-        buttonMouse.containsMouse
-        ? QuattroTheme.Theme.border
+        buttonMouse.pressed
+        ? QuattroTheme.Theme.pressed
+        : buttonMouse.containsMouse
+        ? QuattroTheme.Theme.hover
         : QuattroTheme.Theme.surface
 
     Text {
@@ -24,8 +26,8 @@ Rectangle {
             left: parent.left
             right: parent.right
 
-            leftMargin: 12
-            rightMargin: 12
+            leftMargin: QuattroTheme.Theme.spaceMd
+            rightMargin: QuattroTheme.Theme.spaceMd
 
             verticalCenter:
                 parent.verticalCenter
@@ -37,12 +39,24 @@ Rectangle {
         color: QuattroTheme.Theme.textStrong
 
         font.family:
-            "JetBrainsMono Nerd Font"
+            QuattroTheme.Theme.fontFamily
 
-        font.pixelSize: 12
+        font.pixelSize: QuattroTheme.Theme.typeLabel
 
         wrapMode:
             Text.Wrap
+    }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        width: 1
+        height: buttonMouse.containsMouse ? 18 : 8
+        color: QuattroTheme.Theme.accent
+        opacity: buttonMouse.containsMouse ? 1 : 0
+
+        Behavior on height { NumberAnimation { duration: QuattroTheme.Theme.motionFast } }
+        Behavior on opacity { NumberAnimation { duration: QuattroTheme.Theme.motionFast } }
     }
 
     MouseArea {
