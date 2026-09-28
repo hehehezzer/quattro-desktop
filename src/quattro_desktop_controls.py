@@ -318,19 +318,20 @@ def eq_recover(reason="DSP unavailable"):
 def eq_activate():
     """Fail startup unless the persisted target and DSP sink are both live."""
     state = load(CONFIG / "equalizer.json", {})
-    sinks = json.loads(run(["pactl", "-f", "json", "list", "sinks"]))
     target = state.get("target")
-    if target not in physical_sinks(sinks):
-        eq_recover("Saved output is unavailable; EQ bypassed")
-        raise RuntimeError("Saved equalizer output is unavailable")
-    deadline = time.monotonic() + 4
+    sinks = []
+    deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
-        if eq_nodes():
-            break
+        try:
+            sinks = json.loads(run(["pactl", "-f", "json", "list", "sinks"]))
+            if target in physical_sinks(sinks) and eq_nodes():
+                break
+        except (RuntimeError, ValueError, json.JSONDecodeError):
+            pass
         time.sleep(.1)
     else:
-        eq_recover("DSP did not start; EQ bypassed")
-        raise RuntimeError("PipeWire equalizer did not become available")
+        eq_recover("DSP or saved output did not recover; EQ bypassed")
+        raise RuntimeError("PipeWire equalizer or its saved output did not become available")
     run(["pactl", "set-default-sink", EQ_NAME])
     eq_move_streams(sinks, EQ_NAME)
     active = {**state, "enabled": True, "degraded": False}

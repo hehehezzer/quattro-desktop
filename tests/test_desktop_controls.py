@@ -64,6 +64,21 @@ class DesktopControlsTests(unittest.TestCase):
                  {"name": "alsa_output.usb-speakers"}]
         self.assertEqual(desktop.physical_sinks(sinks), ["alsa_output.usb-speakers"])
 
+    def test_eq_activation_waits_through_session_manager_startup(self):
+        sinks = [{"index": 12, "name": "alsa_output.pci-hdmi"}]
+        with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp)), \
+                patch.object(desktop, "run") as run, patch.object(desktop, "eq_nodes") as nodes, \
+                patch.object(desktop.time, "sleep"):
+            desktop.atomic(desktop.CONFIG / "equalizer.json", json.dumps({
+                "enabled": True, "target": "alsa_output.pci-hdmi", "gains": [0] * 10,
+            }))
+            run.side_effect = [RuntimeError("Pulse is starting"), json.dumps(sinks), "", "[]", ""]
+            nodes.return_value = [{"id": 99}]
+            result = desktop.eq_activate()
+        self.assertTrue(result["active"])
+        self.assertEqual(run.call_args_list[2].args[0],
+                         ["pactl", "set-default-sink", "quattro_eq"])
+
     def test_weather_fresh_setup_uses_explicit_generic_manila(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp) / "config"), patch.object(desktop, "CACHE", Path(temp) / "cache"), patch.object(desktop.urllib.request, "urlopen", side_effect=OSError("offline")):
             result = desktop.weather()
