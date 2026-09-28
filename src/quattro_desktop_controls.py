@@ -276,10 +276,29 @@ def eq_nodes():
 
 
 def physical_sinks(sinks):
-    """Return stable ALSA sink names, excluding unrelated virtual sinks."""
+    """Return stable hardware sink names, excluding virtual/mixing sinks."""
     return [sink["name"] for sink in sinks
             if isinstance(sink.get("name"), str)
-            and sink["name"].startswith("alsa_output.")]
+            and (sink["name"].startswith("alsa_output.")
+                 or sink["name"].startswith("bluez_output."))]
+
+
+def eq_graph_active(target=None):
+    dump = json.loads(run(["pw-dump"], timeout=3))
+    names = {node.get("info", {}).get("props", {}).get("node.name"): node
+             for node in dump if node.get("type") == "PipeWire:Interface:Node"}
+    capture = names.get(EQ_NAME)
+    playback = names.get(EQ_NAME + "_output")
+    if not capture or not playback:
+        return False
+    configured_target = playback.get("info", {}).get("props", {}).get("target.object")
+    if target and configured_target != target:
+        return False
+    if configured_target:
+        links = run(["pw-link", "-l"], timeout=3)
+        if (EQ_NAME + "_output:output_") not in links or (configured_target + ":playback_") not in links:
+            return False
+    return True
 
 
 def eq_move_streams(sinks, target, source_sink=None):
@@ -324,7 +343,7 @@ def eq_activate():
     while time.monotonic() < deadline:
         try:
             sinks = json.loads(run(["pactl", "-f", "json", "list", "sinks"]))
-            if target in physical_sinks(sinks) and eq_nodes():
+            if target in physical_sinks(sinks) and eq_graph_active(target):
                 break
         except (RuntimeError, ValueError, json.JSONDecodeError):
             pass
@@ -342,7 +361,12 @@ def eq_activate():
 
 def eq_status():
     state = load(CONFIG / "equalizer.json", {"gains": [0] * 10, "preset": "Flat", "enabled": False})
-    active = bool(eq_nodes())
+    active = eq_graph_active(state.get("target"))
+    if state.get("enabled") and not active:
+        try:
+            return eq_recover("DSP graph unavailable; EQ bypassed")
+        except RuntimeError:
+            pass
     state.update({"bands": BANDS, "presets": list(PRESETS), "active": active})
     if state.get("enabled") and not active:
         state.update({"enabled": False, "degraded": True,
@@ -366,29 +390,33 @@ def eq_apply(gains, preset="Custom", enabled=True, target=None):
             eq_move_streams(sinks, old["target"], EQ_NAME)
         run(["systemctl", "--user", "disable", "--now", "quattro-equalizer.service"])
     else:
-        atomic(CONFIG / "equalizer.conf", eq_config(gains, target))
-        atomic(CONFIG / "equalizer.json", json.dumps({"gains": gains, "preset": preset,
-            "enabled": True, "target": target, "headroom": sum(max(0, g) for g in gains)}))
-        nodes = eq_nodes()
-        if not nodes or target != old.get("target"):
-            run(["systemctl", "--user", "enable", "quattro-equalizer.service"])
-            run(["systemctl", "--user", "restart", "quattro-equalizer.service"])
-            deadline = time.monotonic() + 4
-            while time.monotonic() < deadline:
-                nodes = eq_nodes()
-                if nodes:
-                    break
-                time.sleep(.1)
-            if not nodes:
-                raise RuntimeError("PipeWire equalizer did not become available")
-        # Live updates use SPA Props; the DSP graph is not restarted while dragging.
-        params = ["pre:Gain 1", 10 ** (-sum(max(0, g) for g in gains) / 20)]
-        for i, gain in enumerate(gains):
-            params += [f"eq{i}:Gain", gain]
-        run(["pw-cli", "set-param", str(nodes[0]["id"]), "Props", spa({"params": params})])
-        if default != EQ_NAME:
-            run(["pactl", "set-default-sink", EQ_NAME])
-            eq_move_streams(sinks, EQ_NAME)
+        try:
+            atomic(CONFIG / "equalizer.conf", eq_config(gains, target))
+            atomic(CONFIG / "equalizer.json", json.dumps({"gains": gains, "preset": preset,
+                "enabled": True, "target": target, "headroom": sum(max(0, g) for g in gains)}))
+            nodes = eq_nodes()
+            if not eq_graph_active(target) or target != old.get("target"):
+                run(["systemctl", "--user", "enable", "quattro-equalizer.service"])
+                run(["systemctl", "--user", "restart", "quattro-equalizer.service"])
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline:
+                    nodes = eq_nodes()
+                    if nodes and eq_graph_active(target):
+                        break
+                    time.sleep(.1)
+                else:
+                    raise RuntimeError("PipeWire equalizer did not become available")
+            # Live updates use SPA Props; the DSP graph is not restarted while dragging.
+            params = ["pre:Gain 1", 10 ** (-sum(max(0, g) for g in gains) / 20)]
+            for i, gain in enumerate(gains):
+                params += [f"eq{i}:Gain", gain]
+            run(["pw-cli", "set-param", str(nodes[0]["id"]), "Props", spa({"params": params})])
+            if default != EQ_NAME:
+                run(["pactl", "set-default-sink", EQ_NAME])
+                eq_move_streams(sinks, EQ_NAME)
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+            eq_recover("EQ activation failed; using physical output")
+            raise
     state = {"gains": gains, "preset": preset, "enabled": enabled, "target": target or old.get("target", ""),
              "headroom": sum(max(0, g) for g in gains), "degraded": False}
     atomic(CONFIG / "equalizer.json", json.dumps(state))

@@ -67,19 +67,31 @@ class DesktopControlsTests(unittest.TestCase):
 
     def test_only_alsa_outputs_are_eligible_eq_targets(self):
         sinks = [{"name": "quattro_eq"}, {"name": "talker_meeting_mix"},
-                 {"name": "alsa_output.usb-speakers"}]
-        self.assertEqual(desktop.physical_sinks(sinks), ["alsa_output.usb-speakers"])
+                 {"name": "alsa_output.usb-speakers"}, {"name": "bluez_output.headphones"}]
+        self.assertEqual(desktop.physical_sinks(sinks),
+                         ["alsa_output.usb-speakers", "bluez_output.headphones"])
+
+    def test_eq_graph_requires_capture_playback_target_and_link(self):
+        capture = {"type": "PipeWire:Interface:Node", "info": {"props": {"node.name": "quattro_eq"}}}
+        playback = {"type": "PipeWire:Interface:Node", "info": {"props": {
+            "node.name": "quattro_eq_output", "target.object": "alsa_output.speakers"}}}
+        with patch.object(desktop, "run") as run:
+            run.return_value = json.dumps([capture])
+            self.assertFalse(desktop.eq_graph_active("alsa_output.speakers"))
+            run.side_effect = [json.dumps([capture, playback]),
+                "quattro_eq_output:output_FL\n  |-> alsa_output.speakers:playback_FL\n"]
+            self.assertTrue(desktop.eq_graph_active("alsa_output.speakers"))
 
     def test_eq_activation_waits_through_session_manager_startup(self):
         sinks = [{"index": 12, "name": "alsa_output.pci-hdmi"}]
         with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp)), \
-                patch.object(desktop, "run") as run, patch.object(desktop, "eq_nodes") as nodes, \
+                patch.object(desktop, "run") as run, patch.object(desktop, "eq_graph_active") as graph, \
                 patch.object(desktop.time, "sleep"):
             desktop.atomic(desktop.CONFIG / "equalizer.json", json.dumps({
                 "enabled": True, "target": "alsa_output.pci-hdmi", "gains": [0] * 10,
             }))
-            run.side_effect = [RuntimeError("Pulse is starting"), json.dumps(sinks), "", "[]", ""]
-            nodes.return_value = [{"id": 99}]
+            run.side_effect = [RuntimeError("Pulse is starting"), json.dumps(sinks), "", "[]"]
+            graph.return_value = True
             result = desktop.eq_activate()
         self.assertTrue(result["active"])
         self.assertEqual(run.call_args_list[2].args[0],

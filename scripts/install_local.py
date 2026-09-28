@@ -29,19 +29,33 @@ def install(target: Path) -> None:
             shutil.copy2(SOURCE / module, stage / module)
         shutil.copy2(SOURCE / "quattro-agent", stage / "quattro-agent")
         (stage / "quattro-agent").chmod(0o755)
-        for name in (*PACKAGES, *MODULES, "quattro-agent"):
-            destination = target / name
-            backup = target / (".quattro-old-" + name.replace("/", "_"))
-            if backup.exists():
-                shutil.rmtree(backup) if backup.is_dir() else backup.unlink()
-            if destination.exists():
-                os.replace(destination, backup)
-            try:
-                os.replace(stage / name, destination)
-            except BaseException:
+        names = (*PACKAGES, *MODULES, "quattro-agent")
+        backups = {}
+        installed = []
+        try:
+            for name in names:
+                destination = target / name
+                backup = target / (".quattro-old-" + name.replace("/", "_"))
                 if backup.exists():
+                    shutil.rmtree(backup) if backup.is_dir() else backup.unlink()
+                if destination.exists():
+                    os.replace(destination, backup)
+                    backups[name] = backup
+                os.replace(stage / name, destination)
+                installed.append(name)
+        except BaseException:
+            for name in reversed(installed):
+                destination = target / name
+                if destination.exists():
+                    shutil.rmtree(destination) if destination.is_dir() else destination.unlink()
+                if name in backups:
+                    os.replace(backups[name], destination)
+            for name, backup in backups.items():
+                destination = target / name
+                if backup.exists() and not destination.exists():
                     os.replace(backup, destination)
-                raise
+            raise
+        for backup in backups.values():
             if backup.exists():
                 shutil.rmtree(backup) if backup.is_dir() else backup.unlink()
 

@@ -2,13 +2,13 @@
 Description=Quattro ten-band PipeWire equalizer
 After=pipewire.service pipewire-pulse.service wireplumber.service
 Requires=pipewire.service
-PartOf=pipewire.service
 
 [Service]
 ExecStart=/usr/bin/pipewire -c %h/.config/quattro/equalizer.conf
 ExecStartPost=/usr/bin/python3 %h/.local/bin/quattro_desktop_controls.py eq activate
 ExecStopPost=/usr/bin/python3 %h/.local/bin/quattro_desktop_controls.py eq recover
-Restart=no
+Restart=always
+RestartSec=2
 
 [Install]
 WantedBy=default.target

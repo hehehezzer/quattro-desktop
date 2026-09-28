@@ -11,7 +11,7 @@ ColumnLayout {
     id: root
     readonly property var frequencies: ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
     property var snapshot: ({ gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preset: "Flat", presets: [], active: false })
-    readonly property bool active: Pipewire.nodes.values.some(node => node.name === "quattro_eq")
+    readonly property bool active: snapshot.active === true
     property var gains: snapshot.gains
     property string error: ""
     property bool expanded: false
