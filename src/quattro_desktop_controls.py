@@ -480,10 +480,7 @@ def eq_apply(gains, preset="Custom", enabled=True, target=None):
             if not eq_graph_active(target) or target != old.get("target"):
                 run(["systemctl", "--user", "enable", "quattro-equalizer.service"])
                 atomic(EQ_RESTART_MARKER, "reconfigure\n")
-                try:
-                    run(["systemctl", "--user", "restart", "quattro-equalizer.service"])
-                finally:
-                    EQ_RESTART_MARKER.unlink(missing_ok=True)
+                run(["systemctl", "--user", "restart", "quattro-equalizer.service"])
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline:
                     nodes = eq_nodes()
@@ -492,6 +489,7 @@ def eq_apply(gains, preset="Custom", enabled=True, target=None):
                     time.sleep(.1)
                 else:
                     raise RuntimeError("PipeWire equalizer did not become available")
+                EQ_RESTART_MARKER.unlink(missing_ok=True)
             # Live updates use SPA Props; the DSP graph is not restarted while dragging.
             params = ["pre:Gain 1", 10 ** (-sum(max(0, g) for g in gains) / 20)]
             for i, gain in enumerate(gains):
@@ -501,6 +499,7 @@ def eq_apply(gains, preset="Custom", enabled=True, target=None):
                 run(["pactl", "set-default-sink", EQ_NAME])
                 eq_move_streams(sinks, EQ_NAME)
         except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+            EQ_RESTART_MARKER.unlink(missing_ok=True)
             eq_recover("EQ activation failed; using physical output")
             raise
     state = {"gains": gains, "preset": preset, "enabled": enabled, "target": target or old.get("target", ""),
