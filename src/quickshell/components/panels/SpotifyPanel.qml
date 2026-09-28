@@ -12,8 +12,8 @@ Item {
     readonly property bool hasProgress: hasTrack && player.lengthSupported && player.positionSupported && player.length > 0
 
     function duration(seconds) {
-        const n = Math.max(0, Math.floor(seconds || 0))
-        return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0")
+        const n = Math.max(0, Math.floor(seconds || 0));
+        return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0");
     }
 
     ColumnLayout {
@@ -24,7 +24,7 @@ Item {
             Layout.fillWidth: true
             spacing: QuattroTheme.Theme.spaceLg
             Item {
-                Layout.preferredWidth: Math.min(118, Math.max(78, root.width * 0.29))
+                Layout.preferredWidth: Math.min(92, Math.max(72, root.width * 0.24))
                 Layout.preferredHeight: width
                 Rectangle {
                     anchors.fill: parent
@@ -64,8 +64,7 @@ Item {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: root.hasTrack ? (root.player.trackArtist || "Artist unavailable")
-                        : root.player ? "Choose a track in Spotify" : "Open Spotify to see your music here"
+                    text: root.hasTrack ? (root.player.trackArtist || "Artist unavailable") : root.player ? "Choose a track in Spotify" : "Open Spotify to see your music here"
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                     maximumLineCount: 2
@@ -106,7 +105,8 @@ Item {
                 value: root.hasProgress ? Math.min(root.player.length, DesktopMedia.position) : 0
                 enabled: root.hasProgress && root.player.canSeek
                 Accessible.name: "Spotify playback position"
-                onMoved: if (root.player && root.player.canSeek) root.player.position = value
+                onMoved: if (root.player && root.player.canSeek)
+                    root.player.position = value
                 background: Rectangle {
                     x: progress.leftPadding
                     y: progress.topPadding + progress.availableHeight / 2 - height / 2
@@ -136,7 +136,9 @@ Item {
                     font.family: QuattroTheme.Theme.fontFamily
                     font.pixelSize: QuattroTheme.Theme.typeMeta
                 }
-                Item { Layout.fillWidth: true }
+                Item {
+                    Layout.fillWidth: true
+                }
                 Text {
                     text: root.hasProgress ? root.duration(root.player.length) : "—:—"
                     color: QuattroTheme.Theme.textMuted
@@ -180,6 +182,16 @@ Item {
                 onClicked: root.player.next()
             }
         }
-        Item { Layout.fillHeight: true }
+
+        Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: 1
+            color: QuattroTheme.Theme.border
+        }
+
+        LyricsView {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+        }
     }
 }
