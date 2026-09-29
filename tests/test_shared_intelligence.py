@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import pathlib
@@ -62,6 +63,38 @@ class SharedIntelligenceTests(unittest.TestCase):
         response = handle({"id": 2, "method": "tools/call",
                            "params": {"name": "search_knowledge", "arguments": {"query": "what is 2 times 3"}}})
         self.assertEqual(json.loads(response["result"]["content"][0]["text"])["retrievedTokens"], 0)
+
+    def test_native_helper_server_reuses_one_decision_session(self) -> None:
+        class FakeSession:
+            def __init__(self, **_kwargs):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        calls = []
+
+        def fake_call(name, arguments, *, decision_session=None):
+            calls.append((name, arguments, decision_session))
+            return {"name": name, "reused": decision_session is calls[0][2] if calls else False}
+
+        request_stream = io.StringIO(
+            json.dumps({"id": 1, "name": "jev_advice", "arguments": {}}) + "\n"
+            + json.dumps({"id": 2, "name": "native_event", "arguments": {}}) + "\n"
+        )
+        output_stream = io.StringIO()
+        with (mock.patch.object(shared, "DecisionSession", FakeSession),
+              mock.patch.object(shared, "call", side_effect=fake_call),
+              mock.patch("sys.stdin", request_stream),
+              mock.patch("sys.stdout", output_stream)):
+            self.assertEqual(shared.server_main(), 0)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIs(calls[0][2], calls[1][2])
+        self.assertTrue(calls[0][2].closed)
+        responses = [json.loads(line) for line in output_stream.getvalue().splitlines()]
+        self.assertEqual([response["id"] for response in responses], [1, 2])
+        self.assertTrue(all(response["result"]["reused"] for response in responses))
 
     def test_native_codex_config_preserves_existing_settings_and_is_idempotent(self) -> None:
         installer_path = pathlib.Path(__file__).resolve().parents[1] / "scripts/configure_native_intelligence.py"

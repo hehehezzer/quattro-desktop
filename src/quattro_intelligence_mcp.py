@@ -83,7 +83,7 @@ TOOLS = [
     {"name": "refresh_history", "description": "Explicitly refresh all durable Quattro task episodes for the current repository; this is an index refresh, not a retrieval answer, and does not start Quattro routing.",
      "inputSchema": {"type": "object", "properties": {"directory": {"type": "string"}},
                      "additionalProperties": False}},
-    {"name": "operational_decision", "description": "Ask the existing bounded Jev advisory plane for one routine operational strategy at a meaningful milestone. Use only for context, sequencing, validation order, bounded retry, or progress. Advice is not authorization, a model/account choice, a permission change, a command, a retry grant, or completion proof; the native Codex host remains authoritative. Trivial or deterministic situations should not call this tool.",
+    {"name": "operational_decision", "description": "For one meaningful non-trivial operational milestone, prefer one call to the existing bounded Jev advisory plane before extended operational deliberation. Use only for context, sequencing, validation order, bounded retry, or progress; skip trivial or deterministic situations. Advice is not authorization, a model/account choice, a permission change, a command, a retry grant, or completion proof; the native Codex host remains authoritative.",
      "inputSchema": _decision_schema()},
 ]
 
@@ -151,7 +151,7 @@ def handle(message: Any, runtime: NativeMcpRuntime | None = None) -> dict[str, A
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": "quattro-intelligence", "version": "0.2.0"},
-            "instructions": "Shared local knowledge and bounded Jev advice remain optional native tools. The native host owns model, account, permissions, commands, retries, validation, and completion.",
+            "instructions": "Shared local knowledge and bounded Jev advice are native tools. For a meaningful non-trivial operational milestone, prefer one operational_decision call before extended deliberation; skip trivial or deterministic work. The native host owns model, account, permissions, commands, retries, validation, and completion.",
         }
     elif method == "ping":
         result = {}

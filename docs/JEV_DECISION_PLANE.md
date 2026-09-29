@@ -24,13 +24,18 @@ bounded `DecisionSession`; the response trace is returned to Codex, but
 delivery to or reliance by the model is `UNVERIFIED`.
 
 Pi 0.87.1's supported extension API provides `session_start`,
-`before_agent_start`, `turn_start`, `tool_result`, and session commands. The
-native extension automatically admits non-trivial eligible prompts at
-`before_agent_start`, sends only minimized boolean/category signals to Jev,
-and can apply an accepted context `retrieve` answer by adding a bounded
-shared-retrieval message. Pi also exposes the same `operational_decision`
-tool for later milestones. The host boundary can confirm that the message or
-tool result was accepted; it still cannot prove internal model reliance.
+`before_agent_start`, `turn_start`, `tool_result`, `session_shutdown`, and
+session commands. The native extension automatically admits at most one
+non-trivial eligible decision per `before_agent_start`, after cheap local
+signals select the relevant implemented category (`context_strategy`,
+`execution_strategy`, `validation_strategy`, or `progress_strategy`). It sends
+only minimized boolean/category signals to Jev and can apply an accepted
+context `retrieve` answer by adding a bounded shared-retrieval message. The
+extension keeps one lifecycle-owned helper for the Pi session so Jev worker
+and catalog setup are reused; it is not a persistent daemon. Pi also exposes
+the same `operational_decision` tool for later milestones. The host boundary
+can confirm that the message or tool result was accepted; it still cannot
+prove internal model reliance.
 
 `QUATTRO_MANAGED_SESSION=1` suppresses the native operational tool for
 managed Codex children. Managed Quattro continues to own its locked plan,

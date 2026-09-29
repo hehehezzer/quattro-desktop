@@ -127,10 +127,10 @@ def native_status() -> dict[str, Any]:
         "hosts": {
             "codex": {"executable": shutil.which("codex"), "version": host_version("codex"),
                       "mcp": _codex_registration(),
-                      "lifecycle": "unsupported_in_installed_codex; MCP tool boundary used"},
+                      "lifecycle": "unsupported_in_installed_codex; MCP tool boundary used; MCP session reuses Jev worker"},
             "pi": {"executable": shutil.which("pi"), "version": host_version("pi"),
                    "extension": _pi_registration(),
-                   "lifecycle": "supported_session_and_before_agent_start"},
+                   "lifecycle": "supported_session_and_before_agent_start; session-owned helper reuses Jev worker"},
         },
         "usage": {
             "scope": "ordinary_native_sessions_only",

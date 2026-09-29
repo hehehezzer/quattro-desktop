@@ -7,12 +7,15 @@ native configuration step in `install.sh`. It reuses
 `quattro_agent.shared_intelligence`, `RetrievalStore`, the repository index,
 the configured memory vaults, the existing RTK allowlist, the existing
 `JevClient`, `DecisionSession`, credential resolver, and decision taxonomy.
-It does not start `quattro-agent`, OmniRoute, a hidden agent, or a persistent
-daemon when `codex` or `pi` is launched directly.
+It does not start `quattro-agent`, OmniRoute, a hidden agent, or a
+machine-wide daemon when `codex` or `pi` is launched directly. Pi owns one
+bounded helper child for the lifetime of its native session; that child exits
+with the session and reuses the session's Jev worker rather than being a
+background service.
 
 | Capability | Direct Codex 0.158.0 | Direct Pi 0.87.1 | Quattro-managed | Evidence meaning |
 | --- | --- | --- | --- | --- |
-| Jev advisory | MCP tool configured; callable at a meaningful model-selected milestone | Native extension lifecycle calls bounded context advice for eligible non-trivial turns; tool is also available | Existing managed DecisionSession remains authoritative | `requested`/`provider_response`/`validated`/`accepted` are provider evidence; delivery/application are separately recorded |
+| Jev advisory | MCP tool configured; callable at a meaningful model-selected milestone | One cheap-admission lifecycle call per eligible non-trivial turn chooses the relevant context/execution/validation/progress category; tool is also available | Existing managed DecisionSession remains authoritative | `requested`/`provider_response`/`validated`/`accepted` are provider evidence; delivery/application are separately recorded |
 | RAG/repository index | Shared MCP search tool | Shared extension tool; Jev `retrieve` advice can apply a bounded pre-turn search | Existing context assembly | Search records route, selected source categories, counts, freshness/partial coverage, estimated tokens, and host delivery |
 | Shared/project/history memory | Through shared search route | Through shared search route | Existing memory and retrieval paths | Retrieved material is untrusted source material, never policy |
 | RTK | `rtk_status` and bounded `rtk_run` MCP tools | `rtk_status` and bounded `rtk_run` extension tools | Existing bounded helper | Status checks and actual command executions are different event stages |
@@ -21,12 +24,26 @@ daemon when `codex` or `pi` is launched directly.
 
 Codex 0.158.0 has no supported direct lifecycle callback for intercepting an
 ordinary turn. Its Jev path is therefore a real native MCP tool, not a claimed
-automatic hook. Pi exposes supported `session_start`, `before_agent_start`,
-`turn_start`, and `tool_result` events. The extension uses those events for
-eligible non-trivial prompts, records the host boundary, and applies only the
-bounded `context_strategy=retrieve` action by supplying a bounded retrieval
-message. The model may still ignore advice; telemetry labels model reliance as
-`UNKNOWN`.
+automatic hook. The MCP process already reuses one Jev worker per Codex MCP
+session. Its tool contract and initialize instructions tell the native model
+to prefer one call at a meaningful operational milestone, while trivial and
+deterministic work remains local.
+
+Pi exposes supported `session_start`, `before_agent_start`, `turn_start`,
+`tool_result`, and `session_shutdown` events. The extension uses one local
+category choice per eligible non-trivial prompt: retrieval/context questions
+use `context_strategy`, multi-step or independent work uses
+`execution_strategy`, verification prompts use `validation_strategy`, and the
+remaining eligible progress prompts use `progress_strategy`. It records the
+host boundary and applies only the bounded `context_strategy=retrieve` action
+by supplying a bounded retrieval message. A session-owned helper reuses the
+Jev worker and catalog across these calls, and is shut down with Pi. The model
+may still ignore advice; telemetry labels model reliance as `UNKNOWN`.
+
+Pi's compact footer status distinguishes `Jev ready`, `Jev calling`,
+`Jev accepted`, `Jev fallback`, `Jev unavailable`, and `Jev off`. These are
+activity indicators, not proof that an accepted action changed execution;
+`native trace` remains authoritative for evidence stages.
 
 Managed children receive `QUATTRO_MANAGED_SESSION=1`. The shared MCP keeps
 knowledge/RTK tools available but omits the native operational Jev tool, and
@@ -186,7 +203,10 @@ Quattro's existing retrieval CLI remains available. It and the native adapters
 currently call the same underlying retrieval components; future changes should
 consolidate duplicated call assembly in `shared_intelligence` once parity is
 verified. The native surface does not automatically prepend repository content
-to prompts: the model discovers and calls tools when useful.
+to every prompt: the model discovers and calls tools when useful. Pi's
+supported `before_agent_start` path may apply one bounded Jev-approved
+retrieval message for an eligible turn; Codex remains model-invoked through
+MCP.
 
 ## Installation
 

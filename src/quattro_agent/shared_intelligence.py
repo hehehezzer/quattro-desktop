@@ -12,6 +12,7 @@ import pathlib
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 import uuid
 from typing import Any
@@ -375,15 +376,68 @@ def call(name: str, arguments: dict[str, Any], *, telemetry_context: NativeConte
 def cli_main() -> int:
     import argparse
     parser = argparse.ArgumentParser(description="Client-neutral Quattro intelligence tools")
+    parser.add_argument("--server", action="store_true",
+                        help="serve bounded JSON-line requests for one native session")
     parser.add_argument("name", choices=("search_knowledge", "rtk_status", "rtk_run", "image_generate",
-                                         "refresh_history", "jev_advice", "native_event", "operational_decision"))
+                                         "refresh_history", "jev_advice", "native_event", "operational_decision"),
+                        nargs="?")
     parser.add_argument("arguments", nargs="?", default="{}")
     args = parser.parse_args()
+    if args.server:
+        return server_main()
+    if args.name is None:
+        parser.error("a tool name is required unless --server is used")
     try:
         print(json.dumps(call(args.name, json.loads(args.arguments)), ensure_ascii=False))
     except (ValueError, RuntimeError, OSError) as error:
         print(json.dumps({"error": str(error)}))
         return 1
+    return 0
+
+
+def server_main() -> int:
+    """Serve one native client's bounded requests over stdin/stdout.
+
+    Pi owns this child for the lifetime of one native session.  Keeping the
+    DecisionSession here amortizes Python/credential/catalog setup without
+    introducing a machine-wide daemon.  Each request and response is one
+    bounded JSON line; no prompt or credential is logged.
+    """
+    decision_session: DecisionSession | None = None
+    try:
+        try:
+            settings = load_native_settings()
+            decision_session = DecisionSession(mode="COOPERATIVE", timeout_ms=settings.timeout_ms)
+        except Exception:
+            # Native calls still fail open through their normal settings and
+            # credential checks.  Do not make helper startup a hard dependency.
+            decision_session = None
+        for line in sys.stdin:
+            if len(line.encode("utf-8", "replace")) > 128 * 1024:
+                response = {"id": None, "error": "request too large"}
+                print(json.dumps(response, separators=(",", ":")), flush=True)
+                continue
+            envelope: Any = None
+            try:
+                envelope = json.loads(line)
+                if not isinstance(envelope, dict):
+                    raise ValueError("request must be an object")
+                name = envelope.get("name")
+                arguments = envelope.get("arguments", {})
+                if not isinstance(name, str) or not isinstance(arguments, dict):
+                    raise ValueError("request requires a tool name and object arguments")
+                value = call(name, arguments, decision_session=decision_session)
+                response = {"id": envelope.get("id"), "result": value}
+            except (ValueError, RuntimeError, OSError) as error:
+                response = {"id": envelope.get("id") if isinstance(envelope, dict) else None,
+                            "error": str(error)[:500]}
+            except Exception:
+                response = {"id": envelope.get("id") if isinstance(envelope, dict) else None,
+                            "error": "shared intelligence unavailable"}
+            print(json.dumps(response, ensure_ascii=False, separators=(",", ":")), flush=True)
+    finally:
+        if decision_session is not None:
+            decision_session.close()
     return 0
 
 
