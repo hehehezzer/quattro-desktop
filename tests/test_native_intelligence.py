@@ -126,6 +126,39 @@ class NativeIntelligenceTests(unittest.TestCase):
         rejected = next(event for event in events if event["stage"] == "rejected")
         self.assertEqual(rejected["metadata"]["fallbackReason"], "uncertain")
 
+    def test_native_boundary_adds_only_missing_agent_fallback(self) -> None:
+        native.write_native_settings(enabled=True)
+        value = request()
+        value["available_actions"] = ["inspect", "retrieve"]
+        received_actions = []
+
+        class FakeSession:
+            def __init__(self, **_kwargs):
+                self.counts = {"calls": 0}
+
+            def snapshot(self):
+                return {"counts": dict(self.counts)}
+
+            def decide(self, received, **_kwargs):
+                self.counts["calls"] += 1
+                received_actions.append(received["available_actions"])
+                return {
+                    "selected_action": "inspect", "confidence": 0.9,
+                    "evidence": "native_choice_probabilities", "fallback_required": False,
+                    "timing": {"worker_roundtrip_ms": 1.0},
+                }
+
+            def close(self):
+                return None
+
+        with mock.patch.object(native, "DecisionSession", FakeSession):
+            result = native.native_jev_advice(
+                value, context=native.NativeContext(host="codex", session_id="normalized"),
+            )
+        self.assertTrue(result["usageEvidence"]["requested"])
+        self.assertEqual(result["usageEvidence"]["requestNormalized"], "agent_fallback_added")
+        self.assertEqual(received_actions, [["inspect", "retrieve", "agent"]])
+
     def test_passive_status_does_not_create_telemetry(self) -> None:
         native.write_native_settings(enabled=True)
         database = Path(os.environ["QUATTRO_NATIVE_TELEMETRY_DB"])

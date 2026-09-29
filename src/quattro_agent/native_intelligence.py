@@ -24,7 +24,7 @@ import uuid
 from typing import Any, Mapping
 
 from .decision_service import DecisionSession
-from .decision_taxonomy import classify_decision, validate_request
+from .decision_taxonomy import ACTIONS, classify_decision, validate_request
 from .errors import ConfigError
 from .paths import state_root, xdg_config_home
 from .provider_access import typesafe_credential_status
@@ -208,6 +208,27 @@ def split_native_context(arguments: Mapping[str, Any]) -> tuple[dict[str, Any], 
     return clean, NativeContext.from_mapping(raw)
 
 
+def _normalize_agent_fallback(request: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Add only the taxonomy-required semantic fallback to a safe request.
+
+    Native models sometimes omit ``agent`` while supplying otherwise valid
+    category actions.  Adding that one bounded fallback cannot grant an
+    authority or capability; it keeps the request fail-open without silently
+    accepting actions from another category.
+    """
+    candidate = dict(request)
+    category = candidate.get("decision_type")
+    actions = candidate.get("available_actions")
+    allowed = ACTIONS.get(category) if isinstance(category, str) else None
+    if (not isinstance(actions, list) or not isinstance(allowed, Mapping)
+            or "agent" in actions or len(actions) < 2
+            or any(not isinstance(action, str) or action not in allowed for action in actions)
+            or len(set(actions)) != len(actions)):
+        return candidate, False
+    candidate["available_actions"] = [*actions, "agent"]
+    return candidate, True
+
+
 def _json_safe(value: Any, *, depth: int = 0) -> Any:
     if depth > 2:
         return "[bounded]"
@@ -389,8 +410,9 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
     settings = settings or load_native_settings()
     telemetry = telemetry or NativeTelemetry(enabled=settings.telemetry_enabled)
     trace_id = "jev-" + uuid.uuid4().hex[:20]
+    request_value, request_normalized = _normalize_agent_fallback(request)
     try:
-        normalized = validate_request(dict(request))
+        normalized = validate_request(request_value)
     except Exception as error:
         reason = getattr(error, "category", "invalid_state")
         telemetry.record(kind="jev", stage="skipped", status="SKIPPED", context=context,
@@ -439,7 +461,10 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
                                    "adviceDelivered": "NOT_APPLICABLE", "actionApplied": "NOT_APPLICABLE"}}
 
     telemetry.record(kind="jev", stage="requested", status="REQUESTED", context=context,
-                     trace_id=trace_id, metadata={"category": category, "diagnostic": context.diagnostic})
+                     trace_id=trace_id, metadata={
+                         "category": category, "diagnostic": context.diagnostic,
+                         **({"requestNormalized": "agent_fallback_added"} if request_normalized else {}),
+                     })
     owned_session = decision_session is None
     before = decision_session or DecisionSession(mode="COOPERATIVE", timeout_ms=settings.timeout_ms)
     try:
@@ -461,14 +486,19 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
         elif provider_attempted and response_evidence:
             telemetry.record(kind="jev", stage="provider_response", status="RECEIVED", context=context,
                              trace_id=trace_id, metadata={"category": category,
+                                                           **({"requestNormalized": "agent_fallback_added"} if request_normalized else {}),
                                                            "providerWaitMs": (result.get("timing") or {}).get("worker_roundtrip_ms")})
             telemetry.record(kind="jev", stage="validated", status="VALIDATED", context=context,
                              trace_id=trace_id, metadata={"category": category,
+                                                           **({"requestNormalized": "agent_fallback_added"} if request_normalized else {}),
                                                            **_trace_metadata(result)})
         accepted = not bool(result.get("fallback_required"))
         if accepted:
             telemetry.record(kind="jev", stage="accepted", status="ACCEPTED", context=context,
-                             trace_id=trace_id, metadata=_trace_metadata(result))
+                             trace_id=trace_id, metadata={
+                                 **_trace_metadata(result),
+                                 **({"requestNormalized": "agent_fallback_added"} if request_normalized else {}),
+                             })
             telemetry.record(kind="jev", stage="advice_delivered", status="UNVERIFIED", context=context,
                              trace_id=trace_id, metadata={"delivery": "host_boundary_unverified"})
             telemetry.record(kind="jev", stage="action_applied", status="UNVERIFIED", context=context,
@@ -476,6 +506,7 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
         else:
             telemetry.record(kind="jev", stage="rejected", status="REJECTED", context=context,
                              trace_id=trace_id, metadata={"category": category,
+                                                           **({"requestNormalized": "agent_fallback_added"} if request_normalized else {}),
                                                            **_trace_metadata(result)})
         result = dict(result)
         result["traceId"] = trace_id
@@ -488,6 +519,8 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
             "actionApplied": "UNVERIFIED" if accepted else "NOT_APPLICABLE",
             "providerAttempted": provider_attempted,
         }
+        if request_normalized:
+            result["usageEvidence"]["requestNormalized"] = "agent_fallback_added"
         return result
     finally:
         if owned_session:
