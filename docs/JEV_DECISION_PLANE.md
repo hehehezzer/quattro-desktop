@@ -69,13 +69,25 @@ prompts, code, transcripts, credentials, full outputs, and absolute source
 paths. Retrieval context token sizes are estimates, not exact provider token
 counts.
 
-# Jev runtime decision plane — PR #31, experimental
+# Jev runtime decision plane
 
-Latest continuation: [host runtime milestone experiment](JEV_RUNTIME_MILESTONES.md).
-A gated post-agent validation-order boundary now exists for managed Codex and
-standalone Pi. It does not establish useful mid-turn reasoning offload; no
-category is enabled by default and the release remains blocked. The descriptions
-and evidence below retain the earlier callable-only baseline history.
+## Current direct-native status (2026-09-30)
+
+The installed direct-native integration is documented in
+[NATIVE_SHARED_INTELLIGENCE.md](NATIVE_SHARED_INTELLIGENCE.md). Native Jev is
+enabled by default for the five implemented routine strategy categories when
+prerequisites are available, while explicit native OFF settings remain
+authoritative. Direct Pi has a supported eligible-turn lifecycle call. Direct
+Codex 0.158.0 has no supported ordinary-turn callback, so its supported path is
+the model-selectable `operational_decision` MCP tool with a session-scoped
+worker; it is not an automatic interception hook. Managed Quattro continues to
+use its own locked execution authority and does not inherit native duplication.
+
+The remainder of this file is the historical managed/runtime decision-plane
+evaluation record. Its old experimental or production-OFF statements do not
+describe the installed direct-native defaults above.
+
+Historical continuation: [host runtime milestone experiment](JEV_RUNTIME_MILESTONES.md).
 
 This extends, rather than replaces, [JEV_SPECULATION.md](JEV_SPECULATION.md).
 The release is **not ready**. Production configuration remains unchanged/OFF.

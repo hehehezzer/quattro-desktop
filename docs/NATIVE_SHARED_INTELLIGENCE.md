@@ -13,6 +13,14 @@ bounded helper child for the lifetime of its native session; that child exits
 with the session and reuses the session's Jev worker rather than being a
 background service.
 
+Native Jev is enabled by default for the five implemented routine strategy
+categories when credentials and the provider are available. An explicit native
+OFF setting, or a persisted Pi session preference, still wins. This is
+separate from managed model-routing preferences. Codex cannot be given an
+ordinary-turn lifecycle hook by version 0.158.0, so its default-on integration
+is a model-selectable MCP decision boundary; Pi has an automatic eligible-turn
+boundary through its supported extension lifecycle.
+
 | Capability | Direct Codex 0.158.0 | Direct Pi 0.87.1 | Quattro-managed | Evidence meaning |
 | --- | --- | --- | --- | --- |
 | Jev advisory | MCP tool configured; callable at a meaningful model-selected milestone | One cheap-admission lifecycle call per eligible non-trivial turn chooses the relevant context/execution/validation/progress category; tool is also available | Existing managed DecisionSession remains authoritative | `requested`/`provider_response`/`validated`/`accepted` are provider evidence; delivery/application are separately recorded |
@@ -28,6 +36,13 @@ automatic hook. The MCP process already reuses one Jev worker per Codex MCP
 session. Its tool contract and initialize instructions tell the native model
 to prefer one call at a meaningful operational milestone, while trivial and
 deterministic work remains local.
+
+The Codex MCP input schema intentionally stays flat for compatibility with the
+installed host. Category-specific action guidance is in the tool contract, and
+the shared native validator still rejects invalid or cross-category actions.
+When a caller supplies a valid category action list that accidentally omits the
+safe `agent` fallback, the boundary adds only that fallback and records
+`requestNormalized=agent_fallback_added`; malformed requests fail closed.
 
 Pi exposes supported `session_start`, `before_agent_start`, `turn_start`,
 `tool_result`, and `session_shutdown` events. The extension uses one local
