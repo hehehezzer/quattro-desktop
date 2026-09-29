@@ -133,6 +133,7 @@ def launch_routed_native(*, agent, binary, command, env, config, directory,
     with tempfile.TemporaryDirectory(prefix='quattro-turn-') as temporary:
         try:
             child_env = dict(env)
+            child_env['QUATTRO_MANAGED_SESSION'] = '1'
             child_env['QUATTRO_TURN_GATE_URL'] = transport.url
             child_env['QUATTRO_TURN_GATE_TOKEN'] = transport.token
             child_env['QUATTRO_DECISION_TOKEN'] = transport.decision_token

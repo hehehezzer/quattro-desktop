@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sqlite3
 import tempfile
@@ -15,6 +16,16 @@ from quattro_intelligence_mcp import handle
 
 
 class SharedIntelligenceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._telemetry = tempfile.TemporaryDirectory()
+        self.addCleanup(self._telemetry.cleanup)
+        self._telemetry_env = mock.patch.dict(
+            os.environ,
+            {"QUATTRO_NATIVE_TELEMETRY_DB": str(pathlib.Path(self._telemetry.name) / "native.sqlite3")},
+        )
+        self._telemetry_env.start()
+        self.addCleanup(self._telemetry_env.stop)
+
     def test_trivial_prompt_skips_database_and_context(self) -> None:
         with mock.patch.object(shared, "RetrievalStore", side_effect=AssertionError("opened")):
             for query in ("what is 2 times 3", "Hi", "Thanks!"):
@@ -46,7 +57,7 @@ class SharedIntelligenceTests(unittest.TestCase):
 
     def test_mcp_discovers_only_shared_tools(self) -> None:
         names = {item["name"] for item in handle({"id": 1, "method": "tools/list"})["result"]["tools"]}
-        self.assertEqual(names, {"search_knowledge", "rtk_status", "rtk_run", "refresh_history"})
+        self.assertEqual(names, {"search_knowledge", "rtk_status", "rtk_run", "refresh_history", "operational_decision"})
         self.assertFalse(any("route" in name or "delegate" in name for name in names))
         response = handle({"id": 2, "method": "tools/call",
                            "params": {"name": "search_knowledge", "arguments": {"query": "what is 2 times 3"}}})
@@ -66,6 +77,7 @@ class SharedIntelligenceTests(unittest.TestCase):
             command.write_text("#!/bin/sh\nexit 0\n")
             self.assertTrue(module.configure(config, command))
             self.assertFalse(module.configure(config, command))
+            self.assertIn("operational_decision", config.read_text())
             image = root / "quattro-image-mcp"
             image.write_text("#!/bin/sh\nexit 0\n")
             self.assertTrue(module.configure_image(config, image))
@@ -76,6 +88,24 @@ class SharedIntelligenceTests(unittest.TestCase):
             config.write_text("[broken\n")
             with self.assertRaises(ValueError):
                 module.configure(config, command)
+
+    def test_native_install_configures_pi_and_preserves_native_off(self) -> None:
+        installer_path = pathlib.Path(__file__).resolve().parents[1] / "scripts/configure_native_intelligence.py"
+        spec = importlib.util.spec_from_file_location("configure_native_intelligence_pi", installer_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temporary:
+            home = pathlib.Path(temporary)
+            config = home / ".config/quattro/native-intelligence.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({"schemaVersion": 1, "enabled": False, "custom": "preserve"}))
+            self.assertFalse(module.configure_native_defaults(home))
+            self.assertFalse(json.loads(config.read_text())["enabled"])
+            source = pathlib.Path(__file__).resolve().parents[1] / "adapters/pi/quattro-intelligence.ts"
+            self.assertTrue(module.configure_pi(home, source))
+            self.assertFalse(module.configure_pi(home, source))
+            self.assertTrue((home / ".pi/agent/extensions/quattro-intelligence.ts").is_file())
 
     def test_image_tool_reuses_bridge_without_payload_in_result(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

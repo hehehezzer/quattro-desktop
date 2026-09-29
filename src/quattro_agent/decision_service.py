@@ -317,6 +317,7 @@ class DecisionSession:
             if cacheable and self.cache is not None and self.cache[0] == encoded:
                 self._count("cache_hits")
                 result = dict(self.cache[1])
+                result["cache_hit"] = True
                 return result
             # A different request at the same revision cannot reuse old advice.
             self.cache = None

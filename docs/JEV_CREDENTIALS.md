@@ -40,6 +40,17 @@ Neither native Codex/Pi children nor telemetry receive the key. The dedicated
 Jev child has a minimal environment and receives only the required provider
 credential through its already-existing anonymous pipe.
 
+Direct native Jev uses this same resolver lazily from the shared Core helper;
+it does not depend on a launcher-injected environment variable. A native
+status report exposes only `configured` or `missing`. The native MCP/Pi
+adapter never receives or records the credential, and Jev receives only the
+existing allowlisted minimized decision signals. The native setting file is
+`$XDG_CONFIG_HOME/quattro/native-intelligence.json` (normally
+`~/.config/quattro/native-intelligence.json`); it contains feature switches
+and categories, not secrets. `quattro-agent native set --jev off|on` changes
+only this native advisory switch, not managed `routing.jev` or native host
+authentication.
+
 The stored file must be regular, bounded to 16 KiB, non-symlink, and on POSIX
 owned by the current user with no group/other access. Symlinked environment.d
 is rejected. Windows relies on the user's existing directory ACL. Only one
@@ -49,8 +60,11 @@ closed to unavailable. No shell is invoked and no errors include file contents.
 
 `quattro-agent status` prints `TypeSafe credential: configured` or `missing`;
 JSON status uses `typesafeCredential`. There is no prefix/suffix/fingerprint.
-Enabled native launch reports one concise local-fallback warning if resolution
-fails. This increment does not yet add the Jev launch selector or enabled default.
+Native launch falls back silently to ordinary native execution when the
+optional provider is unavailable; the native trace records
+`missing_credential`, timeout, provider, validation, or contention reasons
+without exposing the secret. Managed launch behavior and its existing
+locked-plan authority are unchanged.
 
 ## Live API correction
 

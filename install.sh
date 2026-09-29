@@ -29,6 +29,7 @@ if [[ -z "$installed_cli" || "$installed_cli" != "$HOME/.local/bin/quattro-agent
     printf 'Installed quattro-agent is not the expected user-local command: %s\n' "${installed_cli:-not found}" >&2
     exit 1
 fi
+"$python_bin" "$repo_root/scripts/configure_native_intelligence.py"
 if [[ "$profile" == desktop ]]; then
     if [[ "$(uname -s)" != Linux ]]; then
         printf 'Quattro Desktop is supported only on Linux. Core is installed.\n' >&2

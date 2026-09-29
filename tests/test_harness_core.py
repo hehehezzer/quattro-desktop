@@ -958,7 +958,7 @@ class ValidatorAndAdapterTests(StoreTestCase):
         self.assertNotIn("sensitive objective", display)
         self.assertNotIn(str(self.root / "account"), display)
         self.assertNotIn("CODEX_HOME", display)
-        self.assertEqual(plan.display_dict()["overrideCount"], 1)
+        self.assertEqual(plan.display_dict()["overrideCount"], 2)
         self.assertIn("-s", plan.argv)
         self.assertEqual(plan.argv[plan.argv.index("-s") + 1], "workspace-write")
 
