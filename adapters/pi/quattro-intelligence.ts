@@ -94,7 +94,7 @@ function contextArgs(ctx: ExtensionContext, turnId: string, requestId: string, e
 }
 
 function advicePlan(signals: ReturnType<typeof meaningfulSignals>) {
-  if (signals.retrieval_required || signals.context_missing) {
+  if (signals.retrieval_required) {
     return {
       category: "context_strategy",
       actions: ["inspect", "retrieve", "sufficient", "agent"],
@@ -333,6 +333,7 @@ export default function (pi: ExtensionAPI) {
         promptSnippet: "bounded Jev advice for one meaningful operational decision",
         promptGuidelines: [
           "For one non-trivial context, sequencing, validation, retry, or progress decision, prefer one Jev call before extended operational deliberation.",
+          "Keep available_actions valid for the category and include agent: context_strategy=[inspect,retrieve,sufficient,agent], execution_strategy=[sequential,parallel,agent], validation_strategy=[targeted_first,broad_first,agent], retry_strategy=[retry,change_strategy,agent], progress_strategy=[continue,validate,more_context,agent].",
           "Do not call Jev for trivial or deterministic work; its answer is advisory and never authorizes commands, permissions, retries, models, or completion.",
         ],
       } : {}),

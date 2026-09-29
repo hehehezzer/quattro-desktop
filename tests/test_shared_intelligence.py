@@ -13,7 +13,7 @@ from unittest import mock
 import importlib.util
 
 from quattro_agent import shared_intelligence as shared
-from quattro_intelligence_mcp import handle
+from quattro_intelligence_mcp import TOOLS, handle
 
 
 class SharedIntelligenceTests(unittest.TestCase):
@@ -63,6 +63,19 @@ class SharedIntelligenceTests(unittest.TestCase):
         response = handle({"id": 2, "method": "tools/call",
                            "params": {"name": "search_knowledge", "arguments": {"query": "what is 2 times 3"}}})
         self.assertEqual(json.loads(response["result"]["content"][0]["text"])["retrievedTokens"], 0)
+
+    def test_mcp_jev_schema_matches_category_action_sets(self) -> None:
+        tool = next(item for item in TOOLS if item["name"] == "operational_decision")
+        variants = tool["inputSchema"]["allOf"][0]["oneOf"]
+        actions = {
+            variant["properties"]["decision_type"]["enum"][0]:
+            set(variant["properties"]["available_actions"]["items"]["enum"])
+            for variant in variants
+        }
+        self.assertEqual(actions["context_strategy"], {"inspect", "retrieve", "sufficient", "agent"})
+        self.assertEqual(actions["execution_strategy"], {"sequential", "parallel", "agent"})
+        self.assertEqual(actions["validation_strategy"], {"targeted_first", "broad_first", "agent"})
+        self.assertTrue(all("agent" in values for values in actions.values()))
 
     def test_native_helper_server_reuses_one_decision_session(self) -> None:
         class FakeSession:

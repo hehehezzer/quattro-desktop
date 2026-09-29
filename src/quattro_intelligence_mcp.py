@@ -23,11 +23,14 @@ _DECISION_TYPES = [
     "context_strategy", "execution_strategy", "validation_strategy",
     "retry_strategy", "progress_strategy",
 ]
-_ACTIONS = [
-    "inspect", "retrieve", "sufficient", "agent", "sequential", "parallel",
-    "targeted_first", "broad_first", "retry", "change_strategy", "continue",
-    "validate", "more_context",
-]
+_ACTIONS_BY_DECISION = {
+    "context_strategy": ("inspect", "retrieve", "sufficient", "agent"),
+    "execution_strategy": ("sequential", "parallel", "agent"),
+    "validation_strategy": ("targeted_first", "broad_first", "agent"),
+    "retry_strategy": ("retry", "change_strategy", "agent"),
+    "progress_strategy": ("continue", "validate", "more_context", "agent"),
+}
+_ACTIONS = sorted({action for actions in _ACTIONS_BY_DECISION.values() for action in actions})
 _CONTEXT_FLAGS = [
     "repository_required", "modification_required", "retrieval_required",
     "multi_step_required", "verification_required", "context_missing",
@@ -36,6 +39,20 @@ _CONTEXT_FLAGS = [
 
 
 def _decision_schema() -> dict[str, Any]:
+    category_variants = []
+    for category, actions in _ACTIONS_BY_DECISION.items():
+        category_variants.append({
+            "type": "object",
+            "properties": {
+                "decision_type": {"enum": [category]},
+                "available_actions": {
+                    "type": "array", "minItems": 2, "maxItems": len(actions),
+                    "uniqueItems": True,
+                    "items": {"type": "string", "enum": list(actions)},
+                },
+            },
+            "required": ["decision_type", "available_actions"],
+        })
     return {
         "type": "object",
         "properties": {
@@ -64,6 +81,7 @@ def _decision_schema() -> dict[str, Any]:
         "required": ["decision_type", "available_actions", "relevant_context",
                       "hard_constraints", "execution_state", "previous_result"],
         "additionalProperties": False,
+        "allOf": [{"oneOf": category_variants}],
     }
 
 
@@ -83,7 +101,7 @@ TOOLS = [
     {"name": "refresh_history", "description": "Explicitly refresh all durable Quattro task episodes for the current repository; this is an index refresh, not a retrieval answer, and does not start Quattro routing.",
      "inputSchema": {"type": "object", "properties": {"directory": {"type": "string"}},
                      "additionalProperties": False}},
-    {"name": "operational_decision", "description": "For one meaningful non-trivial operational milestone, prefer one call to the existing bounded Jev advisory plane before extended operational deliberation. Use only for context, sequencing, validation order, bounded retry, or progress; skip trivial or deterministic situations. Advice is not authorization, a model/account choice, a permission change, a command, a retry grant, or completion proof; the native Codex host remains authoritative.",
+    {"name": "operational_decision", "description": "For one meaningful non-trivial operational milestone, prefer one call to the existing bounded Jev advisory plane before extended operational deliberation. Use only for context, sequencing, validation order, bounded retry, or progress; skip trivial or deterministic situations. The available_actions must come from the selected category and include agent: context_strategy=[inspect,retrieve,sufficient,agent], execution_strategy=[sequential,parallel,agent], validation_strategy=[targeted_first,broad_first,agent], retry_strategy=[retry,change_strategy,agent], progress_strategy=[continue,validate,more_context,agent]. Advice is not authorization, a model/account choice, a permission change, a command, a retry grant, or completion proof; the native Codex host remains authoritative.",
      "inputSchema": _decision_schema()},
 ]
 
