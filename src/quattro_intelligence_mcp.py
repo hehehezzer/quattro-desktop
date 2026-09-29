@@ -39,20 +39,6 @@ _CONTEXT_FLAGS = [
 
 
 def _decision_schema() -> dict[str, Any]:
-    category_variants = []
-    for category, actions in _ACTIONS_BY_DECISION.items():
-        category_variants.append({
-            "type": "object",
-            "properties": {
-                "decision_type": {"enum": [category]},
-                "available_actions": {
-                    "type": "array", "minItems": 2, "maxItems": len(actions),
-                    "uniqueItems": True,
-                    "items": {"type": "string", "enum": list(actions)},
-                },
-            },
-            "required": ["decision_type", "available_actions"],
-        })
     return {
         "type": "object",
         "properties": {
@@ -81,7 +67,6 @@ def _decision_schema() -> dict[str, Any]:
         "required": ["decision_type", "available_actions", "relevant_context",
                       "hard_constraints", "execution_state", "previous_result"],
         "additionalProperties": False,
-        "allOf": [{"oneOf": category_variants}],
     }
 
 

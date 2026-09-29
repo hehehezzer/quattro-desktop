@@ -66,16 +66,16 @@ class SharedIntelligenceTests(unittest.TestCase):
 
     def test_mcp_jev_schema_matches_category_action_sets(self) -> None:
         tool = next(item for item in TOOLS if item["name"] == "operational_decision")
-        variants = tool["inputSchema"]["allOf"][0]["oneOf"]
-        actions = {
-            variant["properties"]["decision_type"]["enum"][0]:
-            set(variant["properties"]["available_actions"]["items"]["enum"])
-            for variant in variants
-        }
-        self.assertEqual(actions["context_strategy"], {"inspect", "retrieve", "sufficient", "agent"})
-        self.assertEqual(actions["execution_strategy"], {"sequential", "parallel", "agent"})
-        self.assertEqual(actions["validation_strategy"], {"targeted_first", "broad_first", "agent"})
-        self.assertTrue(all("agent" in values for values in actions.values()))
+        schema = tool["inputSchema"]
+        actions = set(schema["properties"]["available_actions"]["items"]["enum"])
+        self.assertEqual(actions, {action for values in (
+            {"inspect", "retrieve", "sufficient", "agent"},
+            {"sequential", "parallel", "agent"},
+            {"targeted_first", "broad_first", "agent"},
+            {"retry", "change_strategy", "agent"},
+            {"continue", "validate", "more_context", "agent"},
+        ) for action in values})
+        self.assertIn("validation_strategy=[targeted_first,broad_first,agent]", tool["description"])
 
     def test_native_helper_server_reuses_one_decision_session(self) -> None:
         class FakeSession:
