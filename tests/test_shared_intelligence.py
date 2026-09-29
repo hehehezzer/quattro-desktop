@@ -76,6 +76,13 @@ class SharedIntelligenceTests(unittest.TestCase):
             {"continue", "validate", "more_context", "agent"},
         ) for action in values})
         self.assertIn("validation_strategy=[targeted_first,broad_first,agent]", tool["description"])
+        context = schema["properties"]["relevant_context"]["properties"]
+        self.assertEqual(set(context), {
+            "repository_required", "modification_required", "retrieval_required",
+            "multi_step_required", "verification_required", "context_missing",
+            "independent_steps", "tests_available", "changes_present",
+        })
+        self.assertNotIn("initial_complexity", context)
 
     def test_native_helper_server_reuses_one_decision_session(self) -> None:
         class FakeSession:

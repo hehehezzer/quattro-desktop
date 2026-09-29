@@ -45,11 +45,12 @@ def _decision_schema() -> dict[str, Any]:
             "decision_type": {"type": "string", "enum": _DECISION_TYPES},
             "available_actions": {"type": "array", "minItems": 2, "maxItems": 4,
                                    "items": {"type": "string", "enum": _ACTIONS}},
+            # The direct Codex boundary uses only the boolean projection. The
+            # richer initial-classification fields belong to managed routing;
+            # exposing them here invited semantically invalid lowercase values
+            # that the shared taxonomy correctly rejects.
             "relevant_context": {"type": "object", "properties": {
                 **{name: {"type": "boolean"} for name in _CONTEXT_FLAGS},
-                "initial_complexity": {"type": "string", "enum": ["low", "moderate", "high"]},
-                "initial_task_type": {"type": "string", "enum": ["question", "change", "debug", "review", "research"]},
-                "test_duration": {"type": "string", "enum": ["moderate", "slow"]},
             }, "additionalProperties": False},
             "hard_constraints": {"type": "object", "properties": {
                 "retry_allowed": {"type": "boolean"},
@@ -86,7 +87,7 @@ TOOLS = [
     {"name": "refresh_history", "description": "Explicitly refresh all durable Quattro task episodes for the current repository; this is an index refresh, not a retrieval answer, and does not start Quattro routing.",
      "inputSchema": {"type": "object", "properties": {"directory": {"type": "string"}},
                      "additionalProperties": False}},
-    {"name": "operational_decision", "description": "For one meaningful non-trivial operational milestone, prefer one call to the existing bounded Jev advisory plane before extended operational deliberation. Use only for context, sequencing, validation order, bounded retry, or progress; skip trivial or deterministic situations. The available_actions must come from the selected category and include agent: context_strategy=[inspect,retrieve,sufficient,agent], execution_strategy=[sequential,parallel,agent], validation_strategy=[targeted_first,broad_first,agent], retry_strategy=[retry,change_strategy,agent], progress_strategy=[continue,validate,more_context,agent]. Advice is not authorization, a model/account choice, a permission change, a command, a retry grant, or completion proof; the native Codex host remains authoritative.",
+    {"name": "operational_decision", "description": "For one meaningful non-trivial operational milestone, call the existing bounded Jev advisory plane before extended operational deliberation. Use it for context, sequencing/parallelization, validation order, bounded retry, or progress; skip trivial and deterministic work. Prefer one call at the first eligible milestone, not every tool call. Use only the nine boolean relevant_context fields exposed in the schema; do not add initial_* or test_duration fields. The available_actions must come from the selected category and include agent: context_strategy=[inspect,retrieve,sufficient,agent], execution_strategy=[sequential,parallel,agent], validation_strategy=[targeted_first,broad_first,agent], retry_strategy=[retry,change_strategy,agent], progress_strategy=[continue,validate,more_context,agent]. Advice is not authorization, a model/account choice, a permission change, a command, a retry grant, or completion proof; the native Codex host remains authoritative.",
      "inputSchema": _decision_schema()},
 ]
 
@@ -154,7 +155,7 @@ def handle(message: Any, runtime: NativeMcpRuntime | None = None) -> dict[str, A
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": "quattro-intelligence", "version": "0.2.0"},
-            "instructions": "Shared local knowledge and bounded Jev advice are native tools. For a meaningful non-trivial operational milestone, prefer one operational_decision call before extended deliberation; skip trivial or deterministic work. The native host owns model, account, permissions, commands, retries, validation, and completion.",
+            "instructions": "Shared local knowledge and bounded Jev advice are native tools. For the first meaningful non-trivial operational milestone involving context, sequencing, validation order, bounded retry, or progress, call operational_decision once before extended deliberation; skip trivial or deterministic work. Use the boolean context projection only and include the agent fallback. The native host owns model, account, permissions, commands, retries, validation, and completion.",
         }
     elif method == "ping":
         result = {}
