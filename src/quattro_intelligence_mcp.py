@@ -120,8 +120,9 @@ class NativeMcpRuntime:
         if not isinstance(arguments, dict):
             raise ValueError("tool arguments must be an object")
         directory = arguments.get("directory") if isinstance(arguments.get("directory"), str) else None
+        project = directory or os.getcwd()
         context = NativeContext(host="codex", session_id=self.session_id,
-                                project=directory, request_id=str(request_id))
+                                project=project, request_id=str(request_id))
         if name == "operational_decision" and self.decision_session is None:
             settings = load_native_settings()
             self.decision_session = DecisionSession(mode="COOPERATIVE", timeout_ms=settings.timeout_ms)

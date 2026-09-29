@@ -68,10 +68,11 @@ The native trace stages mean:
   `result_returned`, and `context_delivery`. A returned server response is
   not model reliance; Codex delivery is `UNVERIFIED`, while Pi host delivery
   is `CONFIRMED` only at its supported result/message boundary.
-* Jev: `requested`, `provider_response`, `validated`, `accepted`,
-  `advice_delivered`, and `action_applied`. A policy-accepted answer is not
-  proof that the model applied it; unobservable stages remain `UNVERIFIED` or
-  `UNKNOWN`. Cached advice is marked `CACHED` and is not a new provider call.
+* Jev: `requested`, `provider_response`, `validated`, `accepted` or
+  `rejected`, `advice_delivered`, and `action_applied`. Rejected events carry
+  the bounded fallback reason. A policy-accepted answer is not proof that the
+  model applied it; unobservable stages remain `UNVERIFIED` or `UNKNOWN`.
+  Cached advice is marked `CACHED` and is not a new provider call.
 * RTK: `status_checked` is only an installation/health check. `executed` and
   `command_result` require an actual bounded RTK command.
 

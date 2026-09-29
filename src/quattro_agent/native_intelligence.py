@@ -44,7 +44,7 @@ RETENTION_DAYS = 30
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 _STAGES = {
     "configured", "loaded", "callable", "requested", "provider_response",
-    "validated", "accepted", "advice_delivered", "action_applied",
+    "validated", "accepted", "rejected", "advice_delivered", "action_applied",
     "retrieval_requested", "retrieval_completed", "sources_selected",
     "result_returned", "context_delivery", "status_checked", "executed",
     "command_result", "index_refresh", "probe", "skipped",
@@ -463,7 +463,8 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
                              trace_id=trace_id, metadata={"category": category,
                                                            "providerWaitMs": (result.get("timing") or {}).get("worker_roundtrip_ms")})
             telemetry.record(kind="jev", stage="validated", status="VALIDATED", context=context,
-                             trace_id=trace_id, metadata={"category": category})
+                             trace_id=trace_id, metadata={"category": category,
+                                                           **_trace_metadata(result)})
         accepted = not bool(result.get("fallback_required"))
         if accepted:
             telemetry.record(kind="jev", stage="accepted", status="ACCEPTED", context=context,
@@ -472,6 +473,10 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
                              trace_id=trace_id, metadata={"delivery": "host_boundary_unverified"})
             telemetry.record(kind="jev", stage="action_applied", status="UNVERIFIED", context=context,
                              trace_id=trace_id, metadata={"reason": "native_host_application_not_observable"})
+        else:
+            telemetry.record(kind="jev", stage="rejected", status="REJECTED", context=context,
+                             trace_id=trace_id, metadata={"category": category,
+                                                           **_trace_metadata(result)})
         result = dict(result)
         result["traceId"] = trace_id
         result["usageEvidence"] = {

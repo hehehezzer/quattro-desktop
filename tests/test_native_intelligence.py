@@ -96,6 +96,36 @@ class NativeIntelligenceTests(unittest.TestCase):
         self.assertNotIn("private/project", encoded)
         self.assertNotIn("secret prompt", encoded)  # no raw prompt is accepted by this boundary
 
+    def test_rejected_advice_records_fallback_reason(self) -> None:
+        native.write_native_settings(enabled=True)
+
+        class FakeSession:
+            def __init__(self, **_kwargs):
+                self.counts = {"calls": 0}
+
+            def snapshot(self):
+                return {"counts": dict(self.counts)}
+
+            def decide(self, _request, **_kwargs):
+                self.counts["calls"] += 1
+                return {
+                    "selected_action": None, "confidence": 0.49,
+                    "evidence": "uncertain", "fallback_required": True,
+                    "probabilities": {"retrieve": 0.51, "agent": 0.49},
+                    "timing": {"worker_roundtrip_ms": 12.0},
+                }
+
+            def close(self):
+                return None
+
+        context = native.NativeContext(host="pi", session_id="rejected-session")
+        with mock.patch.object(native, "DecisionSession", FakeSession):
+            result = native.native_jev_advice(request(), context=context)
+        self.assertFalse(result["usageEvidence"]["accepted"])
+        events = native.NativeTelemetry().trace("rejected-session")
+        rejected = next(event for event in events if event["stage"] == "rejected")
+        self.assertEqual(rejected["metadata"]["fallbackReason"], "uncertain")
+
     def test_passive_status_does_not_create_telemetry(self) -> None:
         native.write_native_settings(enabled=True)
         database = Path(os.environ["QUATTRO_NATIVE_TELEMETRY_DB"])
