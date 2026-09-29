@@ -48,6 +48,7 @@ def _decision_schema() -> dict[str, Any]:
                 "available_actions": {
                     "type": "array", "minItems": 2, "maxItems": len(actions),
                     "uniqueItems": True,
+                    "contains": {"enum": ["agent"]},
                     "items": {"type": "string", "enum": list(actions)},
                 },
             },

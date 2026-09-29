@@ -75,6 +75,10 @@ class SharedIntelligenceTests(unittest.TestCase):
         self.assertEqual(actions["context_strategy"], {"inspect", "retrieve", "sufficient", "agent"})
         self.assertEqual(actions["execution_strategy"], {"sequential", "parallel", "agent"})
         self.assertEqual(actions["validation_strategy"], {"targeted_first", "broad_first", "agent"})
+        self.assertEqual(
+            variants[0]["properties"]["available_actions"]["contains"]["enum"],
+            ["agent"],
+        )
         self.assertTrue(all("agent" in values for values in actions.values()))
 
     def test_native_helper_server_reuses_one_decision_session(self) -> None:
