@@ -154,6 +154,28 @@ class SharedIntelligenceTests(unittest.TestCase):
                 with shared.RetrievalStore(root / "retrieval.sqlite3") as store:
                     self.assertEqual(shared._index_memory(store, root / "project"), "available")
 
+    def test_shared_vault_uses_effective_config_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            shared_vault = root / "shared"
+            (shared_vault / "Shared").mkdir(parents=True)
+            (shared_vault / "Shared/NOTE.md").write_text("Cobalt lantern validation marker")
+            config_path = root / "ai.json"
+            config_path.write_text(json.dumps({
+                "placeholder": True,
+            }))
+            with (mock.patch.dict(os.environ, {"QUATTRO_CONFIG": str(config_path)}),
+                  mock.patch.object(shared, "load_ai_config", return_value={"memory": {
+                      "enabled": True,
+                      "vaultPath": str(shared_vault),
+                      "projectVaultPath": str(root / "missing"),
+                  }}) as load_config):
+                with shared.RetrievalStore(root / "retrieval.sqlite3") as store:
+                    self.assertEqual(shared._index_memory(store, root / "project"), "available")
+                    found, _ = store.search("cobalt lantern validation marker")
+                    self.assertTrue(found)
+            load_config.assert_called_once_with(config_path)
+
     def test_optional_history_open_failure_degrades(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

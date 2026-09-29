@@ -27,6 +27,7 @@ from .native_intelligence import (
     native_jev_advice, split_native_context,
 )
 from .decision_service import DecisionSession
+from .paths import config_path as configured_config_path
 from quattro_memory import MemoryError as VaultConfigError, memory_settings, project_memory_path
 
 MAX_QUERY = 2_000
@@ -48,7 +49,7 @@ def _directory(value: str | None) -> pathlib.Path:
 
 
 def _index_memory(store: RetrievalStore, root: pathlib.Path) -> str:
-    config_path = pathlib.Path.home() / ".config/quattro/ai.json"
+    config_path = configured_config_path()
     if not config_path.is_file():
         return "disabled"
     try:
