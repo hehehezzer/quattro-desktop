@@ -12,6 +12,9 @@ import pathlib
 import shutil
 import sqlite3
 import subprocess
+import sys
+import time
+import uuid
 from typing import Any
 
 from .config import load_ai_config
@@ -20,6 +23,12 @@ from .retrieval import (
     ContextAssembler, QueryRouter, RepositoryIndexer, RetrievalStore,
     allowed_origins_for_route, repository_state,
 )
+from .native_intelligence import (
+    NativeContext, NativeTelemetry, load_native_settings, native_event,
+    native_jev_advice, split_native_context,
+)
+from .decision_service import DecisionSession
+from .paths import config_path as configured_config_path
 from quattro_memory import MemoryError as VaultConfigError, memory_settings, project_memory_path
 
 MAX_QUERY = 2_000
@@ -29,7 +38,8 @@ RTK_COMMANDS = frozenset({"git", "rg", "ls", "cat", "pytest", "cargo", "npm", "p
 
 
 def _state_root() -> pathlib.Path:
-    return pathlib.Path(os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".local/state")) / "quattro/agents"
+    from .paths import state_root
+    return state_root()
 
 
 def _directory(value: str | None) -> pathlib.Path:
@@ -40,7 +50,7 @@ def _directory(value: str | None) -> pathlib.Path:
 
 
 def _index_memory(store: RetrievalStore, root: pathlib.Path) -> str:
-    config_path = pathlib.Path.home() / ".config/quattro/ai.json"
+    config_path = configured_config_path()
     if not config_path.is_file():
         return "disabled"
     try:
@@ -136,29 +146,69 @@ def _index_episodes(store: RetrievalStore, repository: str, *, full: bool = Fals
     return "complete" if full else "recent_only"
 
 
-def refresh_history(*, directory: str | None = None) -> dict[str, Any]:
+def refresh_history(*, directory: str | None = None,
+                    telemetry_context: NativeContext | None = None) -> dict[str, Any]:
     root = _directory(directory)
     state = repository_state(root)
+    settings = load_native_settings()
+    telemetry = NativeTelemetry(enabled=settings.telemetry_enabled)
+    native_context = telemetry_context or NativeContext(host="cli", project=str(root))
+    trace_id = "history-" + uuid.uuid4().hex[:20]
+    telemetry.record(kind="retrieval", stage="index_refresh", status="REQUESTED", context=native_context,
+                     trace_id=trace_id, metadata={"answer": False})
     with RetrievalStore(_state_root() / "private/retrieval.sqlite3") as store:
         status = _index_episodes(store, state["repository"], full=True)
-    return {"repository": state["repository"], "episodic": status}
+    telemetry.record(kind="retrieval", stage="index_refresh", status="COMPLETED", context=native_context,
+                     trace_id=trace_id, metadata={"answer": False, "episodic": status})
+    return {"repository": state["repository"], "episodic": status,
+            "usageEvidence": {"traceId": trace_id, "answer": False}}
 
 
 def search_knowledge(query: str, *, directory: str | None = None,
-                     budget: int = 2_000, limit: int = 5) -> dict[str, Any]:
+                     budget: int = 2_000, limit: int = 5,
+                     telemetry_context: NativeContext | None = None) -> dict[str, Any]:
     if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY:
         raise ValueError("query must contain 1 to 2000 characters")
     if type(budget) is not int or not 2_000 <= budget <= MAX_BUDGET:
         raise ValueError("budget must be between 2000 and 4000 tokens")
     if type(limit) is not int or not 1 <= limit <= MAX_RESULTS:
         raise ValueError("limit must be between 1 and 8")
+    settings = load_native_settings()
+    telemetry = NativeTelemetry(enabled=settings.telemetry_enabled)
+    root = _directory(directory)
+    native_context = telemetry_context or NativeContext(host="cli", project=str(root))
+    trace_id = "retrieval-" + uuid.uuid4().hex[:20]
+    requested_at = time.perf_counter()
+    telemetry.record(kind="retrieval", stage="retrieval_requested", status="REQUESTED", context=native_context,
+                     trace_id=trace_id, metadata={"budget": budget, "limit": limit})
+    if not settings.retrieval_enabled:
+        telemetry.record(kind="retrieval", stage="skipped", status="SKIPPED", context=native_context,
+                         trace_id=trace_id, metadata={"reason": "disabled"})
+        return {"route": "disabled", "context": None, "retrievedTokens": 0,
+                "usageEvidence": {"traceId": trace_id, "requested": True,
+                                   "completed": False, "sourcesSelected": 0,
+                                   "resultReturned": True, "contextDelivery": "UNVERIFIED",
+                                   "skipReason": "disabled"}}
     route = QueryRouter().route(query)
     if route.intent == "no_retrieval":
-        return {"route": route.intent, "context": None, "retrievedTokens": 0}
-    root = _directory(directory)
+        telemetry.record(kind="retrieval", stage="skipped", status="SKIPPED", context=native_context,
+                         trace_id=trace_id, metadata={"reason": "no_retrieval", "latencyMs": (time.perf_counter() - requested_at) * 1000})
+        return {"route": route.intent, "context": None, "retrievedTokens": 0,
+                "usageEvidence": {"traceId": trace_id, "requested": True,
+                                   "completed": False, "sourcesSelected": 0,
+                                   "resultReturned": True, "contextDelivery": "UNVERIFIED",
+                                   "skipReason": "no_retrieval"}}
     state = repository_state(root)
     if route.intent == "live_state":
-        return {"route": route.intent, "context": {"structuredState": state}, "retrievedTokens": 0}
+        telemetry.record(kind="retrieval", stage="retrieval_completed", status="COMPLETED", context=native_context,
+                         trace_id=trace_id, metadata={"route": route.intent, "resultCount": 0,
+                                                       "latencyMs": (time.perf_counter() - requested_at) * 1000})
+        telemetry.record(kind="retrieval", stage="result_returned", status="RETURNED", context=native_context,
+                         trace_id=trace_id, metadata={"route": route.intent, "contextTokensEstimated": 0})
+        return {"route": route.intent, "context": {"structuredState": state}, "retrievedTokens": 0,
+                "usageEvidence": {"traceId": trace_id, "requested": True,
+                                   "completed": True, "sourcesSelected": 0,
+                                   "resultReturned": True, "contextDelivery": "UNVERIFIED"}}
     with RetrievalStore(_state_root() / "private/retrieval.sqlite3") as store:
         # Only tool invocation pays indexing cost. The indexer has its own file,
         # byte, unit, and five-second limits and skips unchanged Git files.
@@ -173,29 +223,76 @@ def search_knowledge(query: str, *, directory: str | None = None,
             historical=route.historical, limit=limit,
             allowed_origins=origins,
         )
-        context = ContextAssembler().assemble(
+        assembled = ContextAssembler().assemble(
             request=query, structured_state=state, results=results,
             budget_tokens=budget, include_request=False,
         )
-    return {"route": route.intent, "context": context,
-            "retrievedTokens": context["budget"]["retrievedUsed"],
+    selected = _trace.get("selected", []) if isinstance(_trace, dict) else []
+    source_categories = sorted({str(item.get("source")) for item in selected
+                                if isinstance(item, dict) and item.get("source")})
+    source_ids = [
+        "sha256:" + hashlib.sha256(str(item.get("id")).encode("utf-8", "replace")).hexdigest()[:20]
+        for item in selected if isinstance(item, dict) and item.get("id") is not None
+    ][:8]
+    retrieved_tokens = assembled["budget"]["retrievedUsed"]
+    evidence = {
+        "traceId": trace_id, "requested": True, "completed": True,
+        "sourcesSelected": len(selected), "resultReturned": True,
+        "contextDelivery": "UNVERIFIED", "sourceCategories": source_categories,
+        "sourceIdsHashed": source_ids, "indexPartial": indexed.budget_exhausted,
+        "indexCoverage": "partial" if indexed.budget_exhausted else "bounded_current_scope",
+        "contextTokensEstimated": retrieved_tokens, "contextTokensExact": None,
+        "latencyMs": (time.perf_counter() - requested_at) * 1000,
+        "cacheHit": bool(_trace.get("cacheHit")) if isinstance(_trace, dict) else None,
+        "candidateCount": _trace.get("candidateCount") if isinstance(_trace, dict) else None,
+    }
+    telemetry.record(kind="retrieval", stage="retrieval_completed", status="COMPLETED", context=native_context,
+                     trace_id=trace_id, metadata={key: value for key, value in evidence.items()
+                                                   if key not in {"traceId", "contextDelivery"}})
+    telemetry.record(kind="retrieval", stage="sources_selected", status="SELECTED", context=native_context,
+                     trace_id=trace_id, metadata={"count": len(selected),
+                                                   "sourceCategories": source_categories,
+                                                   "sourceIdsHashed": source_ids})
+    telemetry.record(kind="retrieval", stage="result_returned", status="RETURNED", context=native_context,
+                     trace_id=trace_id, metadata={"contextTokensEstimated": retrieved_tokens,
+                                                   "resultCount": len(results)})
+    return {"route": route.intent, "context": assembled,
+            "retrievedTokens": retrieved_tokens,
             "indexPartial": indexed.budget_exhausted, "memory": memory,
-            "episodic": episodic}
+            "episodic": episodic, "usageEvidence": evidence}
 
 
-def rtk_status() -> dict[str, Any]:
+def rtk_status(*, telemetry_context: NativeContext | None = None) -> dict[str, Any]:
+    settings = load_native_settings()
+    telemetry = NativeTelemetry(enabled=settings.telemetry_enabled)
+    context = telemetry_context or NativeContext(host="cli")
+    trace_id = "rtk-status-" + uuid.uuid4().hex[:16]
     binary = shutil.which("rtk")
     if binary is None:
-        return {"available": False, "reason": "rtk is not installed or is absent from PATH"}
+        telemetry.record(kind="rtk", stage="status_checked", status="UNAVAILABLE", context=context,
+                         trace_id=trace_id, metadata={"actualCommand": False})
+        return {"available": False, "reason": "rtk is not installed or is absent from PATH",
+                "usageEvidence": {"traceId": trace_id, "statusChecked": True,
+                                   "actualCommand": False}}
     try:
         result = subprocess.run([binary, "--version"], capture_output=True, text=True,
                                 timeout=3, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
-        return {"available": False, "reason": type(error).__name__}
-    return {"available": result.returncode == 0, "version": result.stdout.strip()[:100]}
+        telemetry.record(kind="rtk", stage="status_checked", status="ERROR", context=context,
+                         trace_id=trace_id, metadata={"reason": type(error).__name__, "actualCommand": False})
+        return {"available": False, "reason": type(error).__name__,
+                "usageEvidence": {"traceId": trace_id, "statusChecked": True,
+                                   "actualCommand": False}}
+    telemetry.record(kind="rtk", stage="status_checked", status="AVAILABLE" if result.returncode == 0 else "FAILED",
+                     context=context, trace_id=trace_id,
+                     metadata={"version": result.stdout.strip()[:100], "actualCommand": False})
+    return {"available": result.returncode == 0, "version": result.stdout.strip()[:100],
+            "usageEvidence": {"traceId": trace_id, "statusChecked": True,
+                               "actualCommand": False}}
 
 
-def rtk_run(command: list[str], *, directory: str | None = None) -> dict[str, Any]:
+def rtk_run(command: list[str], *, directory: str | None = None,
+            telemetry_context: NativeContext | None = None) -> dict[str, Any]:
     binary = shutil.which("rtk")
     if binary is None:
         raise RuntimeError("rtk is unavailable; use the native shell tool")
@@ -203,14 +300,29 @@ def rtk_run(command: list[str], *, directory: str | None = None) -> dict[str, An
             or not all(isinstance(part, str) and part and len(part) <= 1_000 for part in command)
             or command[0] not in RTK_COMMANDS):
         raise ValueError("command must be an argument array beginning with an allowed RTK command")
+    settings = load_native_settings()
+    telemetry = NativeTelemetry(enabled=settings.telemetry_enabled)
+    context = telemetry_context or NativeContext(host="cli", project=directory)
+    trace_id = "rtk-" + uuid.uuid4().hex[:20]
+    started = time.perf_counter()
+    telemetry.record(kind="rtk", stage="requested", status="REQUESTED", context=context,
+                     trace_id=trace_id, metadata={"command": command[0], "argumentCount": len(command)})
     try:
         result = subprocess.run([binary, *command], cwd=_directory(directory),
                                 capture_output=True, text=True, timeout=30, check=False)
     except subprocess.TimeoutExpired as error:
         raise RuntimeError("rtk command exceeded 30 seconds") from error
+    telemetry.record(kind="rtk", stage="executed", status="COMPLETED", context=context,
+                     trace_id=trace_id, metadata={"command": command[0], "exitCode": result.returncode,
+                                                   "latencyMs": (time.perf_counter() - started) * 1000})
+    telemetry.record(kind="rtk", stage="command_result", status="RETURNED", context=context,
+                     trace_id=trace_id, metadata={"stdoutBytes": len(result.stdout.encode("utf-8", "replace")),
+                                                   "stderrBytes": len(result.stderr.encode("utf-8", "replace"))})
     return {"exitCode": result.returncode, "stdout": result.stdout[:16_000],
             "stderr": result.stderr[:4_000],
-            "truncated": len(result.stdout) > 16_000 or len(result.stderr) > 4_000}
+            "truncated": len(result.stdout) > 16_000 or len(result.stderr) > 4_000,
+            "usageEvidence": {"traceId": trace_id, "statusChecked": False,
+                               "actualCommand": True, "resultReturned": True}}
 
 
 def image_generate(prompt: str, *, size: str | None = None,
@@ -232,35 +344,100 @@ def image_generate(prompt: str, *, size: str | None = None,
     return result["structuredContent"]
 
 
-def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def call(name: str, arguments: dict[str, Any], *, telemetry_context: NativeContext | None = None,
+         decision_session: DecisionSession | None = None) -> dict[str, Any]:
     if not isinstance(arguments, dict):
         raise ValueError("tool arguments must be an object")
+    clean, embedded_context = split_native_context(arguments)
+    context = telemetry_context or embedded_context
     if name == "search_knowledge":
-        return search_knowledge(arguments.get("query"), directory=arguments.get("directory"),
-                                budget=arguments.get("budget", 2_000), limit=arguments.get("limit", 5))
+        return search_knowledge(clean.get("query"), directory=clean.get("directory"),
+                                budget=clean.get("budget", 2_000), limit=clean.get("limit", 5),
+                                telemetry_context=context)
     if name == "rtk_status":
-        return rtk_status()
+        return rtk_status(telemetry_context=context)
     if name == "rtk_run":
-        return rtk_run(arguments.get("command"), directory=arguments.get("directory"))
+        return rtk_run(clean.get("command"), directory=clean.get("directory"),
+                       telemetry_context=context)
     if name == "image_generate":
-        return image_generate(arguments.get("prompt"), size=arguments.get("size"),
-                              directory=arguments.get("directory"))
+        return image_generate(clean.get("prompt"), size=clean.get("size"),
+                              directory=clean.get("directory"))
     if name == "refresh_history":
-        return refresh_history(directory=arguments.get("directory"))
+        return refresh_history(directory=clean.get("directory"), telemetry_context=context)
+    if name == "operational_decision":
+        return native_jev_advice(clean, context=context, decision_session=decision_session)
+    if name == "jev_advice":
+        return native_jev_advice(clean, context=context, decision_session=decision_session)
+    if name == "native_event":
+        return native_event(arguments)
     raise ValueError(f"unknown shared intelligence tool: {name}")
 
 
 def cli_main() -> int:
     import argparse
     parser = argparse.ArgumentParser(description="Client-neutral Quattro intelligence tools")
-    parser.add_argument("name", choices=("search_knowledge", "rtk_status", "rtk_run", "image_generate", "refresh_history"))
+    parser.add_argument("--server", action="store_true",
+                        help="serve bounded JSON-line requests for one native session")
+    parser.add_argument("name", choices=("search_knowledge", "rtk_status", "rtk_run", "image_generate",
+                                         "refresh_history", "jev_advice", "native_event", "operational_decision"),
+                        nargs="?")
     parser.add_argument("arguments", nargs="?", default="{}")
     args = parser.parse_args()
+    if args.server:
+        return server_main()
+    if args.name is None:
+        parser.error("a tool name is required unless --server is used")
     try:
         print(json.dumps(call(args.name, json.loads(args.arguments)), ensure_ascii=False))
     except (ValueError, RuntimeError, OSError) as error:
         print(json.dumps({"error": str(error)}))
         return 1
+    return 0
+
+
+def server_main() -> int:
+    """Serve one native client's bounded requests over stdin/stdout.
+
+    Pi owns this child for the lifetime of one native session.  Keeping the
+    DecisionSession here amortizes Python/credential/catalog setup without
+    introducing a machine-wide daemon.  Each request and response is one
+    bounded JSON line; no prompt or credential is logged.
+    """
+    decision_session: DecisionSession | None = None
+    try:
+        try:
+            settings = load_native_settings()
+            decision_session = DecisionSession(mode="COOPERATIVE", timeout_ms=settings.timeout_ms)
+        except Exception:
+            # Native calls still fail open through their normal settings and
+            # credential checks.  Do not make helper startup a hard dependency.
+            decision_session = None
+        for line in sys.stdin:
+            if len(line.encode("utf-8", "replace")) > 128 * 1024:
+                response = {"id": None, "error": "request too large"}
+                print(json.dumps(response, separators=(",", ":")), flush=True)
+                continue
+            envelope: Any = None
+            try:
+                envelope = json.loads(line)
+                if not isinstance(envelope, dict):
+                    raise ValueError("request must be an object")
+                name = envelope.get("name")
+                arguments = envelope.get("arguments", {})
+                if not isinstance(name, str) or not isinstance(arguments, dict):
+                    raise ValueError("request requires a tool name and object arguments")
+                value = call(name, arguments, decision_session=decision_session)
+                response = {"id": envelope.get("id"), "result": value}
+            except (ValueError, RuntimeError, OSError) as error:
+                response = {"id": envelope.get("id") if isinstance(envelope, dict) else None,
+                            "error": str(error)[:500]}
+            except Exception:
+                response = {"id": envelope.get("id") if isinstance(envelope, dict) else None,
+                            "error": "shared intelligence unavailable"}
+            print(json.dumps(response, ensure_ascii=False, separators=(",", ":")), flush=True)
+    finally:
+        if decision_session is not None:
+            decision_session.close()
     return 0
 
 

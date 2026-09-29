@@ -191,7 +191,8 @@ class CodexAdapter(AgentAdapter):
             argv=(argv[0], *decision_args, *argv[1:]),
             cwd=spec.project_path,
             stdin_text=stdin,
-            environment_overrides={"CODEX_HOME": str(spec.account_home), **proxy_environment()},
+            environment_overrides={"CODEX_HOME": str(spec.account_home),
+                                    "QUATTRO_MANAGED_SESSION": "1", **proxy_environment()},
         )
 
 
@@ -262,9 +263,10 @@ class PiAdapter(AgentAdapter):
             cwd=spec.project_path,
             stdin_text=None,
             environment_overrides=({"QUATTRO_PYTHON": sys.executable,
+                                    "QUATTRO_MANAGED_SESSION": "1",
                                     "QUATTRO_JEV_TEST_MODE": jev_options.get("testRecoveryMode", "OFF"),
                                     "QUATTRO_TEST_ALLOWED": "1"}
-                                   if test_enabled else {}),
+                                   if test_enabled else {"QUATTRO_MANAGED_SESSION": "1"}),
         )
 
 

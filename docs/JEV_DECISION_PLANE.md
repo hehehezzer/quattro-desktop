@@ -1,12 +1,93 @@
 **Current executable class:** [bounded test recovery](JEV_TEST_RECOVERY.md) adds a separately gated host-applied retry path. The advisory-only history below is retained for context.
 
-# Jev runtime decision plane — PR #31, experimental
+## Current native/direct boundary (2026-09-30)
 
-Latest continuation: [host runtime milestone experiment](JEV_RUNTIME_MILESTONES.md).
-A gated post-agent validation-order boundary now exists for managed Codex and
-standalone Pi. It does not establish useful mid-turn reasoning offload; no
-category is enabled by default and the release remains blocked. The descriptions
-and evidence below retain the earlier callable-only baseline history.
+Direct native support is now a separate client-neutral advisory boundary in
+`quattro_agent.native_intelligence`; it reuses this document's
+`DecisionSession`, Jev client, credential resolver, taxonomy, deadlines,
+confidence floor, cooldown, and fail-open behavior. It does not reuse the
+managed launcher lifecycle or the managed `routing.jev` preference.
+
+The native default is enabled only for the five implemented routine strategy
+categories: `context_strategy`, `execution_strategy`, `validation_strategy`,
+`retry_strategy`, and `progress_strategy`. Deterministic security, permission,
+sandbox, model-selection, retry-limit, validation-success, and completion
+decisions remain local/native. Unknown categories and semantic implementation
+or root-cause reasoning remain with the native agent. `test_recovery` is not a
+direct-native category.
+
+Codex 0.158.0 has MCP but no supported ordinary-turn lifecycle callback. Its
+native Jev integration is therefore the callable `operational_decision` MCP
+tool configured in each effective Codex home. This is a supported tool
+surface, not automatic interception. The MCP process owns a session-scoped
+bounded `DecisionSession`; the response trace is returned to Codex, but
+delivery to or reliance by the model is `UNVERIFIED`.
+
+Pi 0.87.1's supported extension API provides `session_start`,
+`before_agent_start`, `turn_start`, `tool_result`, `session_shutdown`, and
+session commands. The native extension automatically admits at most one
+non-trivial eligible decision per `before_agent_start`, after cheap local
+signals select the relevant implemented category (`context_strategy`,
+`execution_strategy`, `validation_strategy`, or `progress_strategy`). It sends
+only minimized boolean/category signals to Jev and can apply an accepted
+context `retrieve` answer by adding a bounded shared-retrieval message. The
+extension keeps one lifecycle-owned helper for the Pi session so Jev worker
+and catalog setup are reused; it is not a persistent daemon. Pi also exposes
+the same `operational_decision` tool for later milestones. The host boundary
+can confirm that the message or tool result was accepted; it still cannot
+prove internal model reliance.
+
+`QUATTRO_MANAGED_SESSION=1` suppresses the native operational tool for
+managed Codex children. Managed Quattro continues to own its locked plan,
+model/provider/account/effort, permissions, retries, validation, and existing
+Jev behavior. Native shared knowledge does not grant any of that authority.
+
+Native evidence is inspected with:
+
+```bash
+quattro-agent native status
+quattro-agent native trace --session SESSION_ID --limit 100
+quattro-agent native probe --directory "$PWD" --query "bounded diagnostic question"
+quattro-agent native set --jev off
+quattro-agent native set --jev on
+```
+
+The first command is passive and never calls Jev, retrieval, indexing, or
+RTK. The trace requires an exact session id because concurrent sessions must
+not be conflated. The probe is explicitly diagnostic and excluded from
+ordinary-use metrics. Pi's session-local preference is
+`/quattro-jev on|off|status`; it is persisted in Pi's native session and is
+separate from the global native setting.
+
+The evidence stages are intentionally conservative: configuration and loaded
+integration are not use; retrieval answer delivery is distinct from source
+selection and model reliance; an accepted Jev answer is not proof of action
+application; RTK status is not RTK execution; cached results are not new
+provider calls; and unavailable host stages are `UNVERIFIED` or `UNKNOWN`.
+The local store is bounded, restrictive, concurrent-safe, and excludes raw
+prompts, code, transcripts, credentials, full outputs, and absolute source
+paths. Retrieval context token sizes are estimates, not exact provider token
+counts.
+
+# Jev runtime decision plane
+
+## Current direct-native status (2026-09-30)
+
+The installed direct-native integration is documented in
+[NATIVE_SHARED_INTELLIGENCE.md](NATIVE_SHARED_INTELLIGENCE.md). Native Jev is
+enabled by default for the five implemented routine strategy categories when
+prerequisites are available, while explicit native OFF settings remain
+authoritative. Direct Pi has a supported eligible-turn lifecycle call. Direct
+Codex 0.158.0 has no supported ordinary-turn callback, so its supported path is
+the model-selectable `operational_decision` MCP tool with a session-scoped
+worker; it is not an automatic interception hook. Managed Quattro continues to
+use its own locked execution authority and does not inherit native duplication.
+
+The remainder of this file is the historical managed/runtime decision-plane
+evaluation record. Its old experimental or production-OFF statements do not
+describe the installed direct-native defaults above.
+
+Historical continuation: [host runtime milestone experiment](JEV_RUNTIME_MILESTONES.md).
 
 This extends, rather than replaces, [JEV_SPECULATION.md](JEV_SPECULATION.md).
 The release is **not ready**. Production configuration remains unchanged/OFF.

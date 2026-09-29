@@ -84,6 +84,7 @@ from quattro_agent.retrieval import (
 )
 from quattro_agent.benchmark import load_cases as load_benchmark_cases, run_benchmark
 from quattro_agent.intelligence.commands import add_intelligence_parser, intelligence_command
+from quattro_agent.native_cli import native_command
 from quattro_agent.routing import automatic_model_override, classify_request
 from quattro_agent.model_registry import (
     default_policy_path, execution_target_for_route, load_model_registry,
@@ -3122,6 +3123,15 @@ def build_parser() -> argparse.ArgumentParser:
     deployment.add_argument("revision", nargs="?")
     deployment.add_argument("--profile", choices=("core", "desktop", "all"), default="all")
     deployment.add_argument("--confirm", action="store_true")
+    native = sub.add_parser("native", help="inspect direct native Jev, retrieval, and RTK evidence")
+    native.add_argument("action", choices=("status", "trace", "probe", "set"), nargs="?", default="status")
+    native.add_argument("--session")
+    native.add_argument("--limit", type=int, default=100)
+    native.add_argument("--include-diagnostics", action="store_true")
+    native.add_argument("--directory")
+    native.add_argument("--query")
+    native.add_argument("--jev", choices=("on", "off"))
+    native.add_argument("--json", action="store_true")
     sub.add_parser("chatgpt")
     sub.add_parser("omniroute")
     memory_parser = sub.add_parser("memory")
@@ -3756,6 +3766,11 @@ def main() -> int:
         try:
             return routing_command(args)
         except (KeyError, OSError, ValueError) as error:
+            die(str(error))
+    if command == "native":
+        try:
+            return native_command(args)
+        except (ConfigError, KeyError, OSError, ValueError) as error:
             die(str(error))
     if command == "intelligence":
         try:
