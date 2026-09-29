@@ -200,10 +200,15 @@ class SharedIntelligenceTests(unittest.TestCase):
             shared_vault = root / "shared"
             (shared_vault / "Shared").mkdir(parents=True)
             (shared_vault / "Shared/NOTE.md").write_text("Silver otter project knowledge")
-            with (mock.patch.object(shared.pathlib.Path, "home", return_value=root / "home"),
-                  mock.patch.object(shared, "load_ai_config", return_value={"memory": {
-                      "enabled": True, "vaultPath": str(shared_vault),
-                      "projectVaultPath": str(root / "missing")}})):
+            with (
+                mock.patch.object(
+                    shared, "configured_config_path",
+                    return_value=root / "home/.config/quattro/ai.json",
+                ),
+                mock.patch.object(shared, "load_ai_config", return_value={"memory": {
+                    "enabled": True, "vaultPath": str(shared_vault),
+                    "projectVaultPath": str(root / "missing")}}),
+            ):
                 with shared.RetrievalStore(root / "retrieval.sqlite3") as store:
                     self.assertEqual(shared._index_memory(store, root / "project"), "available")
 
@@ -245,9 +250,14 @@ class SharedIntelligenceTests(unittest.TestCase):
             root = pathlib.Path(temporary)
             (root / ".config/quattro").mkdir(parents=True)
             (root / ".config/quattro/ai.json").write_text("{}")
-            with (mock.patch.object(shared.pathlib.Path, "home", return_value=root),
-                  mock.patch.object(shared, "load_ai_config", return_value={"memory": {
-                      "enabled": True, "vaultPath": ""}})):
+            with (
+                mock.patch.object(
+                    shared, "configured_config_path",
+                    return_value=root / ".config/quattro/ai.json",
+                ),
+                mock.patch.object(shared, "load_ai_config", return_value={"memory": {
+                    "enabled": True, "vaultPath": ""}}),
+            ):
                 with shared.RetrievalStore(root / "retrieval.sqlite3") as store:
                     with self.assertRaisesRegex(ValueError, "configuration is malformed"):
                         shared._index_memory(store, root / "project")
