@@ -44,10 +44,12 @@ def check(home: Path) -> list[str]:
         failures.append("alternate provider/fallback configuration refused")
     if config.get("platform_toolsets", {}).get("discord") != []:
         failures.append("conversation execution/external tools must remain disabled")
+    if not {"hermes-discord", "hermes-cli"}.issubset(set(config.get("agent", {}).get("disabled_toolsets", []))):
+        failures.append("native recovered platform tools must remain explicitly suppressed")
     if config.get("memory", {}).get("memory_enabled") is not False:
         failures.append("automatic canonical-memory mutation must remain disabled")
     discord = config.get("discord", {})
-    if discord.get("allowed_users") != policy.get("owner_id"):
+    if discord.get("allow_from") != policy.get("owner_id"):
         failures.append("upstream owner allowlist and transport policy differ")
     if discord.get("allowed_roles") or discord.get("allow_all_users") or discord.get("allow_bots"):
         failures.append("role/all-user/bot grants refused")
@@ -75,13 +77,29 @@ def main() -> int:
             return 78
         from hermes_cli.plugins import get_plugin_manager
         manager = get_plugin_manager()
-        manager.discover()
+        manager.discover_and_load()
         plugins = manager.list_plugins()
         loaded = (any(p["enabled"] and p["name"] == "quattro-discord"
-                      and not p["error"] and p["hooks"] == 1 for p in plugins)
-                  and manager.has_hook("pre_gateway_dispatch"))
+                      and not p["error"] and p["hooks"] == 2 for p in plugins)
+                  and manager.has_hook("pre_gateway_dispatch") and manager.has_hook("pre_tool_call"))
         if not loaded:
             print("BLOCKED: mandatory owner boundary plugin did not load", file=sys.stderr)
+            return 78
+        from hermes_cli.tools_config import _get_platform_tools
+        from model_tools import get_tool_definitions
+        import yaml
+        from hermes_constants import get_default_hermes_root
+        global_home = get_default_hermes_root()
+        if global_home.resolve() != home.resolve() and (global_home / "auth.json").exists():
+            print("BLOCKED: upstream global auth inheritance needs verified account isolation", file=sys.stderr)
+            return 78
+        effective_config = yaml.safe_load((home / "config.yaml").read_text())
+        toolsets = sorted(_get_platform_tools(effective_config, "discord"))
+        definitions = get_tool_definitions(enabled_toolsets=toolsets,
+                                          disabled_toolsets=effective_config["agent"]["disabled_toolsets"],
+                                          quiet_mode=True)
+        if definitions:
+            print("BLOCKED: deployed Hermes resolved unexpected conversation tools", file=sys.stderr)
             return 78
         # Configuration-only admission, not proof of valid OAuth/model entitlement.
         # No bearer-token or account identity is printed here.

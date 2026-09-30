@@ -19,7 +19,8 @@ class HermesGuardTests(unittest.TestCase):
         self.config = {"model": {"provider": "openai-codex"},
                        "auth": {"adopt_external_logins": False}, "fallback_models": [],
                        "platform_toolsets": {"discord": []}, "memory": {"memory_enabled": False},
-                       "discord": {"allowed_users": "123456789012345678"},
+                       "agent": {"disabled_toolsets": ["hermes-discord", "hermes-cli"]},
+                       "discord": {"allow_from": "123456789012345678"},
                        "plugins": {"enabled": ["quattro-discord"]}}
         self.policy = {"owner_id": "123456789012345678"}
         self.write()

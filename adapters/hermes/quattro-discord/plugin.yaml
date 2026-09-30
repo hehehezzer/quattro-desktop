@@ -3,5 +3,6 @@ version: 0.1.0
 description: Owner-scoped Discord intake and bounded existing Quattro intelligence; execution gates remain blocked.
 provides_hooks:
   - pre_gateway_dispatch
+  - pre_tool_call
 provides_commands:
-  - q
+  - quattro

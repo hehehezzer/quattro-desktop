@@ -41,6 +41,14 @@ class HermesBridgeTests(unittest.TestCase):
             self.assertFalse(self.bridge.authorized(self.src))
             setattr(self.src, key, original)
 
+    def test_cross_profile_denied(self):
+        self.src.profile = "other-profile"
+        self.assertFalse(self.bridge.authorized(self.src))
+        self.src.profile = "quattro-discord"
+        self.assertTrue(self.bridge.authorized(self.src))
+        self.src.profile_route_rejected = True
+        self.assertFalse(self.bridge.authorized(self.src))
+
     def test_missing_owner_denies(self):
         self.bridge.policy["owner_id"] = ""
         self.assertFalse(self.bridge.authorized(self.src))

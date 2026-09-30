@@ -28,12 +28,14 @@ Private evidence is in `~/.local/state/quattro-hermes/`; do not publish transcri
 - [x] Create dedicated `quattro-discord` profile without cloning credentials/defaults.
 - [x] Live native Codex read-only review and Pi knowledge retrieval (NOT Discord delegation acceptance).
 - [ ] Hermes own OAuth and real model/tool response.
-- [ ] Deploy and verify connector and scoped owner controls.
+- [x] Deploy read-only connector/Core inventory and dedicated profile; upstream Plugin Doctor and real hook/local fixture contract pass (synthetic Discord identity, NOT a live Discord round-trip).
 - [ ] Audit managed billing/worker inheritance before activating Discord execution.
 - [ ] Real owner Discord chat, natural retrieval, prompt-only generation.
 - [ ] Real Codex AND Pi reversible writable jobs through controller, lifecycle/follow-ups/approvals.
-- [ ] Restart, failure-path, concurrency, regression and source/installed-parity checks.
-- [ ] Document validated usage and rollback, focused commit/PR under repository policy.
+- [x] Repository regression checks (938 tests, five existing skips), private service admission exit 78, native model/retrieval baselines.
+- [ ] Real gateway restart/disconnection, worker failure/concurrency, and final deployment parity/live availability gates.
+- [x] Document implemented/proposal-only syntax, secure owner unblock, acceptance matrix, operations and rollback in `HERMES_DISCORD.md`; focused local task commit.
+- [ ] PR/publication: starting checkout contains nine unrelated native-Jev commits beyond main; do not silently include/publish them in this task's PR.
 - [ ] All 17 live/automated acceptance gates; complete only after deployed live verification.
 
 ## Known constraints and gaps

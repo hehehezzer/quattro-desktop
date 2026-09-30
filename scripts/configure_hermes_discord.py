@@ -68,8 +68,9 @@ def main() -> None:
         },
         "plugins": {"enabled": ["quattro-discord"]},
         "platform_toolsets": {"cli": [], "discord": []},
+        "agent": {"disabled_toolsets": ["hermes-discord", "hermes-cli"]},
         "gateway": {"standalone": True, "unauthorized_dm_behavior": "ignore"},
-        "discord": {"allowed_users": args.owner_id, "allowed_roles": "", "allow_all_users": False,
+        "discord": {"allow_from": args.owner_id, "allowed_roles": "", "allow_all_users": False,
                     "allow_bots": False, "allowed_channels": ",".join(args.channel_id),
                     "free_response_channels": ",".join(args.channel_id), "auto_thread": False,
                     "history_backfill": False, "require_mention": True},
@@ -83,7 +84,7 @@ def main() -> None:
               "owner_dms": True,
               "projects": existing.get("projects", {"quattro": str(Path(__file__).resolve().parents[1])})}
     # Empty owner is deliberate DENY ALL until the owner supplies numeric IDs.
-    config["discord"]["allowed_users"] = policy["owner_id"]
+    config["discord"]["allow_from"] = policy["owner_id"]
     config["discord"]["allowed_channels"] = ",".join(policy["channel_ids"])
     config["discord"]["free_response_channels"] = ",".join(policy["channel_ids"])
     replace_private(path, yaml.safe_dump(config, sort_keys=False))
@@ -102,7 +103,7 @@ Cite accurate source references. Distinguish configured, called, retrieved, deli
 Never claim worker execution, authentication, approval, or success without deterministic evidence.
 Implementation prompts and /goal prompts are text only: never execute or persist them.
 No filesystem, shell, memory-writing, subagent, or paid external tools are available here.
-Use /q help for deterministic transport commands. Worker execution remains BLOCKED.
+Use /quattro help for deterministic transport commands. Worker execution remains BLOCKED.
 Selected excerpts are sent to the approved cloud provider; Discord is not local-only.
 """)
     if args.bot_token_prompt:
