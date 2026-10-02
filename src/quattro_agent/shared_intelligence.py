@@ -350,7 +350,29 @@ def call(name: str, arguments: dict[str, Any], *, telemetry_context: NativeConte
         raise ValueError("tool arguments must be an object")
     clean, embedded_context = split_native_context(arguments)
     context = telemetry_context or embedded_context
+    if name == "operational_guard":
+        from .operational_native import operational_call
+        return operational_call(clean, context=context, decision_session=decision_session)
     if name == "search_knowledge":
+        from .operational_native import operational_call, operational_enabled
+        query = clean.get("query")
+        original_route = QueryRouter().route(query) if isinstance(query, str) else None
+        if operational_enabled() and original_route is not None and original_route.intent != "no_retrieval":
+            advice = operational_call({"operation": "rag", "features": {
+                "retrieval_allowed": load_native_settings().retrieval_enabled,
+                "context_missing": True}}, context=context, decision_session=decision_session)
+            if advice["recommendation"] in {"stop", "stop_retrieval", "ask_owner"}:
+                return {"route": "operational_stop", "context": None,
+                        "operationalAdvice": advice, "retrievedTokens": 0}
+            if advice["recommendation"] == "narrow_retrieval":
+                from .operational_advice import refine_query
+                refined = refine_query(query)
+                # Lexical cleanup must not turn trivial/live-state requests
+                # into retrieval or broaden their source-routing decision.
+                if QueryRouter().route(refined) == original_route:
+                    clean["query"] = refined
+                clean["budget"] = min(2000, clean.get("budget", 2000))
+                clean["limit"] = min(2, clean.get("limit", 5))
         return search_knowledge(clean.get("query"), directory=clean.get("directory"),
                                 budget=clean.get("budget", 2_000), limit=clean.get("limit", 5),
                                 telemetry_context=context)
@@ -379,7 +401,7 @@ def cli_main() -> int:
     parser.add_argument("--server", action="store_true",
                         help="serve bounded JSON-line requests for one native session")
     parser.add_argument("name", choices=("search_knowledge", "rtk_status", "rtk_run", "image_generate",
-                                         "refresh_history", "jev_advice", "native_event", "operational_decision"),
+                                         "refresh_history", "jev_advice", "native_event", "operational_decision", "operational_guard"),
                         nargs="?")
     parser.add_argument("arguments", nargs="?", default="{}")
     args = parser.parse_args()
