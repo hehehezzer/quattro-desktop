@@ -95,3 +95,9 @@ Hermes feature-branch ancestry is not required.
 Rollback restores a compatible prior code bundle and disables the optional
 checkpoint flag for new sessions. It must preserve mandatory action admission;
 never bypass that boundary to recover optional advice availability.
+
+Minimum rollback floor: Quattro `7e67898452fa821af18e88b871793466b90041f1`
+and Hermes `1a96ddf63a7099b741c00f054384c3b38a3b277f`. Retain their native
+worker ownership, safe host repository inspection and artifact-only native
+completion guards. Project validation remains pending without a separately
+authorized sandboxed test route; checkpoint advice never authorizes that route.
