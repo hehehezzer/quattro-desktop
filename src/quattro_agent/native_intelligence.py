@@ -404,7 +404,7 @@ def _trace_metadata(result: Mapping[str, Any]) -> dict[str, Any]:
 def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | None = None,
                       settings: NativeSettings | None = None,
                       telemetry: NativeTelemetry | None = None,
-                      decision_session: DecisionSession | None = None) -> dict[str, Any]:
+                      decision_session: DecisionSession | None = None, cacheable: bool = True) -> dict[str, Any]:
     """Run one allowlisted native advisory decision, or fail open locally."""
     context = context or NativeContext()
     settings = settings or load_native_settings()
@@ -468,10 +468,24 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
     owned_session = decision_session is None
     before = decision_session or DecisionSession(mode="COOPERATIVE", timeout_ms=settings.timeout_ms)
     try:
+        # Native adapters own different observation counters. They must not
+        # compete with the provider session's single monotonic sequence. Keep
+        # local checkpoint freshness independent from this transport revision.
+        binding = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+        previous_binding = getattr(before, "_native_request_binding", None)
+        session_revision = getattr(before, "revision", -1)
+        if (cacheable and previous_binding is not None and
+                previous_binding[0] == binding and previous_binding[1] == session_revision):
+            revision = session_revision
+        else:
+            revision = min(1_000_000, max(session_revision,
+                normalized["execution_state"]["revision"]) + 1)
+        before._native_request_binding = (binding, revision) if cacheable else None
+        normalized = dict(normalized, execution_state=dict(normalized["execution_state"], revision=revision))
         before_counts = before.snapshot().get("counts", {})
-        result = before.decide(normalized, cacheable=True)
+        result = before.decide(normalized, cacheable=cacheable)
         after_counts = before.snapshot().get("counts", {})
-        provider_attempted = int(after_counts.get("calls", 0)) > int(before_counts.get("calls", 0))
+        provider_attempted = result.get("called") is True
         cache_hit = bool(result.get("cache_hit")) or (
             int(after_counts.get("cache_hits", 0)) > int(before_counts.get("cache_hits", 0))
         )

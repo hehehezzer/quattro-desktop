@@ -16,6 +16,7 @@ from typing import Any
 
 from quattro_agent.native_intelligence import NativeContext, NativeTelemetry, load_native_settings
 from quattro_agent.decision_service import DecisionSession
+from quattro_agent.decision_checkpoint import envelope_schema
 from quattro_agent.shared_intelligence import call
 
 
@@ -72,9 +73,10 @@ def _decision_schema() -> dict[str, Any]:
 
 
 TOOLS = [
-    {"name": "operational_guard", "description": "Before side effects call preflight using boolean risk features; native permissions remain authoritative. For permitted RAG call rag. Report repeated failures/unchanged results with feedback and a locally computed SHA256 digest; after three identical failures Jev recommends a changed plan or owner escalation. Never submit commands, outputs, prompts, paths or source text. This MCP adapter does not automatically intercept tools: call it explicitly. Controlled Qiro workers use a separate mandatory relay boundary. Advice cannot authorize execution.",
+    {"name": "operational_guard", "description": "For explicit after-inspection or failure/no-progress advice, use operation checkpoint with the local versioned envelope. This is advisory and never blocks or authorizes a tool. Before side effects call preflight using boolean risk features; native permissions remain authoritative. For permitted RAG call rag. Report repeated failures/unchanged results with feedback and a locally computed SHA256 digest; after three identical failures Jev recommends a changed plan or owner escalation. Never submit commands, outputs, prompts, paths or source text. This MCP adapter does not automatically intercept tools: call it explicitly. Controlled Qiro workers use a separate mandatory relay boundary. Advice cannot authorize execution.",
      "inputSchema": {"type": "object", "properties": {
-         "operation": {"type": "string", "enum": ["preflight", "rag", "feedback", "task"]},
+         "operation": {"type": "string", "enum": ["preflight", "rag", "feedback", "task", "checkpoint"]},
+         "checkpoint": envelope_schema(),
          "features": {"type": "object", "properties": {name: {"type": "boolean"} for name in ("host_allowed", "owner_approved", "writes", "network", "destructive", "sensitive", "opaque", "retrieval_allowed", "context_missing", "evidence_sufficient", "transient")}, "additionalProperties": False},
          "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
          "outcome": {"type": "string", "enum": ["success", "failure", "test_failure", "unchanged"]}},

@@ -7,6 +7,7 @@ import uuid
 from .native_intelligence import (NativeContext, NativeTelemetry, load_native_settings,
                                   native_config_path, native_jev_advice)
 from .operational_advice import OperationalAdvisor
+from .decision_checkpoint import consult, validate_envelope
 
 _sessions = OrderedDict()
 _lock = threading.RLock()
@@ -20,7 +21,7 @@ def operational_enabled():
 
 
 def operational_call(arguments, *, context=None, decision_session=None):
-    if type(arguments) is not dict or set(arguments) - {"operation", "features", "fingerprint", "outcome"}:
+    if type(arguments) is not dict or set(arguments) - {"operation", "features", "fingerprint", "outcome", "checkpoint"}:
         raise ValueError("bounded operational request required")
     context = context or NativeContext()
     # Anonymous one-shot requests must never share loop history.
@@ -37,14 +38,22 @@ def operational_call(arguments, *, context=None, decision_session=None):
                     _sessions.popitem(last=False)
         advisor.enabled = enabled
         def evaluate(request):
-            # No artificial application call cap; identical-loop suppression
-            # below is a state guard rather than a provider usage budget.
-            if decision_session is not None:
-                decision_session.MAX_CALLS = float("inf")
-            return native_jev_advice(request, context=context, decision_session=decision_session)
+            return native_jev_advice(request, context=context, decision_session=decision_session,
+                                    cacheable=arguments.get("operation") != "checkpoint")
         advisor.evaluator = evaluate
-        result = advisor.handle(arguments.get("operation"), arguments.get("features", {}),
-                                fingerprint=arguments.get("fingerprint"), outcome=arguments.get("outcome"))
+        if arguments.get("operation") == "checkpoint":
+            envelope = validate_envelope(arguments.get("checkpoint"))
+            # External native callers cannot attest host provenance. This does
+            # not reduce permissions: checkpoint advice grants none.
+            envelope["state_provenance"] = "agent_asserted"
+            envelope["provenance"] = {k: "unknown" if v is None else "agent_asserted"
+                                      for k, v in envelope["features"].items()}
+            result = consult(envelope, evaluate, enabled=enabled)
+        else:
+            if "checkpoint" in arguments:
+                raise ValueError("checkpoint envelope on wrong operation")
+            result = advisor.handle(arguments.get("operation"), arguments.get("features", {}),
+                                    fingerprint=arguments.get("fingerprint"), outcome=arguments.get("outcome"))
     trace = "operation-" + uuid.uuid4().hex[:20]
     NativeTelemetry(enabled=settings.telemetry_enabled).record(
         kind="jev", stage="validated", status="ACCEPTED" if result["accepted"] else "FALLBACK",

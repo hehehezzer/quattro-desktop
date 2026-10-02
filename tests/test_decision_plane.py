@@ -403,22 +403,26 @@ runpy.run_path(WORKER,run_name='__main__')
             session.popen.assert_not_called()
         session = DecisionSession(mode="COOPERATIVE", credential=lambda: None, popen=mock.Mock())
         self.addCleanup(session.close)
-        self.assertEqual(session.decide(request())["evidence"], "missing_credential")
+        result = session.decide(request())
+        self.assertEqual(result["evidence"], "missing_credential")
+        self.assertFalse(result["called"])
+        self.assertEqual(result["provider_attempt"], "NOT_ATTEMPTED")
         session.popen.assert_not_called()
 
-    def test_budget_completion_and_telemetry(self):
+    def test_uncapped_completion_and_telemetry(self):
         session, _ = self.session()
         r = request("progress_strategy")
         r["execution_state"]["phase"] = "completion"
         result = session.decide(r)
         self.assertIn(result["selected_action"], ACTIONS["progress_strategy"])
-        session.MAX_CALLS = 1
-        self.assertEqual(session.decide(request(revision=1))["evidence"], "budget")
+        for revision in range(1, 101):
+            self.assertFalse(session.decide(request(revision=revision))["fallback_required"])
+        self.assertFalse(hasattr(session, "MAX_CALLS"))
         telemetry = session.snapshot()
         self.assertIsNone(telemetry["cost"])
         self.assertIsNone(telemetry["model_turns_avoided"])
-        self.assertEqual(telemetry["calls_by_type"], {"progress_strategy": 1})
-        self.assertEqual(telemetry["counts"]["input_tokens"], 20)
+        self.assertEqual(telemetry["calls_by_type"], {"progress_strategy": 1, "validation_strategy": 100})
+        self.assertEqual(telemetry["counts"]["input_tokens"], 2020)
         self.assertGreater(result["timing"]["blocking_ms"], 0)
         self.assertEqual(result["timing"]["useful_overlap_ms"], 0)
 

@@ -45,6 +45,7 @@ class OperationalAdvisor:
         self.busy = False
         self.memo = OrderedDict()
         self.revision = 0
+        self.checkpoints_enabled = False
 
     def handle(self, operation, features, *, fingerprint=None, outcome=None):
         if operation not in OPERATIONS or type(features) is not dict or set(features) - FLAGS:
@@ -62,12 +63,17 @@ class OperationalAdvisor:
         started = self.clock()
         result = dict(category=operation, eligible=False, requested=False, called=False,
                       accepted=False, applied=False, cached=False, recommendation="none", reason="disabled",
-                      latency_ms=0.0, provider_selected_option="UNKNOWN", provider_confidence="UNKNOWN",
+                      latency_ms=0.0, fallback_class="agent", provider_attempt="NOT_ATTEMPTED", provider_selected_option="UNKNOWN", provider_confidence="UNKNOWN",
                       acceptance_threshold=0.90, provider_evidence="UNKNOWN", rejection_reason="UNKNOWN")
         cache_key = (operation, tuple(sorted(features.items())))
         def finish(reason, recommendation="none"):
             result.update(reason=reason, recommendation=recommendation,
                           latency_ms=max(0.0, (self.clock() - started) * 1000))
+            result["fallback_class"] = (
+                "owner" if reason == "owner_required" or reason == "advice" and recommendation == "ask_owner" else
+                "policy" if reason in {"host_denied", "scope_denied", "provider_denial"} else
+                "dependency" if reason in {"timeout", "unavailable", "provider_fallback", "recursive"} else
+                "none" if result["accepted"] else "agent")
             if not result["accepted"] and result["rejection_reason"] == "UNKNOWN":
                 result["rejection_reason"] = reason
             elif result["accepted"]:
@@ -139,9 +145,10 @@ class OperationalAdvisor:
                        execution_state={"revision": self.revision, "phase": "inspection", "attempt": 0},
                        previous_result="test_failure" if outcome == "test_failure" else "unknown_failure" if operation == "feedback" else "none")
         result["requested"] = True
+        result["provider_attempt"] = "UNKNOWN"
         try:
             advice = self.evaluator(request)
-            fallback_recommendation = "ask_owner" if operation != "rag" else "narrow_retrieval"
+            fallback_recommendation = "defer_to_agent" if operation == "task" else "ask_owner" if operation != "rag" else "narrow_retrieval"
             if type(advice) is not dict:
                 return finish("malformed_output", fallback_recommendation)
             evidence = advice.get("evidence")
@@ -150,6 +157,8 @@ class OperationalAdvisor:
             usage = advice.get("usageEvidence")
             usage = usage if type(usage) is dict else {}
             result["called"] = advice.get("called", usage.get("providerAttempted", False)) is True
+            attempt = advice.get("provider_attempt", "CONFIRMED" if result["called"] else "UNKNOWN")
+            result["provider_attempt"] = attempt if type(attempt) is str and attempt in {"CONFIRMED", "NOT_ATTEMPTED", "UNKNOWN"} else "UNKNOWN"
             confidence = advice.get("confidence")
             action = advice.get("selected_action")
             provider_action = advice.get("provider_selected_action", action)
@@ -184,8 +193,8 @@ class OperationalAdvisor:
                 recommendation = "ask_owner"
             return finish("advice", recommendation)
         except TimeoutError:
-            return finish("timeout", "ask_owner" if operation != "rag" else "narrow_retrieval")
+            return finish("timeout", "defer_to_agent" if operation == "task" else "ask_owner" if operation != "rag" else "narrow_retrieval")
         except Exception:
-            return finish("unavailable", "ask_owner" if operation != "rag" else "narrow_retrieval")
+            return finish("unavailable", "defer_to_agent" if operation == "task" else "ask_owner" if operation != "rag" else "narrow_retrieval")
         finally:
             self.busy = False
