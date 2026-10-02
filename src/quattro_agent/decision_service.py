@@ -26,7 +26,6 @@ class DecisionSession:
     # Resource ceilings, not claimed optimal latency/quality thresholds. The
     # request timeout and 0.90 confidence floor retain the routing experiment's
     # existing conservative bounds. No 25 ms wait default is introduced.
-    MAX_CALLS = 64
     MIN_CONFIDENCE = 0.90
     TEST_RECOVERY_MIN_CONFIDENCE = 0.65  # One bounded host test action; required validation still runs.
 
@@ -279,6 +278,14 @@ class DecisionSession:
                 self._count(name, timing[name])
         timing["timeline_ms"] = {name: (value - started) * 1000 for name, value in observed.items()}
         result["timing"] = timing
+        # Supervised attempts include credential/startup failures; they are not
+        # provider calls. Ambiguous transport timeouts remain explicitly unknown.
+        confirmed = "provider_request_started" in observed or (
+            "answer_received" in observed and result.get("evidence") in
+            {"native_choice_probabilities", "hard_policy", "uncertain"})
+        result["called"] = confirmed and not result.get("cache_hit", False)
+        result["provider_attempt"] = ("CONFIRMED" if result["called"] else
+            "UNKNOWN" if "request_sent" in observed and not result.get("cache_hit") else "NOT_ATTEMPTED")
         with self.metrics_lock:
             self.last_timing = dict(timing)
         self._count("blocking_ms", elapsed)
@@ -324,10 +331,6 @@ class DecisionSession:
             if self.cooldown.suppressed(self.cooldown_key):
                 self._count("skipped")
                 result = self._fallback("circuit_open")
-                return result
-            if self.calls >= self.MAX_CALLS:
-                self._count("skipped")
-                result = self._fallback("budget")
                 return result
             self.calls += 1
             with self.metrics_lock:
@@ -406,6 +409,9 @@ class DecisionSession:
                               "probabilities": answer["probabilities"]}
                     self.cache = (encoded, dict(result)) if cacheable else None
                 trace["decision_validated"] = time.perf_counter()
+                # Keep only the validated categorical provider choice, even
+                # when host policy rejects it. Never retain raw provider text.
+                result["provider_selected_action"] = action
                 result["confidence"] = answer["confidence"]
                 result["probabilities"] = answer["probabilities"]
                 result["timing"] = {"rtt_ms": timing["jev_latency_ms"],

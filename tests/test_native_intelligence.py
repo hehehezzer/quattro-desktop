@@ -72,7 +72,7 @@ class NativeIntelligenceTests(unittest.TestCase):
             def decide(self, _request, **_kwargs):
                 self.counts["calls"] += 1
                 return {
-                    "selected_action": "retrieve", "confidence": 0.98,
+                    "selected_action": "retrieve", "confidence": 0.98, "called": True,
                     "evidence": "native_choice_probabilities", "fallback_required": False,
                     "probabilities": {"retrieve": 0.98, "agent": 0.02},
                     "timing": {"worker_roundtrip_ms": 12.0},

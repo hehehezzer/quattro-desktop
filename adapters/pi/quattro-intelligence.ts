@@ -1,9 +1,22 @@
 /** Native Pi tools and lifecycle-owned advisory integration. */
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+// Snapshot the exact opt-in for each new extension session; model output cannot set it.
+function checkpointsEnabled(): boolean {
+  if (process.env.QUATTRO_JEV_CHECKPOINTS !== undefined) return process.env.QUATTRO_JEV_CHECKPOINTS === "1";
+  const path = process.env.QUATTRO_NATIVE_INTELLIGENCE_CONFIG ||
+    join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "quattro", "native-intelligence.json");
+  try { return JSON.parse(readFileSync(path, "utf8")).checkpointsEnabled === true; }
+  catch { return false; }
+}
+const CHECKPOINTS = checkpointsEnabled();
 const MANAGED = process.env.QUATTRO_MANAGED_SESSION === "1";
 const DECISION_TYPES = ["context_strategy", "execution_strategy", "validation_strategy", "retry_strategy", "progress_strategy"] as const;
 
@@ -381,6 +394,113 @@ export default function (pi: ExtensionAPI) {
   );
 
   if (!MANAGED) {
+    // Supported Pi tool boundaries. Never submit input/output text to Jev.
+    const loopAdvice = new Map<string, string>();
+    const lastOutput = new Map<string, string>();
+    const lastFailure = new Map<string, string>();
+    const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    const internalTools = new Set(["operational_decision", "operational_guard", "rtk_status", "native_event", "search_knowledge"]);
+    pi.on("tool_call", async (event, ctx) => {
+      if (sessionPreference === false || internalTools.has(event.toolName)) return;
+      const key = digest([event.toolName, event.input]);
+      if (loopAdvice.has(key)) return { block: true, reason: loopAdvice.get(key) };
+      const knownRead = ["read", "grep", "find", "ls"].includes(event.toolName);
+      if (knownRead) return;
+      const retrieval = event.toolName === "search_knowledge";
+      const inputPath = String((event.input as any)?.path || "");
+      const sensitive = /(?:^|[\/])(?:\.env(?:\..*)?|auth\.json|credentials|id_rsa|id_ed25519|token)(?:$|[\/])/i.test(inputPath);
+      const result = await run("operational_guard", {
+        operation: retrieval ? "rag" : "preflight",
+        features: retrieval ? { retrieval_allowed: true, context_missing: true } : {
+          host_allowed: true, owner_approved: false,
+          writes: ["edit", "write"].includes(event.toolName), sensitive,
+          opaque: !["edit", "write"].includes(event.toolName),
+        },
+      }, ctx, `preflight-${event.toolCallId}`);
+      const advice = result.value;
+      if (!result.ok) return { block: true, reason: "Operational preflight unavailable; pause or revise within existing permissions." };
+      if (advice.reason === "disabled") return;
+      if (retrieval) {
+        if (["stop_retrieval", "stop", "ask_owner"].includes(advice.recommendation))
+          return { block: true, reason: `Jev retrieval advice: ${advice.recommendation}. No scope expansion permitted.` };
+        // Query remains local; Jev cannot invent a query or authorize sources.
+        return;
+      }
+      if (advice.recommendation !== "proceed") {
+        await mark(ctx, "jev", "action_applied", "BLOCKED", advice.traceId,
+          { hostBoundary: "tool_call", reason: "conservative_preflight", modelReliance: "UNKNOWN" });
+        const next = advice.fallback_class === "dependency" ? "required advice unavailable; pause or retry later" :
+          advice.fallback_class === "agent" ? "revise the plan within existing permissions" : "revise safely or request the required owner decision";
+        return { block: true, reason: `Jev preflight: ${next}. This is not permission.` };
+      }
+    });
+    pi.on("tool_result", async (event, ctx) => {
+      if (sessionPreference === false || internalTools.has(event.toolName)) return;
+      const key = digest([event.toolName, event.input]);
+      const output = digest(event.content);
+      const previous = lastOutput.get(key);
+      lastOutput.set(key, output);
+      if (lastOutput.size > 256) lastOutput.delete(lastOutput.keys().next().value!);
+      const fingerprint = digest([key, event.isError ? "failed_tool_signature" : output]);
+      if (event.isError) {
+        lastFailure.set(key, fingerprint);
+        if (lastFailure.size > 256) lastFailure.delete(lastFailure.keys().next().value!);
+      } else if (previous !== output && lastFailure.has(key)) {
+        await run("operational_guard", { operation: "feedback", features: {},
+          fingerprint: lastFailure.get(key), outcome: "success" }, ctx, `progress-${event.toolCallId}`);
+        lastFailure.delete(key);
+      }
+      const result = await run("operational_guard", {
+        operation: "feedback", features: { context_missing: false }, fingerprint,
+        outcome: event.isError ? "failure" : previous === output ? "unchanged" : "success",
+      }, ctx, `feedback-${event.toolCallId}`);
+      const advice = result.value;
+      if (result.ok && ["change_plan", "ask_owner"].includes(advice.recommendation)) {
+        await mark(ctx, "jev", "action_applied", "APPLIED", advice.traceId,
+          { hostBoundary: "tool_result", reason: "loop_repeat_block", modelReliance: "UNKNOWN" });
+        loopAdvice.set(key, `Repeated no-progress tool use stopped. Jev: ${advice.recommendation}; change the plan or ask owner.`);
+        if (loopAdvice.size > 256) loopAdvice.delete(loopAdvice.keys().next().value!);
+        return { content: [...event.content, { type: "text" as const,
+          text: `Operational loop intervention: ${advice.recommendation}. Do not repeat the same tool input; choose a different bounded plan/context/validation or ask owner. Native permissions remain authoritative.` }] };
+      }
+    });
+    // Optional result checkpoints do not block tools or alter legacy gates.
+    let checkpointEpoch = 0;
+    let checkpointRevision = 0;
+    let checkpointInspected = false;
+    let checkpointPhase = "inspection";
+    const checkpointRepeats = new Map<string, number>();
+    pi.on("tool_result", async (event, ctx) => {
+      if (!CHECKPOINTS || sessionPreference === false || internalTools.has(event.toolName)) return;
+      const epoch = checkpointEpoch;
+      const revision = checkpointRevision = Math.min(1_000_000, checkpointRevision + 1);
+      if (["edit", "write"].includes(event.toolName)) checkpointPhase = "implementation";
+      const signature = digest([event.toolName, event.input, event.isError ? "failure" : event.content]);
+      const repeats = (checkpointRepeats.get(signature) || 0) + 1;
+      checkpointRepeats.set(signature, repeats);
+      if (checkpointRepeats.size > 256) checkpointRepeats.delete(checkpointRepeats.keys().next().value!);
+      let checkpoint: string;
+      if (event.isError || repeats === 3) checkpoint = "failure_no_progress";
+      else if (!checkpointInspected && ["read", "grep", "find", "ls"].includes(event.toolName)) {
+        checkpointInspected = true; checkpoint = "after_inspection";
+      } else return;
+      const result = await run("operational_guard", { operation: "checkpoint", features: {}, checkpoint: {
+        schema_version: "quattro-checkpoint-v1", checkpoint,
+        scope_id: "native-pi-session", policy_revision: "existing-scope", state_revision: revision,
+        phase: checkpointPhase, attempt: Math.min(100, repeats - 1),
+        previous_result: event.isError ? "unknown_failure" : "success",
+        state_provenance: "agent_asserted", features: { repository_required: true },
+        provenance: { repository_required: "agent_asserted" },
+      } }, ctx, `checkpoint-${event.toolCallId}`);
+      if (checkpointEpoch !== epoch || checkpointRevision !== revision || !result.ok) return;
+      const advice = result.value;
+      if (!["continue_plan", "validate_first", "gather_context", "change_plan", "defer_to_agent"].includes(advice?.recommendation)) return;
+      await mark(ctx, "jev", "advice_delivered", "UNVERIFIED", advice.traceId,
+        { hostBoundary: "tool_result_callback", contextAssembled: true, modelReliance: "UNKNOWN" });
+      return { content: [...event.content, { type: "text" as const,
+        text: `Optional checkpoint advice: ${advice.recommendation}. This grants no permission and proves no completion.` }] };
+    });
+
     sharedTool(
       "operational_decision", "Jev operational advice",
       "Use once at a meaningful non-trivial operational milestone for bounded Jev advice about context, sequencing, validation order, retry strategy, or progress. Prefer this over extended operational deliberation, but skip trivial or deterministic decisions. Advice never grants permissions, selects a model, runs commands, grants retries, or proves completion; the native host remains authoritative.",
@@ -396,6 +516,12 @@ export default function (pi: ExtensionAPI) {
     );
 
     pi.on("session_start", async (_event, ctx) => {
+      checkpointEpoch += 1;
+      checkpointRevision = 0; checkpointInspected = false; checkpointPhase = "inspection";
+      checkpointRepeats.clear();
+      loopAdvice.clear();
+      lastOutput.clear();
+      lastFailure.clear();
       sessionPreference = preferenceFromBranch(ctx);
       jevDisplayState = "ready";
       setStatus(ctx);
