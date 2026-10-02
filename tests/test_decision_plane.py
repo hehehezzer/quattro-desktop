@@ -197,7 +197,10 @@ runpy.run_path(WORKER,run_name='__main__')
 
     def test_low_confidence_and_hard_policy_fall_back(self):
         session, _ = self.session(confidence=0.4)
-        self.assertEqual(session.decide(request())["evidence"], "uncertain")
+        result = session.decide(request())
+        self.assertEqual(result["evidence"], "uncertain")
+        self.assertEqual(result["provider_selected_action"], "targeted_first")
+        self.assertEqual(result["confidence"], .4)
         session2, _ = self.session()
         self.assertEqual(session2.decide(request("retry_strategy"))["evidence"], "hard_policy")
 

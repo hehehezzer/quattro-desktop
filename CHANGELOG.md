@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add categorical operational preflight, scoped retrieval advice and repeated-failure
+  recovery telemetry for native adapters. Keep host permissions and model plans
+  authoritative; standalone Codex MCP advice remains explicit.
+- Document the separate controlled Qiro worker relay and its limited tool coverage.
+
 All notable Quattro orchestration changes are documented here.
 
 ## Unreleased

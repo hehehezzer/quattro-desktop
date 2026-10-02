@@ -22,10 +22,12 @@ class SharedIntelligenceTests(unittest.TestCase):
         self.addCleanup(self._telemetry.cleanup)
         self._telemetry_env = mock.patch.dict(
             os.environ,
-            {"QUATTRO_NATIVE_TELEMETRY_DB": str(pathlib.Path(self._telemetry.name) / "native.sqlite3")},
+            {"QUATTRO_NATIVE_TELEMETRY_DB": str(pathlib.Path(self._telemetry.name) / "native.sqlite3"),
+             "QUATTRO_NATIVE_INTELLIGENCE_CONFIG": str(pathlib.Path(self._telemetry.name) / "native.json")},
         )
         self._telemetry_env.start()
         self.addCleanup(self._telemetry_env.stop)
+        pathlib.Path(self._telemetry.name, 'native.json').write_text('{"enabled":true,"operationalEnabled":false}')
 
     def test_trivial_prompt_skips_database_and_context(self) -> None:
         with mock.patch.object(shared, "RetrievalStore", side_effect=AssertionError("opened")):
@@ -58,7 +60,7 @@ class SharedIntelligenceTests(unittest.TestCase):
 
     def test_mcp_discovers_only_shared_tools(self) -> None:
         names = {item["name"] for item in handle({"id": 1, "method": "tools/list"})["result"]["tools"]}
-        self.assertEqual(names, {"search_knowledge", "rtk_status", "rtk_run", "refresh_history", "operational_decision"})
+        self.assertEqual(names, {"search_knowledge", "rtk_status", "rtk_run", "refresh_history", "operational_decision", "operational_guard"})
         self.assertFalse(any("route" in name or "delegate" in name for name in names))
         response = handle({"id": 2, "method": "tools/call",
                            "params": {"name": "search_knowledge", "arguments": {"query": "what is 2 times 3"}}})

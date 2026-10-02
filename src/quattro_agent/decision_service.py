@@ -406,6 +406,9 @@ class DecisionSession:
                               "probabilities": answer["probabilities"]}
                     self.cache = (encoded, dict(result)) if cacheable else None
                 trace["decision_validated"] = time.perf_counter()
+                # Keep only the validated categorical provider choice, even
+                # when host policy rejects it. Never retain raw provider text.
+                result["provider_selected_action"] = action
                 result["confidence"] = answer["confidence"]
                 result["probabilities"] = answer["probabilities"]
                 result["timing"] = {"rtt_ms": timing["jev_latency_ms"],
