@@ -95,7 +95,7 @@ PanelWindow {
 
     onHoveredSystemStatChanged: root.positionSystemStatsPopup()
 
-    function resetCountdown(window) {
+    function resetCountdown(window, saved) {
         if (!window || window.resetAt === undefined || window.resetAt === null)
             return "Reset time unavailable"
 
@@ -107,7 +107,7 @@ PanelWindow {
 
         const totalMinutes = Math.max(0, Math.ceil((resetMs - root.countdownNow) / 60000))
         if (totalMinutes === 0)
-            return "Resets now"
+            return saved ? "Reset passed" : "Resets now"
 
         const days = Math.floor(totalMinutes / 1440)
         const hours = Math.floor((totalMinutes % 1440) / 60)
@@ -131,7 +131,7 @@ PanelWindow {
     function usageWindows(usageValue) {
         const usage = usageValue || root.agentUsage || {}
         return [usage.primary, usage.secondary].filter(window =>
-            window && window.usedPercent !== undefined && window.resetAt !== undefined
+            window && typeof window.usedPercent === "number" && isFinite(window.usedPercent)
         )
     }
 
@@ -570,14 +570,14 @@ PanelWindow {
                 anchors.centerIn: parent
                 text: {
                     const usage = root.agentUsage || {}
-                    const windows = [usage.primary, usage.secondary].filter(window =>
-                        window && window.usedPercent !== undefined
-                    )
+                    const windows = root.usageWindows(usage)
+                    if (usage.authenticationRequired)
+                        return "󰚩 Sign in"
                     if (windows.length === 0)
                         return "󰚩 --"
                     return "󰚩 " + windows.map(window =>
                         (window.label || "Usage") + " " + Math.round(100 - window.usedPercent) + "%"
-                    ).join("  ")
+                    ).join("  ") + (usage.stale ? " · saved" : "")
                 }
                 color: root.agentUsage && root.agentUsage.stale
                     ? QuattroTheme.Theme.warning
@@ -844,8 +844,8 @@ PanelWindow {
         anchor.window: root
         anchor.rect.x: Math.round(agentUsageButton.mapToItem(root.contentItem, 0, 0).x + agentUsageButton.width - implicitWidth)
         anchor.rect.y: root.implicitHeight + 4
-        implicitWidth: 122
-        implicitHeight: Math.max(24, root.usageWindowList.length * 15 + 8)
+        implicitWidth: 220
+        implicitHeight: agentUsagePopupContent.implicitHeight + 16
 
         Rectangle {
             anchors.fill: parent
@@ -857,14 +857,25 @@ PanelWindow {
             Column {
                 id: agentUsagePopupContent
                 anchors.centerIn: parent
-                spacing: 1
+                width: parent.width - 16
+                spacing: 4
+
+                Text {
+                    width: parent.width
+                    text: root.agentUsage.message || (root.usageWindowList.length ? "Current usage limits" : "Usage limits unavailable")
+                    color: root.agentUsage.stale ? QuattroTheme.Theme.warning : QuattroTheme.Theme.text
+                    font.family: root.fontFamily
+                    font.pixelSize: 10
+                    wrapMode: Text.Wrap
+                }
 
                 Repeater {
                     model: root.usageWindowList
 
                     delegate: Text {
                         required property var modelData
-                        text: (modelData.label || "Usage") + " · " + root.resetCountdown(modelData).replace("Resets in ", "")
+                        text: (root.agentUsage.stale ? "Saved " : "") + (modelData.label || "Usage") + " · "
+                            + root.resetCountdown(modelData, root.agentUsage.stale).replace("Resets in ", "")
                         color: QuattroTheme.Theme.text
                         font.family: root.fontFamily
                         font.pixelSize: 10
