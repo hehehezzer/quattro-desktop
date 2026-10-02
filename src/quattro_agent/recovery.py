@@ -100,7 +100,7 @@ def divergence(recorded: Mapping[str, Any], current: Mapping[str, Any]) -> list[
             )
     recorded_paths = set(recorded.get("changedPaths") or [])
     current_paths = set(current.get("changedPaths") or [])
-    if recorded_paths != current_paths:
+    if current.get("dirty") is not None and recorded_paths != current_paths:
         added = sorted(current_paths - recorded_paths)
         removed = sorted(recorded_paths - current_paths)
         detail = []

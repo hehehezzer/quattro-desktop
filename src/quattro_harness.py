@@ -4700,6 +4700,7 @@ class HarnessRuntime:
 
     def retry(self, task_id: str) -> None:
         task = self.store.get_task(task_id, include_private=True)
+        self._assert_task_execution_owner(task)
         state = TaskState(task["state"])
         if state not in {TaskState.FAILED, TaskState.TIMED_OUT, TaskState.INTERRUPTED, TaskState.BLOCKED}:
             raise StateTransitionError(f"task is not retryable from {state.value}")

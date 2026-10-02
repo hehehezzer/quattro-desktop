@@ -1931,6 +1931,21 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
             self.runtime.spawn_worker(task_id)
         spawn.assert_not_called()
 
+    def test_native_retry_rejects_before_state_or_payload_mutation(self):
+        task_id = self.runtime.create_task(
+            agent="codex", project=self.project, prompt="synthetic retry", mode="prompt"
+        )
+        self.runtime.store.claim_task_for_run(task_id, agent="codex", account_id="account-1")
+        self.runtime.store.transition_task(task_id, TaskState.FAILED)
+        private = self.runtime.store.get_task(task_id, include_private=True)["private_payload"]
+        self.runtime.store.update_private_payload(task_id, dict(private, nativeGrant={"synthetic": True}))
+        before = self.runtime.store.get_task(task_id, include_private=True)
+        with mock.patch.object(self.runtime, "spawn_worker") as spawn:
+            with self.assertRaises(PermissionError):
+                self.runtime.retry(task_id)
+            spawn.assert_not_called()
+        self.assertEqual(self.runtime.store.get_task(task_id, include_private=True), before)
+
     def test_abandoned_atomic_claim_is_recovered_for_retry(self):
         task_id = self.runtime.create_task(
             agent="codex", project=self.project, prompt="recover", mode="prompt"

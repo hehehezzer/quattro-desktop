@@ -41,8 +41,9 @@ install terminal-close signal handlers. A scoped integration must validate its
 grant and boundary before claiming; it cannot use the generic adapter as fallback.
 
 Repository status probes used for coordination, checkpoints and retrieval
-metadata disable Git filesystem-monitor hooks explicitly. Repository
-configuration must not turn a metadata query into host code execution.
+metadata disable Git filesystem-monitor hooks explicitly. Ordinary status
+probes may still execute configured clean filters; disabling fsmonitor does not
+make those probes safe for untrusted native repository content.
 
 The controlled native lifecycle scopes host repository metadata to identity
 queries only. Git status and diff may execute repository clean filters, so they

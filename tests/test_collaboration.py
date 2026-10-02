@@ -211,5 +211,15 @@ class CollaborationTests(unittest.TestCase):
         self.assertEqual(coordinator.status()["global"], {"active": 3, "limit": 5})
 
 
+
+class RecoveryUnknownStateTests(unittest.TestCase):
+    def test_unknown_dirty_state_does_not_report_paths_removed(self):
+        from quattro_agent.recovery import divergence
+        recorded = {"exists": True, "branch": "main", "head": "same", "dirty": True, "changedPaths": ["a"]}
+        current = dict(recorded, dirty=None, changedPaths=[])
+        self.assertEqual(divergence(recorded, current), [])
+        self.assertTrue(divergence(recorded, dict(current, dirty=False)))
+
+
 if __name__ == "__main__":
     unittest.main()
