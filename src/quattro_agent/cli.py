@@ -1209,7 +1209,13 @@ def normalize_window(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     used = value.get("usedPercent")
-    if isinstance(used, bool) or not isinstance(used, (int, float)) or not math.isfinite(used):
+    if isinstance(used, bool) or not isinstance(used, (int, float)):
+        return None
+    try:
+        percentage = float(used)
+    except OverflowError:
+        return None
+    if not math.isfinite(percentage):
         return None
     duration = value.get("windowDurationMins") if isinstance(value.get("windowDurationMins"), int) else None
     if duration == 300:
@@ -1223,7 +1229,7 @@ def normalize_window(value: Any) -> dict[str, Any] | None:
     else:
         label = "Usage"
     return {
-        "usedPercent": max(0, min(100, round(float(used), 1))),
+        "usedPercent": max(0, min(100, round(percentage, 1))),
         "resetAt": value.get("resetsAt") if isinstance(value.get("resetsAt"), int) else None,
         "windowMinutes": duration,
         "label": label,

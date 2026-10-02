@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import json
 import shutil
 import subprocess
@@ -106,6 +107,27 @@ console.log(JSON.stringify([
             "Reset passed", "Reset passed", "Resets now", "Resets in 10m",
         ])
         self.assertIn("root.resetCountdown(modelData, root.agentUsage.stale)", bar)
+
+    @unittest.skipUnless(shutil.which("node"), "Requires Node for QML JavaScript contract")
+    def test_usage_refresh_waits_for_displayed_account_after_switch(self):
+        match = re.search(r'enabled: ([^\n]+)\n\s+onClicked: root.invoke\(\["usage", "refresh"', self.qml)
+        self.assertIsNotNone(match)
+        script = '''
+function enabled(activeAccount, usage, running = false) {
+    const root = {dashboard: {activeAccount, usage}, object: value => value || {}};
+    const actionProcess = {running};
+    return ''' + match.group(1) + ''';
+}
+console.log(JSON.stringify([
+    enabled("account-1", undefined),
+    enabled("account-2", {accountId: "account-1"}),
+    enabled("account-2", {accountId: "account-2"}),
+    enabled("account-2", {accountId: "account-2"}, true),
+    enabled("", {})
+]));
+'''
+        result = subprocess.run(["node", "-e", script], text=True, capture_output=True, timeout=5, check=True)
+        self.assertEqual(json.loads(result.stdout), [False, False, True, False, False])
 
 
 class UsageServiceHardeningTests(unittest.TestCase):

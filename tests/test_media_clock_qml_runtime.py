@@ -128,7 +128,11 @@ ShellRoot {
                         return subprocess.run(args, env=env, text=True, capture_output=True, timeout=3)
 
                     def state():
-                        result = run("qs", "-p", str(root), "ipc", "call", "clockTest", "state")
+                        try:
+                            result = run("qs", "-p", str(root), "ipc", "call", "clockTest", "state")
+                        except subprocess.TimeoutExpired:
+                            log.seek(0)
+                            self.fail("Clock IPC timed out: " + log.read()[-2500:])
                         return json.loads(result.stdout) if result.returncode == 0 else {}
 
                     def wait_for(predicate, timeout=5):

@@ -711,7 +711,7 @@ Scope {
                             Item { Layout.fillWidth: true }
                             ActionButton {
                                 label: actionProcess.running && root.actionKind === "usage" ? "Refreshing…" : "Refresh limits"
-                                enabled: !actionProcess.running && !!root.dashboard.activeAccount
+                                enabled: !actionProcess.running && !!root.dashboard.activeAccount && root.object(root.dashboard.usage).accountId === root.dashboard.activeAccount
                                 onClicked: root.invoke(["usage", "refresh", "--account", root.dashboard.activeAccount], "usage")
                             }
                         }

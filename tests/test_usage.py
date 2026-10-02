@@ -591,7 +591,7 @@ class UsageDisplayStateTests(unittest.TestCase):
                 self.assertFalse(value["authenticationRequired"])
 
     def test_missing_and_non_finite_percentages_are_unavailable(self):
-        for used in (None, True, False, "0", float("nan"), float("inf"), -float("inf")):
+        for used in (None, True, False, "0", float("nan"), float("inf"), -float("inf"), 10 ** 400, -(10 ** 400)):
             with self.subTest(used=used):
                 self.assertIsNone(agent.normalize_window({"usedPercent": used}))
                 self.save("account-1.json", {**self.good, "primary": {"usedPercent": used}})
