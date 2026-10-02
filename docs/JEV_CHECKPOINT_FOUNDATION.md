@@ -1,7 +1,6 @@
 # Jev checkpoint foundation
 
-Implementation only; production configuration and activation are unchanged.
-The new automatic checkpoints are dormant. There is no new public endpoint,
+Automatic checkpoints default off and require the explicit activation controls below. There is no new public endpoint,
 MCP tool, executable tool scope, validation runner or permission grant.
 
 ## Contract and coverage
@@ -22,8 +21,8 @@ requests owner permission merely because the provider is uncertain.
 | Surface | Implemented boundary | Activation / evidence |
 | --- | --- | --- |
 | Native Codex | Existing `operational_guard`, operation `checkpoint` | Explicit invocation with envelope; no automatic hook claim |
-| Native Pi | Tool-result extension and shared helper | New-session `QUATTRO_JEV_CHECKPOINTS=1`, default absent/off; no setting changed by this patch |
-| Qiro Codex/Pi | Host result receipt, optional instruction assembly | `advisor.checkpoints_enabled` defaults false; activation intentionally not wired to existing grants |
+| Native Pi | Tool-result extension and shared helper | New-session `checkpointsEnabled: true` or `QUATTRO_JEV_CHECKPOINTS=1`; default off |
+| Qiro Codex/Pi | Host result receipt, optional instruction assembly | Exact private `jev_checkpoints_approved: true`; existing live/operational grants still required |
 | Lumi | Existing `consult_task.py --checkpoint JSON` | Default preview; existing explicit `--live` grant required for a consultation |
 
 For Codex, include `features: {}` alongside the checkpoint envelope. Pi records
@@ -84,7 +83,7 @@ when uncertain. No live paid run or private task replay is authorized by this sc
 
 Apply scoped changes on the agreed integration branch; do not publish unrelated
 feature-branch ancestry. Ship paired shared/host contract copies together and
-reload only idle sessions. Automatic activation remains a separate decision.
+reload only idle sessions. Activate only under explicit owner approval.
 
 The deployment inventory includes `decision_checkpoint.py`, `operational_advice.py`
 and `operational_native.py`. The merged-main integration carries a separate
@@ -101,3 +100,13 @@ and Hermes `1a96ddf63a7099b741c00f054384c3b38a3b277f`. Retain their native
 worker ownership, safe host repository inspection and artifact-only native
 completion guards. Project validation remains pending without a separately
 authorized sandboxed test route; checkpoint advice never authorizes that route.
+
+## Approved checkpoint activation controls
+
+Qiro reads the exact boolean `jev_checkpoints_approved` from its private host
+policy when constructing the existing mandatory action advisor. Existing live
+and operational approvals remain required. Native Pi reads the exact boolean
+`checkpointsEnabled` from native-intelligence.json at extension load; an explicit
+`QUATTRO_JEV_CHECKPOINTS=0` disables it and `=1` enables it for that process.
+Both controls enable only after_inspection and failure_no_progress advice.
+Reload idle sessions after changes. Native Codex/Lumi remain explicit callers.

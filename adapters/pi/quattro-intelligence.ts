@@ -1,12 +1,22 @@
 /** Native Pi tools and lifecycle-owned advisory integration. */
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-// Dormant unless an explicitly approved new session opts in.
-const CHECKPOINTS = process.env.QUATTRO_JEV_CHECKPOINTS === "1";
+// Snapshot the exact opt-in for each new extension session; model output cannot set it.
+function checkpointsEnabled(): boolean {
+  if (process.env.QUATTRO_JEV_CHECKPOINTS !== undefined) return process.env.QUATTRO_JEV_CHECKPOINTS === "1";
+  const path = process.env.QUATTRO_NATIVE_INTELLIGENCE_CONFIG ||
+    join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "quattro", "native-intelligence.json");
+  try { return JSON.parse(readFileSync(path, "utf8")).checkpointsEnabled === true; }
+  catch { return false; }
+}
+const CHECKPOINTS = checkpointsEnabled();
 const MANAGED = process.env.QUATTRO_MANAGED_SESSION === "1";
 const DECISION_TYPES = ["context_strategy", "execution_strategy", "validation_strategy", "retry_strategy", "progress_strategy"] as const;
 

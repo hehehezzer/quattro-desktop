@@ -14,12 +14,19 @@ JITI = BUNDLE / "node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/
 @unittest.skipUnless(JITI.is_file() and (BUNDLE / "bin/node").is_file(), "set QUATTRO_TEST_NATIVE_BUNDLE for audited Pi fixture dependencies")
 class PiCheckpointTests(unittest.TestCase):
     def test_100_distinct_real_callbacks_and_helper_projection(self):
+        self._callbacks(config_enabled=False, environment="1")
+
+    def test_persisted_opt_in_and_explicit_environment_disable(self):
+        self._callbacks(config_enabled=True, environment=None)
+        self._callbacks(config_enabled=True, environment="0", expected=0)
+
+    def _callbacks(self, *, config_enabled, environment, expected=100):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             stub = root / "typebox.cjs"
             stub.write_text("exports.Type = new Proxy({}, { get: () => (...args) => ({}) });")
             config = root / "native.json"
-            config.write_text('{"enabled":true,"operationalEnabled":true}')
+            config.write_text(json.dumps(dict(enabled=True, operationalEnabled=True, checkpointsEnabled=config_enabled)))
             helper = root / "quattro-intelligence"
             helper.write_text('''#!/usr/bin/python3
 import json,sys
@@ -50,17 +57,22 @@ jiti(process.argv[3]).default(pi);
     content:[{type:'text',text:'synthetic-'+i}]};
   const replies=[];
   for(const cb of hooks.tool_result) {const r=await cb(event,ctx);if(r) replies.push(r);}
-  assert.equal(replies.filter(r=>r.content?.some(p=>p.text?.startsWith('Optional checkpoint advice:'))).length,1);
+  assert.equal(replies.filter(r=>r.content?.some(p=>p.text?.startsWith('Optional checkpoint advice:'))).length,Number(process.env.EXPECT_CHECKPOINTS));
  }
  console.log('100 Pi callbacks and shared-helper consultations passed');
 } finally {for(const cb of hooks.session_shutdown) await cb({},ctx);}})().catch(e=>{console.error(e);process.exitCode=1});
 ''')
-            env = {"PATH": str(root), "HOME": str(root), "QUATTRO_JEV_CHECKPOINTS": "1",
+            env = {"PATH": str(root), "HOME": str(root), "EXPECT_CHECKPOINTS": "1" if expected else "0",
                    "QUATTRO_NATIVE_INTELLIGENCE_CONFIG": str(config), "QUATTRO_NATIVE_TELEMETRY_DB": str(root / "trace.sqlite3")}
+            if environment is not None:
+                env["QUATTRO_JEV_CHECKPOINTS"] = environment
             result = subprocess.run([str(BUNDLE / "bin/node"), str(runner), str(JITI),
                 str(ROOT / "adapters/pi/quattro-intelligence.ts"), str(stub)], cwd=root, env=env,
                 capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
+            if not expected:
+                self.assertFalse((root / "requests.jsonl").exists())
+                return
             requests = [json.loads(line) for line in (root / "requests.jsonl").read_text().splitlines()]
             self.assertEqual(len(requests), 100)
             self.assertEqual(len({r["execution_state"]["revision"] for r in requests}), 100)
