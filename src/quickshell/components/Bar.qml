@@ -95,7 +95,7 @@ PanelWindow {
 
     onHoveredSystemStatChanged: root.positionSystemStatsPopup()
 
-    function resetCountdown(window) {
+    function resetCountdown(window, saved) {
         if (!window || window.resetAt === undefined || window.resetAt === null)
             return "Reset time unavailable"
 
@@ -107,7 +107,7 @@ PanelWindow {
 
         const totalMinutes = Math.max(0, Math.ceil((resetMs - root.countdownNow) / 60000))
         if (totalMinutes === 0)
-            return "Resets now"
+            return saved ? "Reset passed" : "Resets now"
 
         const days = Math.floor(totalMinutes / 1440)
         const hours = Math.floor((totalMinutes % 1440) / 60)
@@ -875,8 +875,7 @@ PanelWindow {
                     delegate: Text {
                         required property var modelData
                         text: (root.agentUsage.stale ? "Saved " : "") + (modelData.label || "Usage") + " · "
-                            + (root.agentUsage.stale && Number(modelData.resetAt) * 1000 <= root.countdownNow
-                                ? "Reset passed" : root.resetCountdown(modelData).replace("Resets in ", ""))
+                            + root.resetCountdown(modelData, root.agentUsage.stale).replace("Resets in ", "")
                         color: QuattroTheme.Theme.text
                         font.family: root.fontFamily
                         font.pixelSize: 10

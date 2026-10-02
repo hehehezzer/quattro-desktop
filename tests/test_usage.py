@@ -598,6 +598,27 @@ class UsageDisplayStateTests(unittest.TestCase):
                 self.assertEqual(agent.usage_status()["status"], "unavailable")
         self.assertEqual(agent.normalize_window({"usedPercent": 0})["usedPercent"], 0)
 
+    def test_transient_token_refresh_failures_preserve_login_and_retry(self):
+        for error, expected in (
+            ("refresh token request timed out", "timeout"),
+            ("refresh_token request failed: 429 Too Many Requests", "rate_limited"),
+            ("refresh token request failed: 503 Service Unavailable", "unavailable"),
+        ):
+            with self.subTest(error=error), mock.patch.object(agent, "ensure_state_dirs"), \
+                    mock.patch.object(agent, "jsonrpc_snapshot", side_effect=RuntimeError(error)) as rpc, \
+                    mock.patch.object(agent.time, "sleep"), mock.patch.object(agent, "eprint"):
+                self.assertEqual(agent.refresh_usage("account-1"), 1)
+                self.assertEqual(rpc.call_count, 2)
+                value = agent.usage_status()
+                self.assertEqual(value["errorCode"], expected)
+                self.assertTrue(value["loggedIn"])
+                self.assertFalse(value["authenticationRequired"])
+
+    def test_explicit_expired_or_reused_token_requires_authentication(self):
+        for error in ("refresh token has expired", "refresh_token_reused", "invalid_grant"):
+            with self.subTest(error=error):
+                self.assertEqual(agent.usage_error_details(error)[0], "authentication_required")
+
     def test_expired_success_snapshot_is_saved_not_live(self):
         self.save("account-1.json", {**self.good, "lastSuccessfulRefresh": "2000-01-01T00:00:00Z"})
         value = agent.usage_status()

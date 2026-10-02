@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import pathlib
+import json
+import shutil
+import subprocess
 import unittest
 
 
@@ -81,6 +84,28 @@ class HarnessUiContractTests(unittest.TestCase):
         self.assertIn('root.startMaintenance("reindex")', self.qml)
         self.assertIn('root.startMaintenance("benchmark")', self.qml)
         self.assertNotIn('onTriggered: root.startMaintenance', self.qml)
+
+    @unittest.skipUnless(shutil.which("node"), "Requires Node for QML JavaScript contract")
+    def test_saved_usage_reset_preserves_unknown_timestamps(self):
+        bar = (ROOT / "src/quickshell/components/Bar.qml").read_text(encoding="utf-8")
+        function = bar[bar.index("function resetCountdown("):bar.index("function usageResetTooltip(")]
+        script = "const root = {countdownNow: 1790959400000};\n" + function + '''
+console.log(JSON.stringify([
+    resetCountdown({resetAt: null}, true),
+    resetCountdown({}, true),
+    resetCountdown({resetAt: Infinity}, true),
+    resetCountdown({resetAt: 1790959300}, true),
+    resetCountdown({resetAt: 1790959300000}, true),
+    resetCountdown({resetAt: 1790959300}, false),
+    resetCountdown({resetAt: 1790960000}, true)
+]));
+'''
+        result = subprocess.run(["node", "-e", script], text=True, capture_output=True, timeout=5, check=True)
+        self.assertEqual(json.loads(result.stdout), [
+            "Reset time unavailable", "Reset time unavailable", "Reset time unavailable",
+            "Reset passed", "Reset passed", "Resets now", "Resets in 10m",
+        ])
+        self.assertIn("root.resetCountdown(modelData, root.agentUsage.stale)", bar)
 
 
 class UsageServiceHardeningTests(unittest.TestCase):

@@ -1243,7 +1243,9 @@ def usage_error_details(error: Any) -> tuple[str, str]:
     text = str(error).lower()[:2000]
     if any(marker in text for marker in (
         "401", "unauthorized", "invalidated oauth", "authentication required", "authentication_required",
-        "refresh token", "refresh_token", "not logged in", "sign in again",
+        "refresh token has expired", "refresh token expired", "refresh token revoked",
+        "refresh token has already been used", "refresh_token_reused", "invalid_grant",
+        "not logged in", "sign in again",
     )):
         return "authentication_required", "Sign in to this Codex account again, then refresh limits."
     if "429" in text or "too many requests" in text or text == "rate_limited":
