@@ -24,6 +24,8 @@ import uuid
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
+from .repository_metadata import repository_command_allowed, repository_status_allowed
+
 
 INDEX_VERSION = 2
 EMBEDDING_MODEL = "quattro-feature-hash-v1"
@@ -724,14 +726,16 @@ class RetrievalStore:
 
 def repository_state(path: pathlib.Path) -> dict[str, Any]:
     def git(*args: str) -> str | None:
-        result = subprocess.run(["git", "-C", str(path), *args], text=True, capture_output=True, timeout=5, check=False)
+        if not repository_command_allowed(args):
+            return None
+        result = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(path), *args], text=True, capture_output=True, timeout=5, check=False)
         return result.stdout.strip() if result.returncode == 0 else None
     root = git("rev-parse", "--show-toplevel")
     if not root:
         return {"repository": str(path.resolve()), "branch": None, "commitSha": None, "dirty": None}
     branch = git("branch", "--show-current") or git("rev-parse", "--abbrev-ref", "HEAD")
     return {"repository": str(pathlib.Path(root).resolve()), "branch": branch,
-            "commitSha": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
+            "commitSha": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain")) if repository_status_allowed() else None}
 
 
 def index_episodic_database(store: RetrievalStore, task_database: pathlib.Path) -> IndexSummary:

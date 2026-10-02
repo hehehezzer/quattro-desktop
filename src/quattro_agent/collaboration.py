@@ -25,6 +25,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Mapping, Sequence
 
 from .errors import LeaseConflict
+from .repository_metadata import repository_command_allowed, repository_status_allowed, native_repository_metadata
 from quattro.platform.locking import lock_file_descriptor
 
 
@@ -71,10 +72,15 @@ def _run_git(
     check: bool = True,
     timeout: float = 30.0,
 ) -> subprocess.CompletedProcess[str]:
+    if not repository_command_allowed(arguments):
+        if check:
+            raise PermissionError("repository command outside native metadata scope")
+        return subprocess.CompletedProcess([git, *arguments], 1, stdout="", stderr="")
     result = subprocess.run(
         [
             git, "-C", str(cwd),
             "-c", "core.hooksPath=/dev/null",
+            "-c", "core.fsmonitor=false",
             "-c", "commit.gpgSign=false",
             "-c", "merge.verifySignatures=false",
             *arguments,
@@ -119,7 +125,7 @@ class ProjectIdentity:
     common_git_dir: Path | None
     base_branch: str | None
     base_commit: str | None
-    original_dirty: bool
+    original_dirty: bool | None
 
     def projection(self) -> dict[str, Any]:
         value = asdict(self)
@@ -192,7 +198,7 @@ def canonical_project(
             common_git_dir=common,
             base_branch=branch,
             base_commit=commit,
-            original_dirty=bool(dirty_result.stdout),
+            original_dirty=bool(dirty_result.stdout) if dirty_result.returncode == 0 else None,
         )
     metadata = requested.stat()
     material = f"filesystem\0{requested}\0{metadata.st_dev}\0{metadata.st_ino}"
@@ -369,9 +375,10 @@ class RepositoryCoordinator:
             # snapshots fail. Preserve the record and reconcile it as stale;
             # mutation paths still call _validate_git_record directly.
             return {"dirty": False, "head": None, "ahead": 0, "changedFiles": []}
-        status = _run_git(
-            self.git, path, "status", "--porcelain=v1", "--untracked-files=normal", check=False,
-        )
+        status = (subprocess.CompletedProcess([], 1, stdout="", stderr="")
+            if record.get("repositoryProbePolicy") == "identity-only" else _run_git(
+                self.git, path, "status", "--porcelain=v1", "--untracked-files=normal", check=False,
+            ))
         changed = [line[3:] for line in status.stdout.splitlines() if len(line) >= 4][:200]
         head_result = _run_git(self.git, path, "rev-parse", "HEAD", check=False)
         head = head_result.stdout.strip() if head_result.returncode == 0 else None
@@ -380,7 +387,7 @@ class RepositoryCoordinator:
             count = _run_git(self.git, path, "rev-list", "--count", f"{base}..{head}", check=False)
             if count.returncode == 0 and count.stdout.strip().isdigit():
                 ahead = int(count.stdout.strip())
-        return {"dirty": bool(status.stdout), "head": head, "ahead": ahead, "changedFiles": changed}
+        return {"dirty": bool(status.stdout) if status.returncode == 0 else None, "head": head, "ahead": ahead, "changedFiles": changed}
 
     def _validate_git_record(self, record: Mapping[str, Any], path: Path) -> None:
         repository_id = record.get("repositoryId")
@@ -396,7 +403,9 @@ class RepositoryCoordinator:
             branch = record.get("branch")
             if not isinstance(branch, str) or not _BRANCH.fullmatch(branch):
                 raise RuntimeError("managed branch metadata is invalid")
-        identity = canonical_project(resolved, git=self.git)
+        inspect_identity = (native_repository_metadata(canonical_project)
+            if record.get("repositoryProbePolicy") == "identity-only" else canonical_project)
+        identity = inspect_identity(resolved, git=self.git)
         if identity.repository_id != repository_id:
             raise RuntimeError("worktree no longer belongs to its recorded repository")
         original = record.get("originalRepository")
@@ -429,7 +438,7 @@ class RepositoryCoordinator:
             if not stale:
                 continue
             work = self._worktree_state(record)
-            recoverable = bool(work["dirty"] or work["ahead"] > 0)
+            recoverable = work["dirty"] is not False or work["ahead"] > 0
             record.update({
                 "status": "stale_recoverable" if recoverable else "stale",
                 "lastHeartbeat": _now(),
@@ -538,6 +547,7 @@ class RepositoryCoordinator:
                 "baseBranch": identity.base_branch,
                 "baseCommit": identity.base_commit,
                 "originalDirty": identity.original_dirty,
+                "repositoryProbePolicy": "status" if repository_status_allowed() else "identity-only",
                 "taskSummary": " ".join(task_summary.split())[:200],
                 "taskKey": claim_key,
                 "taskScope": list(scopes),
@@ -612,6 +622,7 @@ class RepositoryCoordinator:
                 "baseBranch": identity.base_branch,
                 "baseCommit": identity.base_commit,
                 "originalDirty": identity.original_dirty,
+                "repositoryProbePolicy": "status" if repository_status_allowed() else "identity-only",
                 "taskSummary": " ".join(task_summary.split())[:200],
                 "taskKey": None,
                 "taskScope": [],
@@ -719,7 +730,7 @@ class RepositoryCoordinator:
         with self._locked() as state:
             record = self._record(state, session_id)
             work = self._worktree_state(record)
-            recoverable = bool(work["dirty"] or work["ahead"] > 0)
+            recoverable = work["dirty"] is not False or work["ahead"] > 0
             if abandoned:
                 status = "stale_recoverable" if recoverable else "abandoned"
             else:
@@ -947,7 +958,7 @@ class RepositoryCoordinator:
             if not record.get("managedWorktree"):
                 raise RuntimeError("session does not own a managed worktree")
             work = self._worktree_state(record)
-            if work["dirty"]:
+            if work["dirty"] is not False:
                 raise RuntimeError("managed worktree has uncommitted changes and was preserved")
             if work["ahead"] > 0 and not record.get("integratedInto"):
                 raise RuntimeError("managed branch contains unintegrated commits and was preserved")

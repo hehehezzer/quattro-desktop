@@ -33,3 +33,19 @@ not claim that its policy metadata alone can enforce host-wide read isolation.
 The security scan in `scripts/check_public_artifacts.py` checks tracked paths,
 symlinks, private machine paths, credential-shaped values, and runtime
 artifacts. It is a release gate, not a substitute for threat modeling.
+
+Tasks carrying an external `nativeGrant` belong to the approving execution
+boundary. Generic queue reconciliation does not dispatch them, and the ordinary
+harness refuses execution before claiming a run. Native prompt tasks do not
+install terminal-close signal handlers. A scoped integration must validate its
+grant and boundary before claiming; it cannot use the generic adapter as fallback.
+
+Repository status probes used for coordination, checkpoints and retrieval
+metadata disable Git filesystem-monitor hooks explicitly. Repository
+configuration must not turn a metadata query into host code execution.
+
+The controlled native lifecycle scopes host repository metadata to identity
+queries only. Git status and diff may execute repository clean filters, so they
+are not used for native planning, startup or checkpoints. Unknown dirty state
+is preserved; coordinator records retain this identity-only policy after the
+native context ends, and unknown work is conservatively recoverable.

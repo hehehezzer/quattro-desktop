@@ -39,6 +39,79 @@ class CollaborationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def test_metadata_status_never_executes_repository_fsmonitor(self):
+        from quattro_agent.recovery import repository_state as recovery_state
+        from quattro_agent.retrieval import repository_state as retrieval_state
+        from quattro_harness import HarnessRuntime
+        from types import SimpleNamespace
+        marker = self.root / "unsafe-status-ran"
+        hook = self.root / "fsmonitor"
+        hook.write_text("#!/bin/sh\nprintf unsafe > " + str(marker) + "\nprintf '\\0'\n")
+        hook.chmod(0o700)
+        self.git_run(self.repo, "config", "core.fsmonitor", str(hook))
+        identity = canonical_project(self.repo,git=self.git)
+        session = self.coordinator.reserve(self.repo,task_summary="synthetic read",isolate=False)
+        self.coordinator.finish(str(session['sessionId']),validation="Not Run",abandoned=False)
+        self.assertTrue(identity.canonical_repository.is_dir())
+        self.assertIsNotNone(recovery_state(self.repo)['head'])
+        self.assertIsNotNone(retrieval_state(self.repo)['commitSha'])
+        runtime = SimpleNamespace(command_resolver=lambda name:self.git)
+        self.assertIsNotNone(HarnessRuntime._git_status_snapshot(runtime,self.repo))
+        self.assertFalse(marker.exists())
+
+    def test_native_metadata_never_executes_fsmonitor_or_clean_filters(self):
+        import os
+        from quattro_agent.repository_metadata import native_repository_metadata, repository_status_allowed
+        from quattro_agent.recovery import repository_state as recovery_state
+        from quattro_agent.retrieval import repository_state as retrieval_state
+        from quattro_agent.mandatory_context import inspect_worktree, WorktreeClassification
+        from quattro_harness import HarnessRuntime
+        from types import SimpleNamespace
+        marker = self.root / "unsafe-clean-ran"
+        monitor_marker = self.root / "unsafe-monitor-ran"
+        (self.repo/'.gitattributes').write_text('shared.txt filter=synthetic\n')
+        self.git_run(self.repo,'add','.gitattributes')
+        self.git_run(self.repo,'commit','-qm','synthetic attributes')
+        clean = self.root/'synthetic-clean'
+        clean.write_text('#!/bin/sh\nprintf unsafe > '+str(marker)+'\ncat\n')
+        clean.chmod(0o700)
+        monitor = self.root/'synthetic-monitor'
+        monitor.write_text('#!/bin/sh\nprintf unsafe > '+str(monitor_marker)+'\n')
+        monitor.chmod(0o700)
+        self.git_run(self.repo,'config','filter.synthetic.clean',str(clean))
+        self.git_run(self.repo,'config','core.fsmonitor',str(monitor))
+        tracked = self.repo/'shared.txt'
+        stat = tracked.stat()
+        tracked.write_text('next\n')
+        os.utime(tracked,(stat.st_atime+2,stat.st_mtime+2))
+        @native_repository_metadata
+        def inspect_native():
+            self.assertFalse(repository_status_allowed())
+            identity = canonical_project(self.repo,git=self.git)
+            self.assertIsNone(identity.original_dirty)
+            session = self.coordinator.reserve(self.repo,task_summary='synthetic native',isolate=False)
+            self.assertEqual(session['repositoryProbePolicy'],'identity-only')
+            finished = self.coordinator.finish(session['sessionId'],validation='Native checks',abandoned=False)
+            self.assertIsNone(finished['dirty'])
+            self.assertIsNone(recovery_state(self.repo)['dirty'])
+            self.assertIsNone(retrieval_state(self.repo)['dirty'])
+            self.assertIs(inspect_worktree(self.repo).classification,WorktreeClassification.UNKNOWN)
+            runtime = SimpleNamespace(command_resolver=lambda name:self.git)
+            self.assertIsNone(HarnessRuntime._git_status_snapshot(runtime,self.repo))
+            return session['sessionId']
+        session_id = inspect_native()
+        self.assertTrue(repository_status_allowed())
+        record = self.coordinator.finish(session_id,validation='Native checks',abandoned=False)
+        self.assertIsNone(self.coordinator._worktree_state(record)['dirty'])
+        # Later ordinary UI/reconciliation must honor the stored native policy.
+        self.coordinator.status()
+        self.coordinator.reconcile()
+        self.assertFalse(marker.exists())
+        self.assertFalse(monitor_marker.exists())
+        # Prove that the configured clean filter is executable in the fixture.
+        self.git_run(self.repo,'-c','core.fsmonitor=false','status','--porcelain')
+        self.assertTrue(marker.exists())
+
     def git_run(self, cwd: pathlib.Path, *args: str, check: bool = True):
         return subprocess.run(
             [self.git, "-C", str(cwd), *args], text=True,

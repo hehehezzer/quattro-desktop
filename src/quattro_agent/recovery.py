@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .privacy import redact_secret_text
+from .repository_metadata import repository_status_allowed
 from .supervisor import minimal_environment
 
 
@@ -61,11 +62,11 @@ def repository_state(path: str | os.PathLike[str]) -> dict[str, Any]:
             env=minimal_environment(), stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, timeout=10, check=False,
         )
-        status = subprocess.run(
-            [git, "status", "--porcelain=v1", "-z"], cwd=directory,
+        status = (subprocess.run(
+            [git, "-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z"], cwd=directory,
             env=minimal_environment(), stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, timeout=20, check=False,
-        )
+        ) if repository_status_allowed() else subprocess.CompletedProcess([], 1, stdout=b""))
     except (OSError, subprocess.SubprocessError):
         return state
     state["branch"] = branch.stdout.strip() if branch.returncode == 0 else None
