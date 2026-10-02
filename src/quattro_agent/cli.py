@@ -15,6 +15,7 @@ import datetime as dt
 import glob
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
@@ -1208,7 +1209,7 @@ def normalize_window(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     used = value.get("usedPercent")
-    if not isinstance(used, (int, float)):
+    if isinstance(used, bool) or not isinstance(used, (int, float)) or not math.isfinite(used):
         return None
     duration = value.get("windowDurationMins") if isinstance(value.get("windowDurationMins"), int) else None
     if duration == 300:
@@ -1237,6 +1238,32 @@ def normalized_account_login(account: Any, native_authenticated: bool) -> tuple[
     return bool(native_authenticated), None
 
 
+def usage_error_details(error: Any) -> tuple[str, str]:
+    """Classify locally; never persist or display raw provider response bodies."""
+    text = str(error).lower()[:2000]
+    if any(marker in text for marker in (
+        "401", "unauthorized", "invalidated oauth", "authentication required", "authentication_required",
+        "refresh token", "refresh_token", "not logged in", "sign in again",
+    )):
+        return "authentication_required", "Sign in to this Codex account again, then refresh limits."
+    if "429" in text or "too many requests" in text or text == "rate_limited":
+        return "rate_limited", "Usage refresh is temporarily rate limited. Try again later."
+    if "timed out" in text or "timeout" in text:
+        return "timeout", "Usage refresh timed out. Try refreshing again."
+    return "unavailable", "Usage limits could not be refreshed. Try again later."
+
+
+def cached_usage_window(value: Any) -> dict[str, Any] | None:
+    """Validate older display snapshots without filling missing usage with zero."""
+    if not isinstance(value, dict):
+        return None
+    return normalize_window({
+        "usedPercent": value.get("usedPercent"),
+        "resetsAt": value.get("resetAt"),
+        "windowDurationMins": value.get("windowMinutes"),
+    })
+
+
 def refresh_usage(account_id: str | None = None, retries: int = 2) -> int:
     ensure_state_dirs()
     config = load_config()
@@ -1244,7 +1271,7 @@ def refresh_usage(account_id: str | None = None, retries: int = 2) -> int:
     selected = str(record["id"])
     good_path = STATE_ROOT / "usage" / f"{selected}.json"
     refresh_path = STATE_ROOT / "usage" / f"{selected}.refresh.json"
-    last_error = "Unknown refresh error"
+    error_code, last_error = usage_error_details(None)
     for attempt in range(retries):
         try:
             account_result, limits_result = jsonrpc_snapshot(selected)
@@ -1276,12 +1303,15 @@ def refresh_usage(account_id: str | None = None, retries: int = 2) -> int:
             })
             return 0
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-            last_error = str(error)[:240]
+            error_code, last_error = usage_error_details(error)
+            if error_code == "authentication_required":
+                break
             if attempt + 1 < retries:
                 time.sleep(1)
     atomic_json(refresh_path, {
         "schemaVersion": SCHEMA_VERSION, "accountId": selected,
         "attemptedAt": now_iso(), "ok": False, "error": last_error,
+        "errorCode": error_code,
     })
     eprint(f"usage refresh failed for {selected}: {last_error}")
     return 1
@@ -1346,11 +1376,27 @@ def usage_status(account_id: str | None = None) -> dict[str, Any]:
     refresh_failed = isinstance(refresh, dict) and refresh.get("ok") is False
     overdue = usage_is_overdue(config, good.get("lastSuccessfulRefresh"))
     if refresh_failed:
-        good = {**good, "stale": True, "error": refresh.get("error"),
+        error_code, message = usage_error_details(refresh.get("errorCode") or refresh.get("error"))
+        good = {**good, "stale": True, "error": message, "errorCode": error_code,
                 "lastAttempt": refresh.get("attemptedAt")}
     else:
-        good = {**good, "stale": overdue, "error": None,
+        good = {**good, "stale": overdue, "error": None, "errorCode": None,
                 "lastAttempt": refresh.get("attemptedAt") if isinstance(refresh, dict) else None}
+    good["primary"] = cached_usage_window(good.get("primary"))
+    good["secondary"] = cached_usage_window(good.get("secondary"))
+    has_limits = good["primary"] is not None or good["secondary"] is not None
+    good["authenticationRequired"] = good.get("errorCode") == "authentication_required"
+    if good["authenticationRequired"]:
+        good["loggedIn"] = False
+    good["status"] = (
+        "authentication_required" if good["authenticationRequired"] else
+        "stale" if has_limits and good["stale"] else
+        "live" if has_limits else "unavailable"
+    )
+    good["message"] = good.get("error") or (
+        "Showing saved limits. Refresh to check current usage." if good["status"] == "stale" else
+        "Usage limits are not available for this account." if not has_limits else ""
+    )
     return good
 
 
