@@ -118,6 +118,7 @@ from quattro_agent.supervisor import (
     verify_process_identity,
 )
 from quattro_agent.validators import ValidationResult, ValidationStatus, aggregate_validation
+from quattro_agent.repository_metadata import repository_status_allowed
 from quattro_memory import (
     MemoryError,
     memory_policy,
@@ -1096,12 +1097,14 @@ class HarnessRuntime:
             raise
 
     def _git_status_snapshot(self, project: pathlib.Path) -> str | None:
+        if not repository_status_allowed():
+            return None
         git = self.command_resolver("git")
         if not git or not (project / ".git").exists():
             return None
         try:
             result = subprocess.run(
-                [git, "status", "--porcelain=v1", "-z"], cwd=project,
+                [git, "-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z"], cwd=project,
                 env=minimal_environment(), stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, timeout=20, check=False,
             )
@@ -3214,9 +3217,22 @@ class HarnessRuntime:
             raise StateTransitionError(f"task {task_id} is not runnable from {state.value}")
         self.store.transition_task(task_id, TaskState.RUNNING)
 
+    def _assert_task_execution_owner(self, task: Mapping[str, Any]) -> None:
+        """Externally granted tasks must stay with their owning execution boundary."""
+        if task["private_payload"].get("nativeGrant") is not None:
+            raise PermissionError("native task requires its owning execution boundary")
+
     @jev_lifecycle
     def run_task(self, task_id: str) -> int:
         task = self.store.get_task(task_id, include_private=True)
+        try:
+            self._assert_task_execution_owner(task)
+        except PermissionError:
+            self.store.append_event(
+                task_id, "execution.owner_required",
+                display={"code": "native_boundary_required"},
+            )
+            return 75
         try:
             run_id = self.store.claim_task_for_run(
                 task_id,
@@ -4111,7 +4127,7 @@ class HarnessRuntime:
         git = self.command_resolver("git") or "git"
         try:
             return_code, output, truncated = _run_bounded_command(
-                [git, "status", "--porcelain=v1", "-z"], project, 30, 2_000_000
+                [git, "-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z"], project, 30, 2_000_000
             )
         except (OSError, subprocess.SubprocessError) as error:
             return ValidationResult(
@@ -4245,6 +4261,7 @@ class HarnessRuntime:
 
     def spawn_worker(self, task_id: str) -> None:
         task = self.store.get_task(task_id, include_private=True)
+        self._assert_task_execution_owner(task)
         routing_mode = omniroute_routing_mode(task["private_payload"].get("routingMode"))
         environment = minimal_environment({
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -4269,6 +4286,10 @@ class HarnessRuntime:
         worker must translate that terminal lifecycle signal into the harness's
         verified cancellation path instead of leaving an orphan behind.
         """
+        task = self.store.get_task(task_id, include_private=True)
+        if task["private_payload"].get("nativeGrant") is not None:
+            # A broker-owned prompt has no terminal lifecycle to cancel.
+            return self.run_task(task_id)
         previous_handlers: dict[signal.Signals, Any] = {}
         cancellation_started = False
 
@@ -4679,6 +4700,7 @@ class HarnessRuntime:
 
     def retry(self, task_id: str) -> None:
         task = self.store.get_task(task_id, include_private=True)
+        self._assert_task_execution_owner(task)
         state = TaskState(task["state"])
         if state not in {TaskState.FAILED, TaskState.TIMED_OUT, TaskState.INTERRUPTED, TaskState.BLOCKED}:
             raise StateTransitionError(f"task is not retryable from {state.value}")
@@ -4860,9 +4882,13 @@ class HarnessRuntime:
             results.append({"task_id": task_id, "status": "validation_interrupted", "pid": None})
         self.store.purge_expired_leases()
         for task in self.store.list_display_tasks(state=TaskState.QUEUED):
+            if self.store.get_task(task["taskId"], include_private=True)["private_payload"].get("nativeGrant") is not None:
+                continue
             self.spawn_worker(task["taskId"])
             results.append({"task_id": task["taskId"], "status": "queued_dispatched", "pid": None})
         for task in self.store.list_display_tasks(state=TaskState.READY):
+            if self.store.get_task(task["taskId"], include_private=True)["private_payload"].get("nativeGrant") is not None:
+                continue
             if self.store.latest_run(task["taskId"]) is None:
                 self.spawn_worker(task["taskId"])
                 results.append({"task_id": task["taskId"], "status": "ready_dispatched", "pid": None})

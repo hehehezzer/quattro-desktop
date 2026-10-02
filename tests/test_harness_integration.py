@@ -1887,6 +1887,65 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(len(self.runtime.store.runs_for_task(task_id)), 1)
         self.assertEqual(self.runtime.task_projection(task_id)["state"], "succeeded")
 
+    def test_native_task_stays_with_external_owner_during_reconciliation(self):
+        native_ids = []
+        for state in (TaskState.QUEUED, TaskState.READY):
+            task_id = self.runtime.create_task(
+                agent="codex", project=self.project, prompt="synthetic native owner " + state.value, mode="prompt"
+            )
+            private = self.runtime.store.get_task(task_id, include_private=True)["private_payload"]
+            self.runtime.store.update_private_payload(task_id, dict(private, nativeGrant={"synthetic": True}))
+            if state is TaskState.READY:
+                self.runtime.store.transition_task(task_id, state)
+            native_ids.append(task_id)
+        ordinary = self.runtime.create_task(
+            agent="codex", project=self.project, prompt="ordinary queued", mode="prompt"
+        )
+        spawned = []
+        self.runtime.spawn_worker = spawned.append
+        results = self.runtime.reconcile()
+        self.assertEqual(spawned, [ordinary])
+        self.assertFalse(any(r.get("task_id") in native_ids for r in results))
+        for task_id in native_ids:
+            self.assertIsNone(self.runtime.store.latest_run(task_id))
+
+    def test_native_owner_missing_denies_before_claim_or_terminal_handlers(self):
+        task_id = self.runtime.create_task(
+            agent="codex", project=self.project, prompt="synthetic native owner", mode="prompt"
+        )
+        private = self.runtime.store.get_task(task_id, include_private=True)["private_payload"]
+        self.runtime.store.update_private_payload(task_id, dict(private, nativeGrant={"synthetic": True}))
+        with mock.patch.object(self.runtime, "_memory", side_effect=AssertionError("memory touched")), \
+                mock.patch.object(self.runtime.supervisor, "start") as start, \
+                mock.patch("quattro_harness.signal.signal") as handlers:
+            self.assertEqual(self.runtime.run_task(task_id), 75)
+            self.assertEqual(self.runtime.run_terminal_worker(task_id), 75)
+            start.assert_not_called()
+            handlers.assert_not_called()
+        self.assertEqual(self.runtime.store.get_task(task_id)["state"], "queued")
+        self.assertIsNone(self.runtime.store.latest_run(task_id))
+        events = self.runtime.store.display_events(task_id)
+        self.assertTrue(any(e["type"] == "execution.owner_required" for e in events))
+        self.assertFalse(any(e["type"] == "task.error" for e in events))
+        with self.assertRaises(PermissionError), mock.patch("quattro_harness.subprocess.Popen") as spawn:
+            self.runtime.spawn_worker(task_id)
+        spawn.assert_not_called()
+
+    def test_native_retry_rejects_before_state_or_payload_mutation(self):
+        task_id = self.runtime.create_task(
+            agent="codex", project=self.project, prompt="synthetic retry", mode="prompt"
+        )
+        self.runtime.store.claim_task_for_run(task_id, agent="codex", account_id="account-1")
+        self.runtime.store.transition_task(task_id, TaskState.FAILED)
+        private = self.runtime.store.get_task(task_id, include_private=True)["private_payload"]
+        self.runtime.store.update_private_payload(task_id, dict(private, nativeGrant={"synthetic": True}))
+        before = self.runtime.store.get_task(task_id, include_private=True)
+        with mock.patch.object(self.runtime, "spawn_worker") as spawn:
+            with self.assertRaises(PermissionError):
+                self.runtime.retry(task_id)
+            spawn.assert_not_called()
+        self.assertEqual(self.runtime.store.get_task(task_id, include_private=True), before)
+
     def test_abandoned_atomic_claim_is_recovered_for_retry(self):
         task_id = self.runtime.create_task(
             agent="codex", project=self.project, prompt="recover", mode="prompt"
@@ -2036,7 +2095,8 @@ class HarnessRuntimeIntegrationTests(unittest.TestCase):
 
         with mock.patch("quattro_harness.signal.getsignal", return_value=signal.SIG_DFL), \
                 mock.patch("quattro_harness.signal.signal", side_effect=fake_signal) as setter, \
-                mock.patch.object(self.runtime, "run_task", return_value=0):
+                mock.patch.object(self.runtime, "run_task", return_value=0), \
+                mock.patch.object(self.runtime.store, "get_task", return_value={"private_payload": {}}):
             self.assertEqual(self.runtime.run_terminal_worker("task-id"), 0)
 
         self.assertEqual(set(installed), {signal.SIGHUP, signal.SIGTERM})

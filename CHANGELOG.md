@@ -4,6 +4,12 @@ All notable Quattro orchestration changes are documented here.
 
 ## Unreleased
 
+- Leave externally granted native tasks with their owning execution boundary;
+  generic reconciliation and terminal workers cannot claim or launch them.
+- Keep native repository probes to fixed identity queries and preserve unknown
+  dirty state; prevent status hooks and clean filters from running on the host.
+- Disable filesystem-monitor hooks in ordinary host Git metadata probes.
+
 - Add a blind, resumable Intelligence evidence-review workflow with
   deficit-aware sampling, append-only consensus/adjudication, and explicit
   provenance and quality states.

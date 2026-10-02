@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any, Mapping
 
+from .repository_metadata import repository_command_allowed, repository_status_allowed
+
 
 WORKSPACE_POLICY_ID = "workspace.default_project_root"
 WORKSPACE_SOURCE = "configuration:workspace.projectRoot"
@@ -81,6 +83,8 @@ class WorktreeInspection:
 
 
 def _git_output(directory: pathlib.Path, *args: str) -> str | None:
+    if not repository_command_allowed(args):
+        return None
     try:
         result = subprocess.run(
             ["git", "-C", str(directory), *args],
@@ -118,6 +122,9 @@ def inspect_worktree(
         return None
     branch = _git_output(directory, "branch", "--show-current")
     head = _git_output(directory, "rev-parse", "HEAD")
+    if not repository_status_allowed():
+        return WorktreeInspection(WorktreeClassification.UNKNOWN, root.strip(),
+            branch.strip() if branch else None, head.strip() if head else None)
     status = _git_output(directory, "status", "--porcelain=v1", "--untracked-files=all")
     if status is None:
         return WorktreeInspection(

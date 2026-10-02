@@ -34,7 +34,7 @@ CORE_DEPLOYMENT_MAPPINGS = {
             "bounded_command.py", "bounded_command_worker.py", "recovering_test.py", "tool_cli.py",
             "collaboration.py", "config.py", "containment.py", "delegation.py", "errors.py",
             "mandatory_context.py", "model_registry.py", "models.py", "omniroute.py", "paths.py", "policy.py",
-            "privacy.py", "recovery.py", "retrieval.py", "shared_intelligence.py", "native_intelligence.py", "native_cli.py", "routing.py",
+            "privacy.py", "recovery.py", "repository_metadata.py", "retrieval.py", "shared_intelligence.py", "native_intelligence.py", "native_cli.py", "routing.py",
             "routing_intelligence.py", "routing_signals.py", "scheduler.py",
             "sessions.py", "store.py", "supervisor.py", "terminal_lifecycle.py",
             "validators.py", "workflow.py",
