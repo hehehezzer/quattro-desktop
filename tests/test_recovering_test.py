@@ -1,8 +1,9 @@
-"""Bounded host test recovery with a real unittest child and fake Jev choice."""
+"""Bounded test execution preserves failures for model-authored recovery."""
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 from quattro_agent.recovering_test import recovering_test
@@ -31,10 +32,15 @@ class Choice:
 
 class RecoveringTestTests(unittest.TestCase):
     def test_retry_exact_requires_retry_budget(self):
-        request = {"available_actions": ["retry_exact", "agent"],
+        request = {"schema_version": "quattro-jev-decisions-v2", "decision_id": "failed_check_next_step",
+                   "question": "Should this unchanged bounded check be repeated now?",
+                   "options": [{"id": "repeat_check", "description": "Repeat the existing bounded check once", "effect": "retry_exact", "capability": "retry_exact"},
+                               {"id": "reason_about_failure", "description": "Continue native reasoning about the failure", "effect": "agent"}],
+                   "context": {"check_failed": True},
+                   "execution_state": {"revision": 1, "phase": "validation", "attempt": 1}, "previous_result": "failed",
                    "hard_constraints": {"retry_allowed": False,
                                         "parallel_allowed": False, "retrieval_allowed": False}}
-        self.assertFalse(allowed_action(request, "retry_exact"))
+        self.assertFalse(allowed_action(request, "repeat_check", capabilities={"retry_exact": True}))
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -54,19 +60,22 @@ class RecoveringTestTests(unittest.TestCase):
         (self.root / "tests" / "test_sanity.py").write_text(
             "import unittest\nclass Check(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n")
 
-    def test_real_failure_and_host_retry_recover(self):
+    def test_real_failure_preserved_without_hidden_static_retry_decision(self):
         choice = Choice("retry_exact")
         result = recovering_test(self.root, "test_flaky.py", choice)
-        self.assertEqual(result["status"], "recovered")
-        self.assertTrue(result["offloaded"])
-        self.assertTrue(result["useful_result"])
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["offloaded"])
+        self.assertFalse(result["useful_result"])
         self.assertEqual(result["initial_exit_code"], 1)
-        self.assertEqual(result["recovery_exit_code"], 0)
-        self.assertEqual(result["initial_output"], "")
-        self.assertFalse(result["needs_agent_action"])
-        self.assertEqual(choice.requests[0]["failure_summary"], "readiness_assertion_after_wait")
-        self.assertNotIn("ready.marker", str(choice.requests[0]))
-        self.assertNotIn("expected ready True", str(choice.requests[0]))
+        self.assertIn("AssertionError", result["initial_output"])
+        self.assertTrue(result["needs_agent_action"])
+        self.assertEqual(result["fallback"], "model_decision_required")
+        self.assertEqual(choice.requests, [])
+        self.assertNotIn("recovery_exit_code", result)
+        # A subsequent explicit host invocation remains available to the model.
+        second = recovering_test(self.root, "test_flaky.py", choice)
+        self.assertEqual(second["status"], "passed")
+        self.assertEqual(choice.requests, [])
 
     def test_disabled_preserves_failure_for_agent(self):
         result = recovering_test(self.root, "test_flaky.py", None)
@@ -74,19 +83,13 @@ class RecoveringTestTests(unittest.TestCase):
         self.assertFalse(result["offloaded"])
         self.assertEqual(result["fallback"], "not_admitted")
 
-    def test_stale_test_file_rejects_choice(self):
-        choice = Choice("retry_exact", edit=lambda: self.test_file.write_text(self.test_file.read_text() + "\n"))
+    def test_legacy_choice_cannot_mutate_files_or_trigger_an_implicit_retry(self):
+        choice = Choice("retry_exact", edit=mock.Mock(side_effect=AssertionError("provider mutation")))
         result = recovering_test(self.root, "test_flaky.py", choice)
         self.assertEqual(result["status"], "failed")
-        self.assertFalse(result["offloaded"])
-        self.assertEqual(result["fallback"], "stale")
-
-    def test_stale_imported_file_rejects_choice(self):
-        helper = self.root / "helper.py"
-        helper.write_text("READY = True\n")
-        choice = Choice("retry_exact", edit=lambda: helper.write_text("READY = False\n"))
-        result = recovering_test(self.root, "test_flaky.py", choice)
-        self.assertEqual(result["fallback"], "stale")
+        self.assertEqual(result["fallback"], "model_decision_required")
+        choice.edit.assert_not_called()
+        self.assertEqual(choice.requests, [])
 
     def test_name_and_symlink_guard(self):
         for name in ("../outside.py", "test_missing.py", "test_bad;touch.py"):
@@ -126,8 +129,11 @@ class RecoveringTestTests(unittest.TestCase):
         service = gate._new_decisions()
         self.assertEqual(service.mode, "COOPERATIVE")
         service.close()
-        other = {"decision_type": "context_strategy", "available_actions": ["inspect", "agent"],
-                 "relevant_context": {},
+        other = {"schema_version": "quattro-jev-decisions-v2", "decision_id": "check_evidence_review",
+                 "question": "Which evidence review should follow the failed check?",
+                 "options": [{"id": "review_evidence", "description": "Inspect current check evidence", "effect": "inspect"},
+                             {"id": "native_deliberation", "description": "Continue native model deliberation", "effect": "agent"}],
+                 "context": {},
                  "hard_constraints": {"retry_allowed": False, "parallel_allowed": False,
                                       "retrieval_allowed": False},
                  "execution_state": {"revision": 0, "phase": "inspection", "attempt": 0},

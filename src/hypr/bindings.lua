@@ -94,7 +94,7 @@ hl.bind(
 -- Applications
 hl.bind(
     "SUPER + RETURN",
-    hl.dsp.exec_cmd("foot")
+    hl.dsp.exec_cmd("ghostty")
 )
 
 hl.bind(
@@ -287,3 +287,6 @@ hl.bind(
         "restart-quickshell"
     )
 )
+
+-- Read-only local machine monitoring
+hl.bind("SUPER + CTRL + M", hl.dsp.exec_cmd("qs ipc call monitor toggle"))

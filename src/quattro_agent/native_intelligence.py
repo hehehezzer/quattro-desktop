@@ -18,26 +18,20 @@ import re
 import shutil
 import sqlite3
 import stat
+import sys
 import tempfile
 import time
 import uuid
 from typing import Any, Mapping
 
 from .decision_service import DecisionSession
-from .decision_taxonomy import ACTIONS, classify_decision, validate_request
+from .decision_taxonomy import validate_request, DYNAMIC_SCHEMA_VERSION
 from .errors import ConfigError
-from .paths import state_root, xdg_config_home
+from .paths import state_root
 from .provider_access import typesafe_credential_status
 
 
-NATIVE_SCHEMA_VERSION = 1
-NATIVE_CATEGORIES = (
-    "context_strategy",
-    "execution_strategy",
-    "validation_strategy",
-    "retry_strategy",
-    "progress_strategy",
-)
+NATIVE_SCHEMA_VERSION = 2
 DEFAULT_TIMEOUT_MS = 1_500
 MAX_EVENTS = 5_000
 RETENTION_DAYS = 30
@@ -47,7 +41,7 @@ _STAGES = {
     "validated", "accepted", "rejected", "advice_delivered", "action_applied",
     "retrieval_requested", "retrieval_completed", "sources_selected",
     "result_returned", "context_delivery", "status_checked", "executed",
-    "command_result", "index_refresh", "probe", "skipped",
+    "command_result", "index_refresh", "probe", "skipped", "owner_confirmation",
 }
 _KINDS = {"availability", "jev", "retrieval", "rtk", "instrumentation"}
 
@@ -55,8 +49,37 @@ _KINDS = {"availability", "jev", "retrieval", "rtk", "instrumentation"}
 def native_config_path() -> Path:
     override = os.environ.get("QUATTRO_NATIVE_INTELLIGENCE_CONFIG")
     if override:
-        return Path(os.path.expandvars(os.path.expanduser(override))).resolve(strict=False)
-    return xdg_config_home() / "quattro/native-intelligence.json"
+        return Path(os.path.expandvars(os.path.expanduser(override))).absolute()
+    # Keep the platform directory semantics, but preserve the lexical origin
+    # so linked XDG, HOME or APPDATA parents cannot vanish before validation.
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    if xdg.strip():
+        parent = Path(os.path.expandvars(os.path.expanduser(xdg)))
+    elif sys.platform == "win32":
+        appdata = os.environ.get("APPDATA", "")
+        parent = (Path(os.path.expandvars(os.path.expanduser(appdata))) if appdata.strip()
+                  else Path.home() / "AppData" / "Roaming")
+    else:
+        parent = Path.home() / ".config"
+    return parent.absolute() / "quattro/native-intelligence.json"
+
+
+def native_config_has_symlink(path: Path | None = None) -> bool:
+    """Check lexical settings components without following any link or reading contents."""
+    candidate = (path if path is not None else native_config_path()).absolute()
+    return any(component.is_symlink() for component in (candidate, *candidate.parents))
+
+
+def native_config_is_unsafe(path: Path | None = None) -> bool:
+    """Reject links and existing nonregular settings without opening their contents."""
+    candidate = path if path is not None else native_config_path()
+    if native_config_has_symlink(candidate):
+        return True
+    try:
+        metadata = candidate.lstat()
+    except FileNotFoundError:
+        return False
+    return not stat.S_ISREG(metadata.st_mode)
 
 
 def native_telemetry_path() -> Path:
@@ -69,7 +92,7 @@ def native_telemetry_path() -> Path:
 @dataclass(frozen=True, slots=True)
 class NativeSettings:
     enabled: bool = True
-    categories: tuple[str, ...] = NATIVE_CATEGORIES
+    legacy_categories_ignored: bool = False
     timeout_ms: int = DEFAULT_TIMEOUT_MS
     retrieval_enabled: bool = True
     rtk_enabled: bool = True
@@ -81,7 +104,9 @@ class NativeSettings:
 def load_native_settings() -> NativeSettings:
     """Read only the native settings file; never reads provider auth files."""
     path = native_config_path()
-    if not path.is_file() or path.is_symlink():
+    if native_config_is_unsafe(path):
+        return NativeSettings(enabled=False, retrieval_enabled=False, rtk_enabled=False, path=path)
+    if not path.is_file():
         return NativeSettings(path=path)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -92,11 +117,6 @@ def load_native_settings() -> NativeSettings:
     enabled = raw.get("enabled", True)
     if type(enabled) is not bool:
         raise ConfigError("native intelligence enabled must be a boolean")
-    categories = raw.get("categories", list(NATIVE_CATEGORIES))
-    if (not isinstance(categories, list)
-            or any(not isinstance(value, str) for value in categories)):
-        raise ConfigError("native intelligence categories must be a string array")
-    selected = tuple(dict.fromkeys(value for value in categories if value in NATIVE_CATEGORIES))
     timeout = raw.get("timeoutMs", DEFAULT_TIMEOUT_MS)
     if type(timeout) is not int or not 100 <= timeout <= 3_000:
         raise ConfigError("native intelligence timeoutMs must be between 100 and 3000")
@@ -107,7 +127,7 @@ def load_native_settings() -> NativeSettings:
         raise ConfigError("native intelligence feature flags must be booleans")
     return NativeSettings(
         enabled=enabled,
-        categories=selected,
+        legacy_categories_ignored="categories" in raw,
         timeout_ms=timeout,
         retrieval_enabled=retrieval,
         rtk_enabled=rtk,
@@ -120,11 +140,12 @@ def load_native_settings() -> NativeSettings:
 def write_native_settings(*, enabled: bool | None = None) -> NativeSettings:
     """Idempotently change the native Jev switch without touching other keys."""
     path = native_config_path()
+    if native_config_is_unsafe(path):
+        raise ConfigError("native intelligence configuration must be a regular file without symbolic links")
     current = load_native_settings()
     value: dict[str, Any] = {
         "schemaVersion": NATIVE_SCHEMA_VERSION,
         "enabled": current.enabled if enabled is None else bool(enabled),
-        "categories": list(current.categories),
         "timeoutMs": current.timeout_ms,
         "retrievalEnabled": current.retrieval_enabled,
         "rtkEnabled": current.rtk_enabled,
@@ -136,6 +157,7 @@ def write_native_settings(*, enabled: bool | None = None) -> NativeSettings:
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
             raise ConfigError(f"malformed native intelligence configuration: {path}: {error}") from error
         if isinstance(existing, dict):
+            existing.pop("categories", None)
             existing.update(value)
             value = existing
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -206,27 +228,6 @@ def split_native_context(arguments: Mapping[str, Any]) -> tuple[dict[str, Any], 
     clean = dict(arguments) if isinstance(arguments, Mapping) else {}
     raw = clean.pop("__quattro_context", None)
     return clean, NativeContext.from_mapping(raw)
-
-
-def _normalize_agent_fallback(request: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
-    """Add only the taxonomy-required semantic fallback to a safe request.
-
-    Native models sometimes omit ``agent`` while supplying otherwise valid
-    category actions.  Adding that one bounded fallback cannot grant an
-    authority or capability; it keeps the request fail-open without silently
-    accepting actions from another category.
-    """
-    candidate = dict(request)
-    category = candidate.get("decision_type")
-    actions = candidate.get("available_actions")
-    allowed = ACTIONS.get(category) if isinstance(category, str) else None
-    if (not isinstance(actions, list) or not isinstance(allowed, Mapping)
-            or "agent" in actions or len(actions) < 2
-            or any(not isinstance(action, str) or action not in allowed for action in actions)
-            or len(set(actions)) != len(actions)):
-        return candidate, False
-    candidate["available_actions"] = [*actions, "agent"]
-    return candidate, True
 
 
 def _json_safe(value: Any, *, depth: int = 0) -> Any:
@@ -391,7 +392,7 @@ class NativeTelemetry:
 def _trace_metadata(result: Mapping[str, Any]) -> dict[str, Any]:
     timing = result.get("timing") if isinstance(result.get("timing"), Mapping) else {}
     return {
-        "selectedAction": result.get("selected_action"),
+        "selectedAction": result.get("selected_effect", "dynamic_option"),
         "confidence": result.get("confidence"),
         "evidence": result.get("evidence"),
         "fallbackReason": result.get("evidence") if result.get("fallback_required") else None,
@@ -404,15 +405,21 @@ def _trace_metadata(result: Mapping[str, Any]) -> dict[str, Any]:
 def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | None = None,
                       settings: NativeSettings | None = None,
                       telemetry: NativeTelemetry | None = None,
-                      decision_session: DecisionSession | None = None, cacheable: bool = True) -> dict[str, Any]:
-    """Run one allowlisted native advisory decision, or fail open locally."""
+                      decision_session: DecisionSession | None = None, cacheable: bool = True,
+                      capabilities: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Evaluate model-authored abstract advice within independent host limits.
+
+    Capabilities are supplied by the host adapter, never the public envelope.
+    The public boundary accepts only complete authored v2 envelopes.
+    """
     context = context or NativeContext()
     settings = settings or load_native_settings()
     telemetry = telemetry or NativeTelemetry(enabled=settings.telemetry_enabled)
     trace_id = "jev-" + uuid.uuid4().hex[:20]
-    request_value, request_normalized = _normalize_agent_fallback(request)
     try:
-        normalized = validate_request(request_value)
+        if not isinstance(request, Mapping) or request.get("schema_version") != DYNAMIC_SCHEMA_VERSION:
+            raise ValueError("authored mapping required")
+        normalized = validate_request(dict(request))
     except Exception as error:
         reason = getattr(error, "category", "invalid_state")
         telemetry.record(kind="jev", stage="skipped", status="SKIPPED", context=context,
@@ -422,22 +429,12 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
                 "usageEvidence": {"requested": False, "providerResponse": "UNKNOWN",
                                    "validated": False, "accepted": False,
                                    "adviceDelivered": "UNVERIFIED", "actionApplied": "UNVERIFIED"}}
-    category = normalized["decision_type"]
-    if category not in NATIVE_CATEGORIES or classify_decision(category).value != "JEV_ELIGIBLE":
-        reason = "unsupported_native_category"
-        telemetry.record(kind="jev", stage="skipped", status="SKIPPED", context=context,
-                         trace_id=trace_id, metadata={"reason": reason, "category": category})
-        return {"selected_action": None, "confidence": None, "evidence": reason,
-                "fallback_required": True, "traceId": trace_id,
-                "usageEvidence": {"requested": False, "providerResponse": "UNKNOWN",
-                                   "validated": False, "accepted": False,
-                                   "adviceDelivered": "UNVERIFIED", "actionApplied": "UNVERIFIED"}}
-    if (not settings.enabled or category not in settings.categories
+    category = "dynamic"
+    if (not settings.enabled
             or not context.session_enabled or os.environ.get("QUATTRO_MANAGED_SESSION") == "1"):
         reason = ("disabled" if not settings.enabled else
                   "session_preference_off" if not context.session_enabled else
-                  "managed_session" if os.environ.get("QUATTRO_MANAGED_SESSION") == "1" else
-                  "category_disabled")
+                  "managed_session")
         telemetry.record(kind="jev", stage="skipped", status="SKIPPED", context=context,
                          trace_id=trace_id, metadata={"reason": reason, "category": category})
         return {"selected_action": None, "confidence": None, "evidence": reason,
@@ -445,25 +442,10 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
                 "usageEvidence": {"requested": False, "providerResponse": "UNKNOWN",
                                    "validated": False, "accepted": False,
                                    "adviceDelivered": "UNVERIFIED", "actionApplied": "UNVERIFIED"}}
-    flags = normalized["relevant_context"]
-    meaningful = any(bool(flags.get(name)) for name in (
-        "repository_required", "modification_required", "retrieval_required",
-        "multi_step_required", "verification_required", "context_missing",
-        "independent_steps", "tests_available", "changes_present",
-    )) or normalized["previous_result"] != "none" or normalized["execution_state"]["attempt"] > 0
-    if not meaningful and not context.diagnostic:
-        telemetry.record(kind="jev", stage="skipped", status="SKIPPED", context=context,
-                         trace_id=trace_id, metadata={"reason": "trivial", "category": category})
-        return {"selected_action": None, "confidence": None, "evidence": "trivial",
-                "fallback_required": True, "traceId": trace_id,
-                "usageEvidence": {"requested": False, "providerResponse": "NOT_REQUESTED",
-                                   "validated": False, "accepted": False,
-                                   "adviceDelivered": "NOT_APPLICABLE", "actionApplied": "NOT_APPLICABLE"}}
 
     telemetry.record(kind="jev", stage="requested", status="REQUESTED", context=context,
                      trace_id=trace_id, metadata={
                          "category": category, "diagnostic": context.diagnostic,
-                         **({"requestNormalized": "agent_fallback_added"} if request_normalized else {}),
                      })
     owned_session = decision_session is None
     before = decision_session or DecisionSession(mode="COOPERATIVE", timeout_ms=settings.timeout_ms)
@@ -471,7 +453,8 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
         # Native adapters own different observation counters. They must not
         # compete with the provider session's single monotonic sequence. Keep
         # local checkpoint freshness independent from this transport revision.
-        binding = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+        trusted = tuple(sorted(key for key, value in (capabilities or {}).items() if value is True))
+        binding = json.dumps([normalized, trusted], sort_keys=True, separators=(",", ":"))
         previous_binding = getattr(before, "_native_request_binding", None)
         session_revision = getattr(before, "revision", -1)
         if (cacheable and previous_binding is not None and
@@ -483,7 +466,8 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
         before._native_request_binding = (binding, revision) if cacheable else None
         normalized = dict(normalized, execution_state=dict(normalized["execution_state"], revision=revision))
         before_counts = before.snapshot().get("counts", {})
-        result = before.decide(normalized, cacheable=cacheable)
+        result = before.decide(normalized, cacheable=cacheable, capabilities=trusted)
+        result = dict(result, dynamic_decision=True)
         after_counts = before.snapshot().get("counts", {})
         provider_attempted = result.get("called") is True
         cache_hit = bool(result.get("cache_hit")) or (
@@ -500,18 +484,15 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
         elif provider_attempted and response_evidence:
             telemetry.record(kind="jev", stage="provider_response", status="RECEIVED", context=context,
                              trace_id=trace_id, metadata={"category": category,
-                                                           **({"requestNormalized": "agent_fallback_added"} if request_normalized else {}),
                                                            "providerWaitMs": (result.get("timing") or {}).get("worker_roundtrip_ms")})
             telemetry.record(kind="jev", stage="validated", status="VALIDATED", context=context,
                              trace_id=trace_id, metadata={"category": category,
-                                                           **({"requestNormalized": "agent_fallback_added"} if request_normalized else {}),
                                                            **_trace_metadata(result)})
         accepted = not bool(result.get("fallback_required"))
         if accepted:
             telemetry.record(kind="jev", stage="accepted", status="ACCEPTED", context=context,
                              trace_id=trace_id, metadata={
                                  **_trace_metadata(result),
-                                 **({"requestNormalized": "agent_fallback_added"} if request_normalized else {}),
                              })
             telemetry.record(kind="jev", stage="advice_delivered", status="UNVERIFIED", context=context,
                              trace_id=trace_id, metadata={"delivery": "host_boundary_unverified"})
@@ -520,7 +501,6 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
         else:
             telemetry.record(kind="jev", stage="rejected", status="REJECTED", context=context,
                              trace_id=trace_id, metadata={"category": category,
-                                                           **({"requestNormalized": "agent_fallback_added"} if request_normalized else {}),
                                                            **_trace_metadata(result)})
         result = dict(result)
         result["traceId"] = trace_id
@@ -533,8 +513,6 @@ def native_jev_advice(request: Mapping[str, Any], *, context: NativeContext | No
             "actionApplied": "UNVERIFIED" if accepted else "NOT_APPLICABLE",
             "providerAttempted": provider_attempted,
         }
-        if request_normalized:
-            result["usageEvidence"]["requestNormalized"] = "agent_fallback_added"
         return result
     finally:
         if owned_session:

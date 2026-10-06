@@ -4315,14 +4315,15 @@ class HarnessRuntime:
                 signal.signal(current_signal, previous)
 
     def launch_terminal(self, task_id: str) -> None:
-        foot = self.command_resolver("foot")
-        if not foot:
-            raise FileNotFoundError("foot is not available")
+        terminal = self.command_resolver("ghostty")
+        if not terminal:
+            raise FileNotFoundError("ghostty is not available")
         task = self.store.get_task(task_id)
         subprocess.Popen(
             [
-                foot, "--app-id", "quattro-ai", "--title", task["display_title"],
-                "--working-directory", task["project_path"],
+                terminal, "--gtk-single-instance=false", "--class=com.quattro.ai",
+                "--title=" + task["display_title"],
+                "--working-directory=" + task["project_path"], "-e",
                 str(self.script_path), "_task-worker", task_id,
             ],
             cwd=task["project_path"],

@@ -1088,7 +1088,7 @@ def launch_terminal(agent: str, directory_value: str | None, mode: str = "intera
                     profile_name: str | None = None,
                     confirm_full_access: bool = False,
                     write_scopes: Sequence[str] = ()) -> str:
-    """Create a durable interactive task and open its worker in Foot."""
+    """Create a durable interactive task and open its worker in Ghostty."""
     directory = safe_directory(directory_value)
     task_id, _ = harness().submit(
         agent=agent,
@@ -1560,7 +1560,7 @@ def session_terminal_pid(session: dict[str, Any], proc_root: pathlib.Path = path
             continue
         try:
             executable = (entry / "exe").resolve(strict=True)
-            if executable.name != "foot":
+            if executable.name not in {"foot", "ghostty"}:
                 continue
             raw = (entry / "cmdline").read_bytes()[:65_536]
         except OSError:
@@ -1581,7 +1581,7 @@ def session_terminal_pid(session: dict[str, Any], proc_root: pathlib.Path = path
 
 
 def open_session(identifier: str) -> dict[str, Any]:
-    """Focus the mapped Foot window for one verified live Quattro session."""
+    """Focus the mapped terminal window for one verified live Quattro session."""
     target = identifier.strip()
     if not target:
         die("sessions open requires a session or task id")
@@ -1608,7 +1608,7 @@ def open_session(identifier: str) -> dict[str, Any]:
         clients = []
     client = next((row for row in clients if (
         isinstance(row, dict)
-        and row.get("class") == "quattro-ai"
+        and row.get("class") in {"quattro-ai", "com.quattro.ai"}
         and row.get("mapped") is not False
         and int(row.get("pid") or 0) == terminal_pid
     )), None)
@@ -2769,7 +2769,7 @@ def multi_launch(count: int, directory_value: str | None) -> int:
         subprocess.run([tmux, "split-window", "-v", "-p", "50", "-t", f"{session}:0.0", "-c", str(directory), *worker_argv(agents[2])], check=True)
         subprocess.run([tmux, "split-window", "-v", "-p", "50", "-t", f"{session}:0.1", "-c", str(directory), *worker_argv(agents[3])], check=True)
         subprocess.run([tmux, "select-layout", "-t", f"{session}:0", "tiled"], check=True)
-    detached([require("foot"), "--app-id", "quattro-ai-multi", "--title", f"AI Workspace · {count}", tmux, "attach", "-t", session], directory)
+    detached([require("ghostty"), "--gtk-single-instance=false", "--class=com.quattro.ai.multi", "--title=" + f"AI Workspace · {count}", "-e", tmux, "attach", "-t", session], directory)
     return 0
 
 
@@ -3184,6 +3184,8 @@ def build_parser() -> argparse.ArgumentParser:
     native.add_argument("--include-diagnostics", action="store_true")
     native.add_argument("--directory")
     native.add_argument("--query")
+    native.add_argument("--decision-stdin", action="store_true",
+                        help="read a bounded model-authored v2 decision for the explicit probe")
     native.add_argument("--jev", choices=("on", "off"))
     native.add_argument("--json", action="store_true")
     sub.add_parser("chatgpt")

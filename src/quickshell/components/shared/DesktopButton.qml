@@ -7,16 +7,22 @@ Button {
     property bool destructive: false
     property bool prominent: false
     property bool quiet: false
+    // Keep the installed icon face independent from ordinary control labels.
+    readonly property bool iconOnly: /^[\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]$/u.test(text)
+    readonly property font glyphFont: Qt.font({ family: QuattroTheme.Theme.iconFontFamily,
+        pixelSize: root.font.pixelSize, weight: root.font.weight })
     implicitHeight: QuattroTheme.Theme.compactTarget
     implicitWidth: Math.max(QuattroTheme.Theme.compactTarget, contentItem.implicitWidth + 20)
     font.family: QuattroTheme.Theme.fontFamily
     font.pixelSize: QuattroTheme.Theme.typeBody
     hoverEnabled: true
+    focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : QuattroTheme.Theme.disabledOpacity
     Accessible.name: text
+    Accessible.description: ToolTip.text
     contentItem: Text {
         text: root.text
-        font: root.font
+        font: root.iconOnly ? root.glyphFont : root.font
         color: !root.enabled ? QuattroTheme.Theme.textDim
             : root.prominent ? QuattroTheme.Theme.background
             : root.destructive ? QuattroTheme.Theme.danger
@@ -24,25 +30,34 @@ Button {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
-        y: QuattroTheme.Theme.iconOpticalOffsetY
+        y: root.iconOnly ? QuattroTheme.Theme.iconOpticalOffsetY : 0
     }
     background: Rectangle {
         radius: QuattroTheme.Theme.cornerRadius
-        color: root.prominent ? QuattroTheme.Theme.textStrong
+        color: root.prominent ? (QuattroTheme.Theme.isInstrument && (root.down || root.hovered)
+            ? QuattroTheme.Theme.text : QuattroTheme.Theme.textStrong)
             : root.down ? QuattroTheme.Theme.pressed
             : root.hovered ? QuattroTheme.Theme.hover
             : root.quiet ? "transparent"
             : QuattroTheme.Theme.surfaceRaised
         border.width: root.activeFocus ? QuattroTheme.Theme.focusLine
+            : QuattroTheme.Theme.isInstrument && !root.quiet ? 1
             : root.destructive || root.prominent ? 1 : 0
-        border.color: root.activeFocus ? QuattroTheme.Theme.accent
+        border.color: root.activeFocus ? (QuattroTheme.Theme.isInstrument
+            ? QuattroTheme.Theme.textStrong : QuattroTheme.Theme.accent)
             : root.destructive ? QuattroTheme.Theme.danger
-            : QuattroTheme.Theme.border
+            : QuattroTheme.Theme.isInstrument && root.hovered ? QuattroTheme.Theme.borderStrong : QuattroTheme.Theme.border
 
         Behavior on color {
             ColorAnimation { duration: QuattroTheme.Theme.motionFast }
         }
     }
-    ToolTip.visible: hovered && ToolTip.text.length > 0
-    ToolTip.delay: 700
+    // Preserve existing callers' attached ToolTip.text as the content API.
+    ToolTip.visible: false
+    HoverTooltip {
+        target: root
+        text: root.ToolTip.text
+        hoverActive: root.hovered
+        focusActive: root.activeFocus
+    }
 }

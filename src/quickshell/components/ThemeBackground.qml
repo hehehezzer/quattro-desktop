@@ -20,12 +20,13 @@ PanelWindow {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
     WlrLayershell.namespace: "quattro-theme-background"
 
-    // Local artwork remains supported. Without it, Quattro ships a complete
-    // theme-aware background rather than falling back to a black canvas.
+    // Each theme ships an original material wallpaper. A user directory overrides
+    // the bundled set; missing artwork keeps the inexpensive native fallback.
     property string wallpaperDirectory: Quickshell.env("QUATTRO_WALLPAPER_DIR") || ""
 
     Rectangle {
         anchors.fill: parent
+        visible: !QuattroTheme.Theme.isInstrument
         gradient: Gradient {
             GradientStop { position: 0.0; color: QuattroTheme.Theme.canvasTop }
             GradientStop { position: 0.58; color: QuattroTheme.Theme.background }
@@ -36,6 +37,7 @@ PanelWindow {
     // Broad static planes give the desktop depth while remaining cheaper than
     // blur, shaders, particles, or continuously animated effects.
     Rectangle {
+        visible: !QuattroTheme.Theme.isInstrument
         width: parent.width * 0.72
         height: Math.max(220, parent.height * 0.28)
         x: -width * 0.16
@@ -46,6 +48,7 @@ PanelWindow {
     }
 
     Rectangle {
+        visible: !QuattroTheme.Theme.isInstrument
         width: parent.width * 0.58
         height: Math.max(180, parent.height * 0.22)
         x: parent.width - width * 0.78
@@ -58,6 +61,7 @@ PanelWindow {
     Canvas {
         id: atmosphere
         anchors.fill: parent
+        visible: !QuattroTheme.Theme.isInstrument
         renderStrategy: Canvas.Cooperative
 
         function repaint() {
@@ -70,6 +74,8 @@ PanelWindow {
         onPaint: {
             const ctx = getContext("2d")
             ctx.clearRect(0, 0, width, height)
+            if (QuattroTheme.Theme.isInstrument)
+                return
             ctx.save()
             ctx.strokeStyle = QuattroTheme.Theme.canvasLine
             ctx.fillStyle = QuattroTheme.Theme.canvasLine
@@ -164,9 +170,9 @@ PanelWindow {
     Image {
         id: wallpaper
         anchors.fill: parent
-        source: root.wallpaperDirectory === "" ? ""
-            : "file://" + root.wallpaperDirectory + "/"
-                + QuattroTheme.Theme.current + ".png"
+        source: root.wallpaperDirectory === ""
+            ? Qt.resolvedUrl("../assets/wallpapers/" + QuattroTheme.Theme.current + ".png")
+            : "file://" + root.wallpaperDirectory + "/" + QuattroTheme.Theme.current + ".png"
         fillMode: Image.PreserveAspectCrop
         horizontalAlignment: Image.AlignHCenter
         verticalAlignment: Image.AlignVCenter
@@ -174,7 +180,7 @@ PanelWindow {
         cache: true
         smooth: true
         mipmap: true
-        opacity: status === Image.Ready ? 0.88 : 0
+        opacity: status === Image.Ready ? 1 : 0
 
         Behavior on opacity {
             NumberAnimation {

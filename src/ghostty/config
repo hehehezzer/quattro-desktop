@@ -1,0 +1,36 @@
+# Ghostty terminal preferences. Quattro manages only the included palette.
+# Preserve the font actually resolved by Foot's JetBrains Mono request.
+font-family = JetBrainsMono Nerd Font
+font-size = 12
+# Bash remains the account's default shell; keep native startup files.
+shell-integration = detect
+# Ghostty measures scrollback in bytes, unlike Foot's 10000-line setting.
+scrollback-limit = 10485760
+copy-on-select = true
+keybind = ctrl+shift+c=copy_to_clipboard
+keybind = ctrl+shift+v=paste_from_clipboard
+# Keep text on an opaque base; theme artwork supplies the depth.
+background-opacity = 1
+# First launch stays valid before Quattro generates its selected palette.
+background = #101112
+foreground = #ecece7
+selection-background = #ecece7
+selection-foreground = #101112
+cursor-color = #ecece7
+config-file = ?quattro-theme.conf
+
+# A compact terminal surface under Hyprland; new windows pick up geometry.
+window-decoration = none
+gtk-titlebar = false
+gtk-toolbar-style = flat
+window-padding-x = 24
+window-padding-y = 20
+window-padding-balance = true
+cursor-style = block
+cursor-style-blink = false
+
+# Coordinated artwork is supplied by quattro-theme; preserve readable text.
+background-image-opacity = 0.24
+background-image-fit = cover
+background-image-position = center
+background-image-repeat = false

@@ -15,7 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
-from quattro_agent.decision_taxonomy import ACTIONS, DETERMINISTIC, DecisionClass, classify_decision, validate_request
+from quattro_agent.decision_taxonomy import EFFECTS, validate_request
 from quattro_agent.decision_service import DecisionSession
 from quattro_agent.decision_mcp import handle, tool_spec
 from quattro_agent.decision_launch import OPTIONS, NATIVE_PROXY, codex_arguments
@@ -25,16 +25,20 @@ from quattro_agent.adapters import AgentMode, CodexAdapter, RunSpec
 from quattro_agent.policy import policy_profile
 
 
-def request(name="validation_strategy", revision=0):
-    return {"decision_type": name, "available_actions": list(ACTIONS[name]),
-            "relevant_context": {"tests_available": True, "changes_present": True},
+def request(effect="targeted_first", revision=0):
+    return {"schema_version": "quattro-jev-decisions-v2", "decision_id": "choose_current_step",
+            "question": "Which current step best addresses the available execution evidence?",
+            "options": [{"id": "take_bounded_step", "description": "Take this bounded step within the existing host constraints.",
+                         "effect": effect},
+                        {"id": "leave_for_reasoning", "description": "Return the unresolved decision to the execution agent.", "effect": "agent"}],
+            "context": {"tests_available": True, "changes_present": True},
             "hard_constraints": {"retry_allowed": False, "parallel_allowed": False, "retrieval_allowed": False},
             "execution_state": {"revision": revision, "phase": "validation", "attempt": 1},
             "previous_result": "success"}
 
 
 def answer(req, selected=None, confidence=0.99):
-    actions = req["available_actions"]
+    actions = [option["id"] for option in req["options"]]
     selected = selected or actions[0]
     return {"model": MODEL, "answers": {"decision": {
         "type": "choice", "choice": selected, "confidence": confidence,
@@ -50,7 +54,7 @@ setup=json.loads(sys.stdin.readline())
 for line in sys.stdin:
  r=json.loads(line)
  time.sleep(DELAY)
- actions=r['available_actions']; chosen=actions[0]
+ actions=[option['id'] for option in r['options']]; chosen=actions[0]
  answer={'model':'jev-latest','answers':{'decision':{
  'type':'choice','choice':chosen,'confidence':CONFIDENCE,
  'probabilities':{a:0.99 if a==chosen else 0.01/(len(actions)-1) for a in actions}}},
@@ -72,21 +76,21 @@ class DecisionPlaneTests(unittest.TestCase):
         self.addCleanup(session.close)
         return session, processes
 
-    def test_taxonomy_defaults_to_agent_and_never_selects_model(self):
-        for name in DETERMINISTIC:
-            self.assertEqual(classify_decision(name), DecisionClass.DETERMINISTIC)
-        for name in ACTIONS:
-            self.assertEqual(classify_decision(name), DecisionClass.JEV_ELIGIBLE)
-        for name in ("root_cause", "new_unsupported_type", "select_omniroute_model"):
-            self.assertEqual(classify_decision(name), DecisionClass.AGENT_REASONING)
-        self.assertNotIn("model_selection", ACTIONS)
-        self.assertNotIn("complete", {a for actions in ACTIONS.values() for a in actions})
+    def test_effect_adapters_cannot_select_models_or_declare_completion(self):
+        self.assertNotIn("model_selection", EFFECTS)
+        self.assertNotIn("complete", EFFECTS)
+        session, processes = self.session()
+        legacy = {"decision_type": "validation_strategy", "available_actions": ["targeted_first", "agent"],
+                  "relevant_context": {}, "hard_constraints": request()["hard_constraints"],
+                  "execution_state": request()["execution_state"], "previous_result": "success"}
+        self.assertEqual(session.decide(legacy)["evidence"], "invalid_state")
+        self.assertEqual(processes, [])
 
     def test_schema_rejects_content_and_arbitrary_actions(self):
         for mutate in (
             lambda r: r.update(prompt="private text"),
-            lambda r: r["relevant_context"].update(path="private path"),
-            lambda r: r["available_actions"].append("shell command"),
+            lambda r: r["context"].update(path="private path"),
+            lambda r: r["options"][0].update(effect="execute_shell"),
             lambda r: r.update(decision_type="model_selection"),
             lambda r: r["execution_state"].update(revision=True),
             lambda r: r["hard_constraints"].update(retry_allowed="yes"),
@@ -122,7 +126,7 @@ class FakeClient:
  def __init__(self,*args): pass
  def close(self): pass
  def evaluate_questions(self,state,questions,**kwargs):
-  actions=state['available_actions']; choice=actions[0]
+  actions=[option['id'] for option in state['options']]; choice=actions[0]
   return {'response':{'model':'jev-latest','answers':{'decision':{
    'type':'choice','choice':choice,'confidence':0.99,
    'probabilities':{a:0.99 if a==choice else 0.01/(len(actions)-1) for a in actions}}},
@@ -142,7 +146,7 @@ runpy.run_path(WORKER,run_name='__main__')
         session, _ = self.session()
         session.decide(request(), cacheable=True)
         changed = request()
-        changed["relevant_context"]["tests_available"] = False
+        changed["context"]["tests_available"] = False
         session.decide(changed, cacheable=True)
         self.assertEqual(session.snapshot()["counts"]["calls"], 2)
 
@@ -190,7 +194,7 @@ runpy.run_path(WORKER,run_name='__main__')
         turn = gate.begin('thread', 'Inspect the repository and run tests', 'codex')
         def become_stale(_request):
             gate.observe_runtime(turn)
-            return {'selected_action': 'targeted_first', 'fallback_required': False}
+            return {'selected_action': 'take_bounded_step', 'selected_effect': 'targeted_first', 'fallback_required': False}
         with mock.patch.object(session, 'decide', side_effect=become_stale):
             self.assertTrue(gate.decide(request())["fallback_required"])
         gate.finish(turn)
@@ -199,10 +203,10 @@ runpy.run_path(WORKER,run_name='__main__')
         session, _ = self.session(confidence=0.4)
         result = session.decide(request())
         self.assertEqual(result["evidence"], "uncertain")
-        self.assertEqual(result["provider_selected_action"], "targeted_first")
+        self.assertEqual(result["provider_selected_action"], "take_bounded_step")
         self.assertEqual(result["confidence"], .4)
         session2, _ = self.session()
-        self.assertEqual(session2.decide(request("retry_strategy"))["evidence"], "hard_policy")
+        self.assertEqual(session2.decide(request("retry"))["evidence"], "hard_policy")
 
     def test_timeout_is_bounded_and_worker_reaped(self):
         session, processes = self.session(delay=2, timeout_ms=100)
@@ -409,20 +413,20 @@ runpy.run_path(WORKER,run_name='__main__')
         self.assertEqual(result["provider_attempt"], "NOT_ATTEMPTED")
         session.popen.assert_not_called()
 
-    def test_uncapped_completion_and_telemetry(self):
+    def test_budget_completion_and_telemetry(self):
         session, _ = self.session()
-        r = request("progress_strategy")
+        r = request("validate")
         r["execution_state"]["phase"] = "completion"
         result = session.decide(r)
-        self.assertIn(result["selected_action"], ACTIONS["progress_strategy"])
-        for revision in range(1, 101):
-            self.assertFalse(session.decide(request(revision=revision))["fallback_required"])
-        self.assertFalse(hasattr(session, "MAX_CALLS"))
+        self.assertEqual(result["selected_action"], "take_bounded_step")
+        self.assertEqual(result["selected_effect"], "validate")
+        session.MAX_CALLS = 1
+        self.assertEqual(session.decide(request(revision=1))["evidence"], "budget")
         telemetry = session.snapshot()
         self.assertIsNone(telemetry["cost"])
         self.assertIsNone(telemetry["model_turns_avoided"])
-        self.assertEqual(telemetry["calls_by_type"], {"progress_strategy": 1, "validation_strategy": 100})
-        self.assertEqual(telemetry["counts"]["input_tokens"], 2020)
+        self.assertEqual(telemetry["calls_by_type"], {"dynamic": 1})
+        self.assertEqual(telemetry["counts"]["input_tokens"], 20)
         self.assertGreater(result["timing"]["blocking_ms"], 0)
         self.assertEqual(result["timing"]["useful_overlap_ms"], 0)
 
