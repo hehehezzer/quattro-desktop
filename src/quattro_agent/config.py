@@ -175,7 +175,7 @@ def validate_ai_config(source: Mapping[str, Any], *, home: Path | None = None) -
     )
     if root["schemaVersion"] != CURRENT_AI_CONFIG_VERSION:
         _fail("$.schemaVersion", f"must be {CURRENT_AI_CONFIG_VERSION}; migrate first")
-    default_agent = _enum(root["defaultAgent"], "$.defaultAgent", {"codex", "pi"})
+    default_agent = _enum(root["defaultAgent"], "$.defaultAgent", {"codex", "pi", "omp"})
     if "nativeSession" in root:
         native = _mapping(root["nativeSession"], "$.nativeSession", {
             "preferredAgent", "skillsCatalog", "herdrSocket",

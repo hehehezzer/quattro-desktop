@@ -527,6 +527,8 @@ _CHILD_ENVIRONMENT = (
     "QUATTRO_CONFIG", "QUATTRO_STATE_DIR", "QUATTRO_DATA_DIR",
     "QUATTRO_CODEX_DATA_DIR", "QUATTRO_CODEX_HOME_ROOT", "QUATTRO_MODEL_CATALOG",
     "QUATTRO_OMNIROUTE_BASE_URL", "QUATTRO_WORKSPACE", "NO_COLOR",
+    "QUATTRO_OMP_BUN", "QUATTRO_OMP_PACKAGE_ROOT", "QUATTRO_OMP_AGENT_DIR",
+    "QUATTRO_OMP_RUNTIME_MANIFEST", "QUATTRO_OMP_RUNTIME_MANIFEST_SHA256",
 )
 
 
@@ -3111,7 +3113,7 @@ def build_parser() -> argparse.ArgumentParser:
     sessions.add_argument("action", choices=("status", "clean", "native", "open", "stop"), nargs="?", default="status")
     sessions.add_argument("session_id", nargs="?")
     new_task = sub.add_parser("new-task")
-    new_task.add_argument("--agent", choices=("codex", "pi"), default=None)
+    new_task.add_argument("--agent", choices=("codex", "pi", "omp"), default=None)
     new_task.add_argument("--directory")
     new_task.add_argument("--prompt", default="")
     new_task.add_argument("--mode", choices=("interactive", "prompt"), default="interactive")
@@ -3119,7 +3121,7 @@ def build_parser() -> argparse.ArgumentParser:
     new_task.add_argument("--confirm-full-access", action="store_true")
     new_task.add_argument("--scope", action="append", default=[], help="repository-relative writable scope; repeatable")
     submit = sub.add_parser("submit", help="queue a durable task and return immediately")
-    submit.add_argument("--agent", choices=("auto", "codex", "pi"), default="auto")
+    submit.add_argument("--agent", choices=("auto", "codex", "pi", "omp"), default="auto")
     submit.add_argument("--directory")
     submit.add_argument("--prompt", required=True)
     submit.add_argument("--policy")
@@ -3664,7 +3666,7 @@ def main() -> int:
         return open_diff_in_zed(safe_directory(args.directory))
     if command == "prompt":
         values = list(args.values)
-        agent = values.pop(0) if values and values[0] in ("codex", "pi") else str(config["defaultAgent"])
+        agent = values.pop(0) if values and values[0] in ("codex", "pi", "omp") else str(config["defaultAgent"])
         prompt_value = values.pop(0) if values else ""
         directory_value = values.pop(0) if values else None
         if values:
@@ -3737,10 +3739,10 @@ def main() -> int:
             try:
                 logical = harness().store.get_logical_session(logical_id)
                 logical_agent = str(logical.get("agent") or "codex")
-                if logical_agent == "pi":
+                if logical_agent in {"pi", "omp"}:
                     die(
-                        "native Pi resume is unavailable because managed logical sessions "
-                        "do not yet store a Pi-native session reference"
+                        f"native {logical_agent.upper()} resume is unavailable for managed logical sessions; "
+                        "use resume --prompt for checkpoint context recovery"
                     )
                 native_interactive_handoff(
                     logical_agent,
@@ -3754,9 +3756,11 @@ def main() -> int:
                 return 0  # reached only by test doubles
             except (ConfigError, LeaseConflict, OSError, ValueError, RuntimeError) as error:
                 die(str(error))
-        prepare_codex_launch(config, args.account or str(config["defaultCodexAccount"]))
-        native_rows = scan_codex_sessions(config)
         logical = harness().store.get_logical_session(logical_id)
+        native_rows = []
+        if logical.get("agent") == "codex":
+            prepare_codex_launch(config, args.account or str(config["defaultCodexAccount"]))
+            native_rows = scan_codex_sessions(config)
         native_id = logical.get("current_codex_session_id")
         native_available = bool(native_id and any(
             row.get("sessionId") == native_id and row.get("resumable") for row in native_rows

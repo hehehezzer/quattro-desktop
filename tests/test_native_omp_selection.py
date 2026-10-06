@@ -55,8 +55,7 @@ class NativeConfigTests(unittest.TestCase):
                     validate_ai_config(source)
         source = self.source()
         source["defaultAgent"] = "omp"
-        with self.assertRaises(ConfigError):
-            validate_ai_config(source)
+        self.assertEqual(validate_ai_config(source)["defaultAgent"], "omp")
 
 
 class NativeChooserTests(unittest.TestCase):

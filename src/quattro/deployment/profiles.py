@@ -30,6 +30,7 @@ CORE_DEPLOYMENT_MAPPINGS = {
             "benchmark.py", "cli.py", "interactive.py", "codex_turn_bridge.py",
             "native_session.py", "turn_gate.py", "turn_transport.py", "turn_routing.py",
             "omp_bridge.py", "herdr_runtime.py", "migration_cli.py", "omp_sessions.py",
+            "scoped_omp_runtime.py", "omp_context_worker.py", "omp_deployment.py",
             "jev.py", "jev_shadow.py", "jev_worker.py", "jev_preferences.py", "provider_access.py",
             "decision_checkpoint.py", "operational_advice.py", "operational_native.py",
             "decision_taxonomy.py", "decision_service.py", "decision_mcp.py", "decision_launch.py", "runtime_milestones.py",
@@ -61,6 +62,10 @@ CORE_DEPLOYMENT_MAPPINGS = {
     "core-model-policy": (
         "src/quattro_agent/data/model-policy.json",
         ".local/bin/quattro_agent/data/model-policy.json",
+    ),
+    "core-scoped-omp-runtime": (
+        "src/quattro_agent/data/scoped-omp-runtime.ts",
+        ".local/bin/quattro_agent/data/scoped-omp-runtime.ts",
     ),
     "core-pi-turn-gate": (
         "src/quattro_agent/data/pi-turn-gate.ts",

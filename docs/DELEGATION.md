@@ -68,3 +68,32 @@ The existing event ledger records requested provider/model, worker duration, tok
 usage, and retry count. Worker failures return a compact failure result to Codex. The
 harness performs no automatic retry; Codex may retry once only when it can provide
 materially better context.
+
+## Selected durable OMP workers
+
+With `defaultAgent: "omp"`, new bounded specialists and the read-only specialist
+roles in implementation-review workflows use the closed OMP SDK driver. The
+existing `delegate run` command remains compatible; historical Pi task and
+session identities remain Pi. Explicit durable submission also accepts
+`submit --agent omp --policy audit-read-only` and `prompt omp`.
+
+The durable worker is context-only: Quattro assembles bounded mandatory policy,
+repository evidence and retrieval, then sends the private input over stdin.
+The reviewed SDK registers no tools and keeps its native session in memory.
+Its real provider is `openai-codex`, model `gpt-6.1-sol`, effort `medium`, using
+the existing native `quattro` profile. It does not receive a fabricated
+OmniRoute execution plan or Pi runtime directory. Native authentication stays
+in the existing OMP directory and is accessed only by OMP's SDK.
+
+A deployment supplies explicit absolute `QUATTRO_OMP_BUN`,
+`QUATTRO_OMP_PACKAGE_ROOT`, `QUATTRO_OMP_RUNTIME_MANIFEST` and its reviewed
+`QUATTRO_OMP_RUNTIME_MANIFEST_SHA256` pin. `QUATTRO_OMP_AGENT_DIR` may explicitly
+select the existing native profile directory; otherwise the default is
+`~/.omp/profiles/quattro/agent`. Missing deployment evidence fails closed.
+The harness API accepts the equivalent explicit `omp_sdk_paths`,
+`omp_agent_dir` and `omp_runtime_pin` constructor values.
+
+Writable policies and native resume are unsupported for these durable workers.
+Checkpoint recovery creates a fresh read-only OMP turn carrying Quattro's
+logical checkpoint; it does not claim to resume a native OMP transcript.
+Native interactive Herdr/OMP launch remains a separate approval boundary.

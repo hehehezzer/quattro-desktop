@@ -64,7 +64,7 @@ class TaskDelegationDecision:
 
 def select_execution_agent(request: str, *, requested: str | None = None) -> str:
     """Choose the execution runtime without involving OmniRoute routing."""
-    if requested in {"codex", "pi"}:
+    if requested in {"codex", "pi", "omp"}:
         return requested
     if re.search(r"(?i)\b(?:automation|automate|browser|long[- ]running|workflow)\b", request):
         return "pi"
@@ -99,7 +99,7 @@ def classify_task_request(request: str, *, preferred_agent: str = "codex") -> Ta
         return TaskDelegationDecision("DIRECT", "interactive_session_without_prompt", 1.0, None)
     if "\x00" in compact:
         raise ValueError("request must contain safe characters")
-    agent = preferred_agent if preferred_agent in {"codex", "pi"} else "codex"
+    agent = preferred_agent if preferred_agent in {"codex", "pi", "omp"} else "codex"
     # An explanatory question is not an instruction to execute its subject.
     action_clause = re.search(
         r"(?i)(?:\.\s+|;\s*|\b(?:and|then)\s+)(?:then\s+)?"
@@ -161,8 +161,10 @@ def decide_delegation(objective: str, kind: str) -> DelegationDecision:
     return DelegationDecision(False, "codex_direct_is_cheaper", kind)
 
 
-def worker_prompt(objective: str, kind: str) -> str:
-    return f"""You are a temporary Pi specialist working for a primary Codex session.
+def worker_prompt(objective: str, kind: str, *, agent: str = "pi") -> str:
+    if agent not in {"pi", "omp"}:
+        raise ValueError("unsupported specialist runtime")
+    return f"""You are a temporary {agent.upper()} specialist working for a primary Codex session.
 
 BOUNDED ROLE: {kind}
 OBJECTIVE: {objective.strip()}
@@ -183,15 +185,18 @@ NEXT_ACTION
 """
 
 
-def codex_delegation_instructions(max_workers: int) -> str:
+def codex_delegation_instructions(max_workers: int, *, agent: str = "pi") -> str:
+    if agent not in {"pi", "omp"}:
+        raise ValueError("unsupported specialist runtime")
+    worker = "OMP" if agent == "omp" else "Pi"
     return f"""Codex is the sole primary orchestrator. Keep simple edits, obvious bugs, and
 small configuration changes in this session. When context isolation is materially useful,
 delegate one bounded read-only specialist task with:
   quattro-agent delegate run --kind KIND --directory PATH --objective TEXT
-Kinds: exploration, implementation, tests, review, security. Pi returns focused evidence or
+Kinds: exploration, implementation, tests, review, security. {worker} returns focused evidence or
 an exact change proposal for Codex to integrate and validate; it does not own architecture or
 final implementation. Never pass conversation transcripts or secrets. Use at most {max_workers}
-concurrent Pi workers, normally one, never spawn recursively, and retry at most once only when
+concurrent {worker} workers, normally one, never spawn recursively, and retry at most once only when
 Codex can provide materially better context. If the policy declines delegation, work directly.
 """
 

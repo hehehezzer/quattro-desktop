@@ -1,4 +1,4 @@
-"""Normalized runtime adapters for the only supported agents: Codex and Pi."""
+"""Normalized runtime adapters for Codex, historical Pi, and closed OMP."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 import sys
+import re
 from typing import Mapping
 
 from .policy import ApprovalMode, NetworkAccess, PolicyProfile
@@ -43,6 +44,11 @@ class RunSpec:
     private_input: str | None = None
     delegated_worker: bool = False
     model_override: str | None = None
+    omp_package_root: Path | None = None
+    omp_agent_dir: Path | None = None
+    omp_session_dir: Path | None = None
+    omp_runtime_manifest: Path | None = None
+    omp_runtime_manifest_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if not self.project_path.is_absolute():
@@ -51,6 +57,10 @@ class RunSpec:
             raise ValueError("private agent input exceeds 1 MiB")
         if self.model_override is not None and (not self.model_override or len(self.model_override) > 200 or "\x00" in self.model_override):
             raise ValueError("model override is invalid")
+        for runtime_path in (self.omp_package_root, self.omp_agent_dir, self.omp_session_dir, self.omp_runtime_manifest):
+            if runtime_path is not None and (not runtime_path.is_absolute()
+                    or len(str(runtime_path)) > 4096 or "\x00" in str(runtime_path)):
+                raise ValueError("absolute bounded OMP runtime paths required")
         if self.mode is AgentMode.RESUME_PROMPT:
             if not self.native_session_ref:
                 raise ValueError("resume-prompt requires an exact native session")
@@ -270,9 +280,67 @@ class PiAdapter(AgentAdapter):
         )
 
 
+class OMPAdapter(AgentAdapter):
+    """Context-only OMP execution through the closed SDK, never native CLI.
+
+    The caller supplies a reviewed Bun/package installation. No native tools
+    are registered and the native session is memory-only. Writable tasks and
+    native resume require a separately enforced host tool/session boundary.
+    """
+
+    name = "omp"
+
+    @property
+    def capabilities(self) -> AgentCapabilities:
+        return AgentCapabilities(
+            agent=self.name, supports_resume=False, supports_native_approvals=False,
+            supports_native_sandbox=False, requires_harness_containment=False,
+            supported_network=frozenset({NetworkAccess.NONE, NetworkAccess.FULL}),
+            supported_tools=frozenset(),
+        )
+
+    def assert_policy_supported(self, spec: RunSpec) -> None:
+        super().assert_policy_supported(spec)
+        if spec.policy.writable_roots:
+            raise ValueError("OMP writable execution requires an enforced Quattro host tool boundary")
+        if spec.mode is not AgentMode.PROMPT or spec.native_session_ref:
+            raise ValueError("closed OMP currently supports fresh context-only prompt runs; native resume is unavailable")
+        if spec.model_override not in (None, "gpt-6.1-sol", "openai-codex/gpt-6.1-sol"):
+            raise ValueError("closed OMP requires openai-codex/gpt-6.1-sol with medium effort")
+
+    def build_launch(self, binary: str, spec: RunSpec) -> LaunchPlan:
+        self.assert_policy_supported(spec)
+        if not Path(binary).is_absolute():
+            raise ValueError("closed OMP requires an explicit reviewed Bun executable")
+        if any(path is None for path in (spec.omp_package_root, spec.omp_agent_dir, spec.omp_session_dir,
+                                         spec.omp_runtime_manifest)):
+            raise ValueError("closed OMP SDK installation and native runtime paths are unavailable")
+        if (not isinstance(spec.omp_runtime_manifest_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", spec.omp_runtime_manifest_sha256)):
+            raise ValueError("closed OMP requires a trusted deployment manifest digest")
+        text = spec.private_input or ""
+        if not text.strip() or len(text.encode("utf-8")) > 131072 or "\x00" in text:
+            raise ValueError("closed OMP requires a bounded private prompt")
+        return LaunchPlan(
+            agent=self.name,
+            argv=(sys.executable, "-I", str(Path(__file__).with_name("omp_context_worker.py").resolve()),
+                  "--bun", binary, "--package-root", str(spec.omp_package_root),
+                  "--directory", str(spec.project_path), "--agent-dir", str(spec.omp_agent_dir),
+                  "--session-dir", str(spec.omp_session_dir),
+                  "--runtime-manifest", str(spec.omp_runtime_manifest),
+                  "--runtime-manifest-sha256", spec.omp_runtime_manifest_sha256,
+                  "--task", spec.task_id, "--run", spec.run_id,
+                  "--timeout", str(min(spec.policy.max_seconds, 300))),
+            cwd=spec.project_path, stdin_text=text,
+            environment_overrides={"QUATTRO_MANAGED_SESSION": "1"},
+        )
+
+
 def adapter_for(agent: str) -> AgentAdapter:
     if agent == "codex":
         return CodexAdapter()
     if agent == "pi":
         return PiAdapter()
+    if agent == "omp":
+        return OMPAdapter()
     raise ValueError(f"unsupported agent: {agent}")

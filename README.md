@@ -55,7 +55,8 @@ do not create Quattro tasks or select providers.
 
 - Deterministic DIRECT versus DELEGATE request classification.
 - FAST/STANDARD/REASONING routing and bounded effort escalation.
-- Codex and optional Pi adapters with task-scoped policy profiles.
+- Codex, closed OMP context workers, and retained Pi compatibility adapters with
+  task-scoped policy profiles.
 - SQLite/WAL persistence, checkpoints, resume/recovery, cancellation, and
   terminal validation.
 - Cooperative global/repository limits and repository-relative write scopes.
@@ -101,6 +102,10 @@ Windows.
 - Pi 0.8x or a compatible newer release only when delegated specialists are
   enabled. Pi is optional and writable Pi execution remains fail-closed unless
   the runtime can enforce the requested network policy.
+- OMP 18.6.3 and Bun 1.3.14 or newer for the reviewed OMP SDK route. Durable OMP
+  currently accepts context-only read-only tasks; native coding terminals use
+  the separate reviewed Herdr/OMP route. See [the durable contract](docs/DURABLE_OMP.md)
+  and [the scoped host-tool contract](docs/SCOPED_OMP.md).
 - OmniRoute with the Responses-compatible local endpoint and the Quattro,
   account-qualified GPT-6 Astra/GPT-5.6, and verified Antigravity route labels when direct
   or Codex execution is used. The endpoint and catalog are configurable;

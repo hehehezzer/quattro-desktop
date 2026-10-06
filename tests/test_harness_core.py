@@ -462,7 +462,7 @@ class TaskStoreTests(StoreTestCase):
             )
             self.assertEqual(
                 connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0],
-                "3",
+                "4",
             )
         run_two = migrated.create_run(task_id)
         migrated.create_step(task_id, "Tests", position=1, run_id=run_two)

@@ -3,12 +3,12 @@
 This package is intentionally independent from the legacy ``quattro-agent``
 entry point.  It provides the storage, policy, workflow, validation, adapter,
 and process-supervision contracts needed for a later compatibility migration.
-Only OpenAI Codex and Pi are valid agent runtimes.
+OpenAI Codex, historical Pi, and closed OMP are valid agent runtimes.
 """
 
 __version__ = "0.2.0"
 
-from .adapters import CodexAdapter, PiAdapter, adapter_for
+from .adapters import CodexAdapter, OMPAdapter, PiAdapter, adapter_for
 from .delegation import (
     DelegationDecision, TaskDelegationDecision, classify_task_request,
     decide_delegation, select_execution_agent,
@@ -43,6 +43,7 @@ __all__ = [
     "CURRENT_AI_CONFIG_VERSION",
     "CodexAdapter",
     "PiAdapter",
+    "OMPAdapter",
     "DelegationDecision",
     "TaskDelegationDecision",
     "classify_task_request",
