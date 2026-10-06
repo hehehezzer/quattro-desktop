@@ -3250,6 +3250,7 @@ class HarnessRuntime:
         account_id: str | None = None,
         reason: str = "Forced checkpoint recovery",
         failed_physical_session_id: str | None = None,
+        followup_prompt: str | None = None,
     ) -> str:
         session = self.store.get_logical_session(quattro_session_id)
         resource = self.scheduler.logical_session_resource(quattro_session_id)
@@ -3278,6 +3279,8 @@ class HarnessRuntime:
             checkpoint = self.store.current_checkpoint(quattro_session_id, include_content=True)
             assert checkpoint is not None
         packet, _differences = self.recovery_packet_for_session(quattro_session_id)
+        if followup_prompt and followup_prompt.strip():
+            packet += "\n\nCurrent user request for this recovered session:\n" + followup_prompt
         session_agent = str(session.get("agent") or "codex")
         return self.create_task(
             agent=session_agent,
@@ -3305,6 +3308,7 @@ class HarnessRuntime:
         if session.get("agent") == "omp":
             return self.prepare_recovery_task(
                 quattro_session_id, reason="OMP checkpoint context restart; native resume is unsupported",
+                followup_prompt=prompt,
             ), "checkpoint-recovery"
         if native and native_session_available and prompt and prompt.strip():
             current_task = session.get("current_task_id")

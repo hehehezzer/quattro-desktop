@@ -321,11 +321,27 @@ class DecisionSession:
 
     def _decide(self, request, *, cacheable, started, abandoned, trace, cancelled, capabilities):
         result = None
+
+        def cancellation_observed():
+            # Host-state I/O stays on the bounded monitor, including cache
+            # hits and admission. A stalled callback cannot extend the caller's
+            # deadline; failure to inspect cancellation denies advice.
+            try:
+                stopped = cancelled is not None and bool(cancelled())
+            except Exception:
+                stopped = True
+            if stopped:
+                self.cache = None
+                self.request_close()  # Wake the caller before monitor cleanup.
+            return stopped
+
         try:
             if self.closed.is_set() or self.mode != "COOPERATIVE":
                 self._count("skipped")
                 result = self._fallback("closed" if self.closed.is_set() else "disabled")
                 return result
+            if cancellation_observed():
+                return self._fallback("cancelled")
             try:
                 request = validate_request(request)
                 encoded = json.dumps(request, sort_keys=True, separators=(",", ":"), allow_nan=False)
@@ -346,6 +362,8 @@ class DecisionSession:
                 self.cache = None
                 self.revision = revision
             if cacheable and self.cache is not None and self.cache[0] == cache_key:
+                if cancellation_observed():
+                    return self._fallback("cancelled")
                 self._count("cache_hits")
                 result = dict(self.cache[1])
                 result["cache_hit"] = True
@@ -367,6 +385,8 @@ class DecisionSession:
             try:
                 deadline = started + self.timeout_ms / 1000
                 self._start(deadline, abandoned)
+                if cancellation_observed():
+                    raise JevFailure("cancelled")
                 with self.worker_lock:
                     if self.closed.is_set() or self.process is None:
                         raise JevFailure("closed")
@@ -379,17 +399,8 @@ class DecisionSession:
                 while True:
                     if self.closed.is_set():
                         raise JevFailure("cancelled")
-                    if cancelled is not None:
-                        # Host-state I/O belongs on the bounded monitor side,
-                        # just like credential lookup. A stalled SQLite reader
-                        # cannot extend the calling thread's provider deadline.
-                        try:
-                            cancellation_observed = bool(cancelled())
-                        except Exception:
-                            cancellation_observed = True
-                        if cancellation_observed:
-                            self.request_close()  # Wake caller before any reaping.
-                            raise JevFailure("cancelled")
+                    if cancellation_observed():
+                        raise JevFailure("cancelled")
                     remaining = deadline - time.perf_counter()
                     if remaining <= 0:
                         raise queue.Empty
@@ -414,6 +425,8 @@ class DecisionSession:
                     category = value["failure_category"]
                     raise JevFailure(category if category in FAILURES else "worker_failure")
                 response = validate_response(value.get("response"), {"decision": question(request)["decision"]["criteria"]})
+                if cancellation_observed():
+                    raise JevFailure("cancelled")
                 if self.closed.is_set() or abandoned.is_set() or (time.perf_counter() - started) * 1000 >= self.timeout_ms:
                     raise JevFailure("closed" if self.closed.is_set() else "timeout")
                 self.cooldown.observe(self.cooldown_key, None)

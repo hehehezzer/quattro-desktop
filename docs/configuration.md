@@ -64,8 +64,8 @@ labels, and unconfirmed full access are rejected.
 ## Optional native session selection
 
 The optional strict `nativeSession` section selects an interactive harness and
-an existing named Herdr server. It does not change `defaultAgent` (`codex` or
-`pi`), durable task adapters, account selection, or sandbox policy profiles.
+an existing named Herdr server. It does not change `defaultAgent` (`codex`,
+`pi`, or `omp`), durable task adapters, account selection, or sandbox policy profiles.
 All three fields are required when the section is present:
 
 ```json
@@ -85,7 +85,9 @@ placeholders, not a deployment recommendation.
 
 With this section, `quattro-agent launch` offers Codex, OMP, and explicit Pi
 compatibility; non-terminal callers use `preferredAgent`. Without it, the
-existing Codex/Pi chooser and default remain unchanged. Choosing OMP requires
+existing Codex/Pi chooser and default remain unchanged unless `defaultAgent`
+is `omp`, which also enables the OMP chooser. That default still requires an
+explicit `--skills` catalog when no native section is configured. Choosing OMP requires
 `quattro-agent launch --confirm-native-access` at action time and starts a
 persistent terminal through the configured socket. Configuring a preference
 never supplies that confirmation. `--skills` and `--socket` can explicitly select

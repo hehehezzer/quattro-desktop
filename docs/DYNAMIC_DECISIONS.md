@@ -46,6 +46,11 @@ agent fallback, unavailable capabilities, malformed responses, or provider
 failure returns control to native reasoning. The system never retries an
 ambiguous provider POST. Session deadlines, single-flight ownership, worker
 capacity, cooldown, and a finite 64-attempt session budget remain enforced.
+Host cancellation is checked on the monitor before worker admission, cache reuse,
+provider submission and response acceptance. An already cancelled request starts
+no worker or credential lookup; a stalled cancellation observer remains covered
+by the caller's deadline. Cancellation discards cached advice and closes the
+session without publishing an accepted result.
 
 Cache identity includes the complete question, option descriptions and effects,
 parameters, state, restrictions, and trusted capability observations. Native

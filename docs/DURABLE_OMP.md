@@ -38,6 +38,11 @@ the existing bounded-context/no-agent-tools execution guarantee. Network policy
 here describes the unavailable tool execution surface; model transport remains
 the authorized provider connection.
 
+`resume SESSION --prompt TEXT` starts a fresh read-only OMP worker with the
+latest checkpoint context and the supplied new request. The request remains
+subject to the closed worker's assembled-input bound; it does not enable native
+resume or writable tools.
+
 `workspace-write` and full-access tasks require a separately reviewed Quattro
 host tool boundary before OMP can execute them. Approval dialogs alone cannot
 restrict filesystem roots or network access. The scheduler reserves OMP

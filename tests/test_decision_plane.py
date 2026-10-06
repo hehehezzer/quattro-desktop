@@ -463,24 +463,34 @@ runpy.run_path(WORKER,run_name='__main__')
         self.assertFalse(session.capacity_owned)
 
     def test_stalled_host_state_lookup_cannot_extend_the_caller_deadline(self):
-        session, processes = self.session(delay=2, timeout_ms=100)
-        entered, release = threading.Event(), threading.Event()
-        def stalled():
-            entered.set()
-            release.wait()
-            return False
-        try:
-            started = time.perf_counter()
-            result = session.decide(request(), cancelled=stalled)
-            self.assertEqual(result['evidence'], 'timeout')
-            self.assertLess(time.perf_counter() - started, .4)
-            self.assertTrue(entered.is_set())
-            self.assertTrue(session.capacity_owned)
-        finally:
-            release.set()
-            session.close()
-        self.assertFalse(session.capacity_owned)
-        self.assertTrue(all(process.poll() is not None for process in processes))
+        # Host observations can stall before admission, after startup, or while
+        # waiting for the provider. Only an existing worker owns capacity.
+        for stall_at in (1, 2, 3):
+            with self.subTest(stall_at=stall_at):
+                session, processes = self.session(delay=2, timeout_ms=100)
+                entered, release = threading.Event(), threading.Event()
+                calls = []
+
+                def stalled():
+                    calls.append(True)
+                    if len(calls) == stall_at:
+                        entered.set()
+                        release.wait()
+                    return False
+
+                try:
+                    started = time.perf_counter()
+                    result = session.decide(request(), cancelled=stalled)
+                    self.assertEqual(result['evidence'], 'timeout')
+                    self.assertLess(time.perf_counter() - started, .4)
+                    self.assertTrue(entered.is_set())
+                    self.assertEqual(session.capacity_owned, stall_at > 1)
+                    self.assertEqual(len(processes), int(stall_at > 1))
+                finally:
+                    release.set()
+                    session.close()
+                self.assertFalse(session.capacity_owned)
+                self.assertTrue(all(process.poll() is not None for process in processes))
 
     def test_cached_and_timed_out_timing_cannot_reuse_old_network_samples(self):
         session, _ = self.session()

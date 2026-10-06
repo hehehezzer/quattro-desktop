@@ -13,6 +13,17 @@ sys.path.insert(0, str(SOURCE / "src"))
 from quattro.deployment.profiles import CORE_DEPLOYMENT_MAPPINGS
 
 
+def safe_path(path: Path, *, directory: bool = False) -> None:
+    """Reject links at every level and nonregular existing destinations."""
+    for parent in path.parents:
+        if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
+            raise ValueError("staging paths must have unlinked directory ancestors")
+    if path.is_symlink():
+        raise ValueError("staging paths must not contain symbolic links")
+    if path.exists() and not (path.is_dir() if directory else path.is_file()):
+        raise ValueError("staging path must be a directory" if directory else "Core source or destination must be a regular file")
+
+
 def stage(source: Path, home: Path, skills: Path) -> dict:
     """Copy only public Core artifacts; never inspect account stores/history."""
     source, home, skills = source.resolve(strict=True), home.resolve(strict=True), skills.resolve(strict=True)
@@ -21,7 +32,8 @@ def stage(source: Path, home: Path, skills: Path) -> dict:
     payload = {}
     for relative in sorted({item[0] for item in CORE_DEPLOYMENT_MAPPINGS.values()}):
         path = source / relative
-        if path.is_symlink() or not path.is_file():
+        safe_path(path)
+        if not path.is_file():
             raise ValueError("Core source must be a regular file")
         name = (Path(relative).relative_to("src") if Path(relative).parts[0] == "src"
                 else Path("resources") / relative)
@@ -29,26 +41,9 @@ def stage(source: Path, home: Path, skills: Path) -> dict:
     hashes = {name: hashlib.sha256(data).hexdigest() for name, data in payload.items()}
     digest = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
     root = home / ".local/lib/quattro-herdr-omp" / digest
-    if any(path.is_symlink() for path in (root, *root.parents)):
-        raise ValueError("staging destination must not contain symbolic links")
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    for name, data in payload.items():
-        target = root / name
-        if target.exists():
-            if target.is_symlink() or target.read_bytes() != data:
-                raise ValueError("existing bundle differs; preserved without overwrite")
-        else:
-            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            target.write_bytes(data)
-        target.chmod(0o400)
+    safe_path(root, directory=True)
     manifest = root / "manifest.json"
     manifest_data = (json.dumps({"bundleSha256": digest, "files": hashes}, sort_keys=True) + "\n").encode()
-    if manifest.exists():
-        if manifest.is_symlink() or manifest.read_bytes() != manifest_data:
-            raise ValueError("existing bundle manifest differs; preserved without overwrite")
-    else:
-        manifest.write_bytes(manifest_data)
-    manifest.chmod(0o400)
     wrappers = {}
     for name, arguments in (
             ("quattro-omp", "'launch', 'omp', *sys.argv[1:], " + f"'--skills', {str(skills)!r}"),
@@ -58,11 +53,30 @@ def stage(source: Path, home: Path, skills: Path) -> dict:
                            f"sys.path.insert(0, {str(root)!r})\n"
                            "from quattro_agent.cli import main\n"
                            f"sys.argv = [sys.argv[0], {arguments}]\nraise SystemExit(main())\n").encode()
-    # Check every destination before changing any launcher.
+    # Preflight the entire bundle and launcher inventory before any writes or
+    # chmods: checking only a leaf misses a linked package or bin directory.
+    for name, data in payload.items():
+        target = root / name
+        safe_path(target)
+        if target.exists() and target.read_bytes() != data:
+            raise ValueError("existing bundle differs; preserved without overwrite")
+    safe_path(manifest)
+    if manifest.exists() and manifest.read_bytes() != manifest_data:
+        raise ValueError("existing bundle manifest differs; preserved without overwrite")
     for binary, wrapper in wrappers.items():
-        if binary.exists() or binary.is_symlink():
-            if binary.is_symlink() or binary.read_bytes() != wrapper:
-                raise ValueError("existing migration launcher preserved; review update separately")
+        safe_path(binary)
+        if binary.exists() and binary.read_bytes() != wrapper:
+            raise ValueError("existing migration launcher preserved; review update separately")
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for name, data in payload.items():
+        target = root / name
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            target.write_bytes(data)
+        target.chmod(0o400)
+    if not manifest.exists():
+        manifest.write_bytes(manifest_data)
+    manifest.chmod(0o400)
     for binary, wrapper in wrappers.items():
         binary.parent.mkdir(parents=True, exist_ok=True)
         if not binary.exists():

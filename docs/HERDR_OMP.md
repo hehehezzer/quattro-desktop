@@ -13,7 +13,10 @@ shell command text, alter an existing layout, or stop a running server.
 `python scripts/stage_herdr_omp.py --skills /absolute/verified/skill-catalog`
 creates a hash-pinned Core bundle and new `quattro-omp` and `quattro-herdr`
 launchers beside the existing installation. It preserves existing launchers
-and refuses to overwrite a different migration candidate. The staged aliases
+and refuses to overwrite a different migration candidate. Source files, bundle
+destinations and launcher paths are checked for symbolic links at every directory
+level and for nonregular files before any staging writes or permission changes.
+The staged aliases
 use the bundled CLI, so an older installed `quattro-agent` need not be changed.
 `quattro-omp PATH --confirm-native-access` opens the reviewed native route;
 `quattro-herdr` takes the arguments below after the `herdr` subcommand.

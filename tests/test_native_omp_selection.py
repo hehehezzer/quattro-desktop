@@ -126,6 +126,24 @@ class NativeLaunchTests(unittest.TestCase):
         direct.assert_called_once_with(Path("/tmp"), skills="/opt/skills", confirmed=True,
                                        environment={"PATH": "/bin"})
 
+    def test_omp_default_without_native_section_uses_real_chooser(self):
+        stack = self.launch(["launch", "--skills", "/opt/skills", "--confirm-native-access"],
+                            {"defaultAgent": "omp"})
+        stack.enter_context(mock.patch.object(cli.sys, "stdin", io.StringIO()))
+        direct = stack.enter_context(mock.patch("quattro_agent.migration_cli.launch_omp", return_value=0))
+        self.assertEqual(cli.main(), 0)
+        direct.assert_called_once_with(Path("/tmp"), skills="/opt/skills", confirmed=True,
+                                       environment={"PATH": "/bin"})
+
+    def test_omp_default_without_native_section_still_requires_confirmation(self):
+        stack = self.launch(["launch"], {"defaultAgent": "omp"})
+        stack.enter_context(mock.patch.object(cli.sys, "stdin", io.StringIO()))
+        direct = stack.enter_context(mock.patch("quattro_agent.migration_cli.launch_omp"))
+        with self.assertRaises(SystemExit) as outcome:
+            cli.main()
+        self.assertEqual(outcome.exception.code, 1)
+        direct.assert_not_called()
+
     def test_herdr_child_reference_reaches_verifier_without_recursive_start(self):
         stack = self.launch(["launch", "omp", "--confirm-native-access",
                              "--native-session-ref", "native-opaque"],

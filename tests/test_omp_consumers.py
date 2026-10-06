@@ -126,6 +126,27 @@ class OMPConsumerTests(unittest.TestCase):
         self.assertEqual(task["policy"]["name"], "audit-read-only")
         self.assertIsNone(task["private_payload"]["nativeSessionRef"])
 
+    def test_omp_resume_preserves_new_request_with_checkpoint_context(self):
+        task_id = self.task()
+        logical = self.runtime.store.logical_session_for_task(task_id)
+        request = "Inspect whether the new parser handles trailing whitespace"
+        recovered, path = self.runtime.prepare_resume_task(
+            logical["quattro_session_id"], native_session_available=False, prompt=request,
+        )
+        task = self.runtime.store.get_task(recovered, include_private=True)
+        self.assertEqual(path, "checkpoint-recovery")
+        self.assertIn(request, task["private_payload"]["prompt"])
+        self.assertIn("Inspect repository files for regressions", task["private_payload"]["prompt"])
+        self.assertEqual(task["agent"], "omp")
+        self.assertEqual(task["policy"]["name"], "audit-read-only")
+        self.assertIsNone(task["private_payload"]["nativeSessionRef"])
+        run_id = self.runtime.store.create_run(recovered, agent="omp")
+        with mock.patch.object(self.runtime, "_retrieval_context", return_value=""):
+            _argv, stdin, _env = self.runtime._agent_plan(
+                task, run_id, PolicyProfile.from_dict(task["policy"]),
+            )
+        self.assertIn(request, stdin)
+
     def test_result_contract_rejects_native_or_unsettled_output(self):
         value = {"type": "quattro.omp.result", "status": "completed", "session_id": "native-1", "text": "Evidence"}
         self.assertEqual(compact_omp_output(json.dumps(value)), ("Evidence\n", "native-1"))

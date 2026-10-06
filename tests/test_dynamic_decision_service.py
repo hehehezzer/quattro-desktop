@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 from quattro_agent.decision_service import DecisionSession
@@ -346,6 +347,105 @@ print(json.dumps({'failure_category':'http_error','jev_request_started':started,
         self.assertTrue(result["fallback_required"])
         session.close()
         self.assertTrue(all(process.poll() is not None for process in processes))
+
+    def test_already_cancelled_request_has_no_credential_or_worker_activity(self):
+        session, processes = self.session()
+        with mock.patch.object(session, "credential", side_effect=AssertionError("credential lookup")):
+            result = session.decide(decision(), cancelled=lambda: True)
+        self.assertEqual(result["evidence"], "cancelled")
+        self.assertTrue(result["fallback_required"])
+        self.assertEqual(result["provider_attempt"], "NOT_ATTEMPTED")
+        self.assertEqual(processes, [])
+        self.assertEqual(session.calls, 0)
+
+    def test_cancelled_cache_hit_cannot_republish_accepted_advice(self):
+        session, processes = self.session()
+        self.assertFalse(session.decide(decision(), cacheable=True)["fallback_required"])
+        checks = []
+
+        def cancelled():
+            checks.append(True)
+            return len(checks) > 1  # Cancellation arrives after initial admission.
+
+        result = session.decide(decision(), cacheable=True, cancelled=cancelled)
+        self.assertEqual(result["evidence"], "cancelled")
+        self.assertTrue(result["fallback_required"])
+        self.assertFalse(result.get("cache_hit", False))
+        self.assertEqual(result["provider_attempt"], "NOT_ATTEMPTED")
+        self.assertIsNone(session.cache)
+        self.assertEqual(session.calls, 1)
+        session.close()
+        self.assertTrue(all(process.poll() is not None for process in processes))
+
+    def test_failed_cancellation_observer_denies_worker_admission(self):
+        session, processes = self.session()
+
+        def cancelled():
+            raise OSError("synthetic host observation unavailable")
+
+        result = session.decide(decision(), cancelled=cancelled)
+        self.assertEqual(result["evidence"], "cancelled")
+        self.assertTrue(result["fallback_required"])
+        self.assertEqual(processes, [])
+        self.assertEqual(session.calls, 0)
+
+    def test_cancellation_during_startup_prevents_provider_submission(self):
+        session, processes = self.session()
+        cancelled = threading.Event()
+
+        def credential():
+            cancelled.set()
+            return "synthetic"
+
+        session.credential = credential
+        result = session.decide(decision(), cancelled=cancelled.is_set)
+        self.assertEqual(result["evidence"], "cancelled")
+        self.assertEqual(result["provider_attempt"], "NOT_ATTEMPTED")
+        self.assertNotIn("request_sent", result["timing"]["timeline_ms"])
+        session.close()
+        self.assertTrue(all(process.poll() is not None for process in processes))
+
+    def test_cancellation_during_response_validation_denies_acceptance(self):
+        from quattro_agent import decision_service
+        session, processes = self.session()
+        cancelled = threading.Event()
+        validate = decision_service.validate_response
+
+        def validate_and_cancel(*args):
+            response = validate(*args)
+            cancelled.set()
+            return response
+
+        with mock.patch.object(decision_service, "validate_response", side_effect=validate_and_cancel):
+            result = session.decide(decision(), cacheable=True, cancelled=cancelled.is_set)
+        self.assertEqual(result["evidence"], "cancelled")
+        self.assertTrue(result["fallback_required"])
+        self.assertIsNone(session.cache)
+        self.assertEqual(session.snapshot()["counts"].get("accepted", 0), 0)
+        session.close()
+        self.assertTrue(all(process.poll() is not None for process in processes))
+
+    def test_stalled_cancellation_observer_cannot_extend_caller_deadline(self):
+        session, processes = self.session(timeout_ms=100)
+        release = threading.Event()
+        observer_threads = []
+
+        def cancelled():
+            observer_threads.append(threading.current_thread())
+            release.wait(2)
+            return True
+
+        started = time.monotonic()
+        try:
+            result = session.decide(decision(), cancelled=cancelled)
+            self.assertEqual(result["evidence"], "timeout")
+            self.assertLess(time.monotonic() - started, .5)
+            self.assertTrue(observer_threads)
+            self.assertNotIn(threading.current_thread(), observer_threads)
+            self.assertEqual(processes, [])
+        finally:
+            release.set()
+            session.close()
 
 
 if __name__ == "__main__":

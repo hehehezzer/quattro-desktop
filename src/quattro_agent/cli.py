@@ -3606,7 +3606,7 @@ def main() -> int:
             agent = choose_agent(
                 str(native["preferredAgent"] if native else config["defaultAgent"]),
                 input_stream=sys.stdin, output=sys.stdout,
-                native_selection=native is not None,
+                native_selection=native is not None or config["defaultAgent"] == "omp",
             )
             if agent is None:
                 return 0
