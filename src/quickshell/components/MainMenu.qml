@@ -12,6 +12,7 @@ Scope {
 
     property string page: "main"
     property string agentCommand: Quickshell.env("QUATTRO_AGENT_COMMAND") || "quattro-agent"
+    property string projectsOMPCommand: Quickshell.env("QUATTRO_PROJECTS_OMP_COMMAND") || "quattro-projects-omp"
     property string menuCommand: Quickshell.env("QUATTRO_MENU_COMMAND") || "quattro-menu"
     property string themeCommand: Quickshell.env("QUATTRO_THEME_COMMAND") || "quattro-theme"
     property string pointerCommand: Quickshell.env("QUATTRO_POINTER_COMMAND") || "quattro-pointer"
@@ -616,11 +617,11 @@ Scope {
                     }
 
                     MenuRow {
-                        icon: "π"
-                        label: "Pi"
+                        icon: "󰚩"
+                        label: "OMP"
 
                         onClicked: {
-                            Quickshell.execDetached([root.agentCommand, "launch", "pi"])
+                            Quickshell.execDetached([root.projectsOMPCommand, "--choose-project"])
                             root.close()
                         }
                     }

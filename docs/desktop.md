@@ -24,6 +24,15 @@ notification, system-panel, clipboard, and Agents IPC behavior must remain
 available. Hyprland-specific reloads require a running compositor and are not
 part of the hermetic CI gate.
 
+The OMP menu entry invokes `quattro-projects-omp --choose-project`, or the
+command selected by `QUATTRO_PROJECTS_OMP_COMMAND`. Install the reviewed scoped
+Projects launcher before deploying this menu change. That launcher selects a
+directory within the existing approved Projects root, starts Quattro's protected
+OMP host console in a named Herdr workspace, and attaches a terminal client.
+Project selection does not grant access. Quattro retains repository and command
+authority; registered commands still require their actual human confirmation.
+The menu does not supply the general native-access confirmation flag.
+
 System panels and the calendar open on the currently focused Hyprland monitor,
 including when their controls are clicked on a secondary display.
 
