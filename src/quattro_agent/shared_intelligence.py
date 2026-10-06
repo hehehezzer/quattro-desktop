@@ -418,6 +418,22 @@ def call(name: str, arguments: dict[str, Any], *, telemetry_context: NativeConte
     clean, embedded_context = split_native_context(arguments)
     context = telemetry_context or embedded_context
     host_tools = clean.pop("__quattro_host_tools", None)
+    if name == "observe_omp_session":
+        # Private supported-host hook, absent from the model/MCP tool inventory.
+        # Selection comes from the launcher's fixed environment, never arguments.
+        if clean or context.host != "omp":
+            raise ValueError("trusted OMP session-start metadata required")
+        from .omp_sessions import OMPSessionRegistry
+        from .herdr_runtime import HerdrSession
+        registry = OMPSessionRegistry(pathlib.Path(os.environ.get("QUATTRO_OMP_REGISTRY", "")))
+        registry.observe_native(os.environ.get("QUATTRO_OMP_LOGICAL_SESSION", ""),
+            socket=pathlib.Path(os.environ.get("QUATTRO_OMP_HERDR_SOCKET", "")),
+            directory=_directory(context.project),
+            handle=HerdrSession(os.environ.get("QUATTRO_OMP_HERDR_WORKSPACE", ""),
+                                os.environ.get("QUATTRO_OMP_HERDR_PANE", "")),
+            native_session_id=context.session_id)
+        return {"nativeIdentityObserved": True, "approvalGranted": False,
+                "coordinationSupported": False, "nativeRestartResumeSupported": False}
     if name == "decision_capabilities":
         if clean:
             raise ValueError("capability discovery takes no model parameters")

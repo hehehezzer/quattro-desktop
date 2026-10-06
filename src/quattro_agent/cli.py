@@ -3069,6 +3069,8 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--confirm-full-access", action="store_true")
     launch.add_argument("--confirm-native-access", action="store_true")
     launch.add_argument("--skills", help="verified OMP skill catalog directory")
+    launch.add_argument("--socket", help="named private Herdr socket for persistent OMP launch")
+    launch.add_argument("--native-session-ref", help=argparse.SUPPRESS)
     sub.add_parser("desktop")
     prompt = sub.add_parser("prompt")
     prompt.add_argument("values", nargs="+")
@@ -3597,22 +3599,38 @@ def main() -> int:
         workspace = safe_directory(args.directory)
         print(f"Workspace: {workspace}\n", flush=True)
         agent = args.agent
-        if agent == "omp":
-            from .migration_cli import launch_omp
-            if args.policy or args.confirm_full_access:
-                die("OMP uses explicit native always-ask approval; policy override is unavailable")
-            try:
-                return launch_omp(workspace, skills=args.skills,
-                                  confirmed=args.confirm_native_access,
-                                  environment=tool_environment("omp"))
-            except (OSError, ValueError, RuntimeError) as error:
-                die(str(error))
+        native = config.get("nativeSession")
         if agent is None:
             agent = choose_agent(
-                str(config["defaultAgent"]), input_stream=sys.stdin, output=sys.stdout,
+                str(native["preferredAgent"] if native else config["defaultAgent"]),
+                input_stream=sys.stdin, output=sys.stdout,
+                native_selection=native is not None,
             )
             if agent is None:
                 return 0
+        if agent == "omp":
+            from .migration_cli import launch_omp, native_access
+            if args.policy or args.confirm_full_access:
+                die("OMP uses explicit native always-ask approval; policy override is unavailable")
+            try:
+                native_access(args.confirm_native_access)
+                skills = args.skills or (native["skillsCatalog"] if native else None)
+                socket = args.socket or (native["herdrSocket"] if native else None)
+                if socket and not args.native_session_ref:
+                    from .migration_cli import start_omp
+                    return start_omp(workspace, skills=skills, socket=socket,
+                                     confirmed=args.confirm_native_access)
+                launch_options = {
+                    "skills": skills, "confirmed": args.confirm_native_access,
+                    "environment": tool_environment("omp"),
+                }
+                if args.native_session_ref:
+                    launch_options["native_session_ref"] = args.native_session_ref
+                return launch_omp(workspace, **launch_options)
+            except (OSError, ValueError, RuntimeError) as error:
+                die(str(error))
+        if args.confirm_native_access or args.skills or args.socket or args.native_session_ref:
+            die("--confirm-native-access, --skills and --socket require OMP selection")
         try:
             native_interactive_handoff(
                 agent, workspace,

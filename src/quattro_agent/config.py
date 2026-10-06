@@ -25,7 +25,7 @@ _TOP_LEVEL = {
     "fullAccessRequiresConfirmation", "deprecated",
     "accounts", "usageRefresh", "crossDeviceSync", "crashCapture", "dictation",
     "memory", "prReview", "delegation", "workspace",
-    "cooperation", "routing",
+    "cooperation", "routing", "nativeSession",
 }
 _DEFAULT_POLICY_PROFILES = {
     "audit-read-only",
@@ -171,11 +171,25 @@ def validate_ai_config(source: Mapping[str, Any], *, home: Path | None = None) -
     """Strictly validate schema v3 and return a defensive normalized copy."""
     root = _mapping(
         source, "$", _TOP_LEVEL,
-        required=_TOP_LEVEL - {"deprecated", "delegation", "workspace", "cooperation", "routing"},
+        required=_TOP_LEVEL - {"deprecated", "delegation", "workspace", "cooperation", "routing", "nativeSession"},
     )
     if root["schemaVersion"] != CURRENT_AI_CONFIG_VERSION:
         _fail("$.schemaVersion", f"must be {CURRENT_AI_CONFIG_VERSION}; migrate first")
     default_agent = _enum(root["defaultAgent"], "$.defaultAgent", {"codex", "pi"})
+    if "nativeSession" in root:
+        native = _mapping(root["nativeSession"], "$.nativeSession", {
+            "preferredAgent", "skillsCatalog", "herdrSocket",
+        })
+        _string(native["preferredAgent"], "$.nativeSession.preferredAgent", maximum=16)
+        _enum(native["preferredAgent"], "$.nativeSession.preferredAgent", {"codex", "omp"})
+        for field in ("skillsCatalog", "herdrSocket"):
+            value = _string(native[field], f"$.nativeSession.{field}")
+            assert value is not None
+            path = Path(value)
+            if (not path.is_absolute() or path == Path(path.anchor)
+                    or any(ord(char) < 32 for char in value)
+                    or ".." in path.parts):
+                _fail(f"$.nativeSession.{field}", "must be an explicit absolute path without traversal")
     default_account = _string(root["defaultCodexAccount"], "$.defaultCodexAccount")
     _enum(root["defaultPolicyProfile"], "$.defaultPolicyProfile", _DEFAULT_POLICY_PROFILES)
     confirmation = _bool(

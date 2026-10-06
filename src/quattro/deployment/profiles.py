@@ -29,7 +29,7 @@ CORE_DEPLOYMENT_MAPPINGS = {
             "__init__.py", "__main__.py", "adapters.py", "adaptive_routing.py",
             "benchmark.py", "cli.py", "interactive.py", "codex_turn_bridge.py",
             "native_session.py", "turn_gate.py", "turn_transport.py", "turn_routing.py",
-            "omp_bridge.py", "herdr_runtime.py", "migration_cli.py",
+            "omp_bridge.py", "herdr_runtime.py", "migration_cli.py", "omp_sessions.py",
             "jev.py", "jev_shadow.py", "jev_worker.py", "jev_preferences.py", "provider_access.py",
             "decision_checkpoint.py", "operational_advice.py", "operational_native.py",
             "decision_taxonomy.py", "decision_service.py", "decision_mcp.py", "decision_launch.py", "runtime_milestones.py",

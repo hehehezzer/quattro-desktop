@@ -13,7 +13,9 @@ const TOOL_NAMES = new Set(["read", "bash", "edit", "write", "glob", "grep", "op
   "decision_capabilities", "search_knowledge", "rtk_status", "rtk_run", "refresh_history"]);
 const ENVIRONMENT = ["HOME", "PATH", "USER", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
   "QUATTRO_CONFIG", "QUATTRO_STATE_DIR", "QUATTRO_NATIVE_INTELLIGENCE_CONFIG",
-  "QUATTRO_NATIVE_TELEMETRY_DB", "PYTHONPATH", "VIRTUAL_ENV"];
+  "QUATTRO_NATIVE_TELEMETRY_DB", "PYTHONPATH", "VIRTUAL_ENV", "QUATTRO_OMP_REGISTRY",
+  "QUATTRO_OMP_LOGICAL_SESSION", "QUATTRO_OMP_HERDR_SOCKET", "QUATTRO_OMP_HERDR_WORKSPACE",
+  "QUATTRO_OMP_HERDR_PANE"];
 type Value = Record<string, any>;
 type Pending = { resolve: (result: Value) => void; reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout> };
@@ -207,16 +209,25 @@ export default function quattroOMP(pi: ExtensionAPI) {
   const status = (ctx: ExtensionContext, value: string) => {
     try { ctx.ui.setStatus("quattro-omp", value); } catch { /* No UI is a supported headless state. */ }
   };
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     helper.stop(); helper = new Helper(); invalidRoute = false; invalidPolicy = false;
     const agent = pi.pi.getAgentDir();
     const config = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
     controls = [process.env.QUATTRO_OMP_OVERLAY || "", process.env.QUATTRO_OMP_EXTENSION || "",
       process.env.QUATTRO_NATIVE_INTELLIGENCE_CONFIG || join(config, "quattro/native-intelligence.json"),
       process.env.QUATTRO_CONFIG || join(config, "quattro/ai.json"),
+      ...(process.env.QUATTRO_OMP_REGISTRY ? [process.env.QUATTRO_OMP_REGISTRY] : []),
       join(agent, "config.yml"), join(agent, "settings.json")];
     if (!routeValid(ctx)) { status(ctx, ROUTE_REASON); ctx.shutdown(); return; }
     if (!policyValid()) { status(ctx, POLICY_REASON); ctx.shutdown(); return; }
+    if (process.env.QUATTRO_OMP_LOGICAL_SESSION) {
+      try {
+        await helper.request("observe_omp_session", {}, ctx, pi.getActiveTools());
+      } catch {
+        status(ctx, "Quattro native session identity could not be registered; inspect the exact Herdr pane.");
+        ctx.shutdown(); return;
+      }
+    }
     status(ctx, "Quattro orchestration · Sol medium · native approval required");
   });
   pi.on("session_shutdown", () => helper.stop());

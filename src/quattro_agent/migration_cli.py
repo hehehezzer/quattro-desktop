@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import os
+import time
 
 from .omp_bridge import bridge_contract, native_policy_overlay, omp_arguments
 
@@ -45,13 +47,30 @@ def native_access(confirmed: bool) -> None:
 
 
 def launch_omp(directory: Path, *, skills: str | None, confirmed: bool,
-               environment: dict[str, str]) -> int:
+               environment: dict[str, str], native_session_ref: str | None = None) -> int:
     """Lock the requested target; never inherit API keys or launch default yolo."""
     native_access(confirmed)
     directory = Path(directory).resolve(strict=True)
     if not directory.is_dir():
         raise ValueError("workspace must be a directory")
     catalog = skill_directory(skills)
+    record = None
+    if native_session_ref is not None:
+        from .omp_sessions import OMPSessionRegistry, OMPSessionError
+        from .herdr_runtime import HerdrSession
+        registry = OMPSessionRegistry(omp_registry_path())
+        deadline = time.monotonic() + 5
+        while True:
+            record = registry.get(native_session_ref)
+            if record["lifecycle"] != "launch_pending":
+                break
+            if time.monotonic() >= deadline:
+                raise OMPSessionError("Herdr launch binding is still pending; inspect before retrying")
+            time.sleep(0.05)
+        handle = HerdrSession(os.environ.get("HERDR_WORKSPACE_ID", ""),
+                              os.environ.get("HERDR_PANE_ID", ""))
+        record = registry.verify_launch(native_session_ref,
+            socket=Path(os.environ.get("HERDR_SOCKET_PATH", "")), directory=directory, handle=handle)
     executable = shutil.which("omp", path=environment.get("PATH"))
     if executable is None:
         raise RuntimeError("OMP is not installed")
@@ -69,9 +88,51 @@ def launch_omp(directory: Path, *, skills: str | None, confirmed: bool,
         env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
         env["QUATTRO_OMP_PYTHON"] = sys.executable
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        if record is not None:
+            env["QUATTRO_OMP_REGISTRY"] = str(omp_registry_path())
+            env["QUATTRO_OMP_LOGICAL_SESSION"] = native_session_ref
+            env["QUATTRO_OMP_HERDR_SOCKET"] = record["socket"]
+            env["QUATTRO_OMP_HERDR_WORKSPACE"] = record["workspace"]
+            env["QUATTRO_OMP_HERDR_PANE"] = record["pane"]
         # The native interactive process lives until the user exits/detaches.
         # All helper/tool calls retain their independent finite bounds.
         return subprocess.run(command, cwd=directory, env=env, check=False).returncode
+
+
+def omp_registry_path() -> Path:
+    from .paths import state_root
+    return state_root() / "private" / "omp-sessions.json"
+
+
+def start_omp(directory: Path, *, skills: str | None, socket: str,
+              confirmed: bool) -> int:
+    """Start one explicit native session; uncertain mutations are not retried."""
+    from .herdr_runtime import HerdrRuntime
+    from .omp_sessions import OMPSessionRegistry
+    native_access(confirmed)
+    catalog = skill_directory(skills)
+    directory = Path(directory).resolve(strict=True)
+    runtime = HerdrRuntime(Path(socket))
+    registry = OMPSessionRegistry(omp_registry_path())
+    logical_id = registry.begin(socket=runtime.socket_path, directory=directory)
+    try:
+        handle = runtime.start([sys.executable, "-m", "quattro_agent", "launch", "omp",
+                                str(directory), "--skills", str(catalog), "--confirm-native-access",
+                                "--native-session-ref", logical_id], directory=directory)
+        registry.created(logical_id, handle)
+    except Exception:
+        # A created terminal may already exist. Record uncertainty, never replay.
+        try:
+            registry.mark_launch_uncertain(logical_id)
+        except Exception:
+            pass  # Preserve the original failure and never retry the mutation.
+        raise
+    print(json.dumps({"logicalSessionId": logical_id, "workspace": handle.workspace_id,
+                      "pane": handle.pane_id, "socket": str(runtime.socket_path),
+                      "nativeIdentity": "pending_actual_native_session_start",
+                      "coordinationSupported": False,
+                      "route": bridge_contract()["route"]}, sort_keys=True))
+    return 0
 
 
 def command(args) -> int:
@@ -84,12 +145,6 @@ def command(args) -> int:
         print(json.dumps(runtime.status(HerdrSession(args.workspace, args.pane)), sort_keys=True))
         return 0
     native_access(args.confirm_native_access)
-    catalog = skill_directory(args.skills)
     directory = Path(args.directory).expanduser().resolve(strict=True)
-    handle = runtime.start([sys.executable, "-m", "quattro_agent", "launch", "omp",
-                            str(directory), "--skills", str(catalog), "--confirm-native-access"],
-                           directory=directory)
-    print(json.dumps({"workspace": handle.workspace_id, "pane": handle.pane_id,
-                      "socket": str(runtime.socket_path), "route": bridge_contract()["route"],
-                      "acceptance": "pending_native_login_and_real_human_approvals"}, sort_keys=True))
-    return 0
+    return start_omp(directory, skills=args.skills, socket=args.socket,
+                     confirmed=args.confirm_native_access)

@@ -158,6 +158,13 @@ machine walkthrough.
 
 ## Configuration and paths
 
+Interactive OMP selection is an explicit opt-in through the strict optional
+`nativeSession` configuration. It uses a verified skills catalog and named
+private Herdr socket, requires `--confirm-native-access` for each launch, and
+retains native always-ask approval. Existing Codex/Pi defaults and durable tasks
+remain compatible. See [native session configuration](docs/configuration.md#optional-native-session-selection)
+for the boundary and command examples.
+
 Configuration is strict schema version 3 JSON. Use `QUATTRO_CONFIG` to select a
 file, otherwise Quattro uses `$XDG_CONFIG_HOME/quattro/ai.json` (or
 `~/.config/quattro/ai.json`). Runtime state defaults to

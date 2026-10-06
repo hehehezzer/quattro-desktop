@@ -79,6 +79,32 @@ the integration intentionally retains it for diagnosis.
 
 ## Persistence and rollback
 
+### Staged native session metadata
+
+`quattro_agent.omp_sessions.OMPSessionRegistry` provides a separate private,
+bounded JSON registry for the staged native route. It does not migrate or modify
+the Codex/Pi task database. A trusted launcher records intent with `begin`, then
+binds `created` to its actual successful Herdr start receipt. A failed or timed
+out start becomes `launch_uncertain`; the registry never retries it or adopts an
+unrelated pane. Socket ownership, private permissions and filesystem identity,
+workspace/pane identity and the original directory identity remain bound.
+
+Native OMP identity stays `pending` until a trusted native session-start hook
+calls `observe_native` with the exact recorded tuple. Model assertions and
+terminal text are not identity evidence. `verify_attachment` permits selection
+of that existing pane only when its recorded native identity matches and Herdr
+reports an active semantic state. It does not launch a process, approve a tool,
+or establish machine-restart/native-resume support. Status is metadata only.
+
+`begin_close` and `finish_close` record explicit owning-client close outcomes;
+they never promote a handle into a new Herdr client's ownership set. An
+uncertain close cannot be replayed. Registry files and locks are mode 0600 in a
+mode-0700 owner directory, reject links and invalid preimages, and use bounded
+locking with atomic durable writes. This module requires Unix file locking only
+when instantiated. Coordination and native restart/resume remain explicitly
+unsupported; registering a terminal does not claim durable scheduler capacity
+or a repository write scope.
+
 An interactive Herdr client can detach and reattach while the server-owned
 terminal continues. To attach a known named session, use
 `herdr --session NAME`. Detach through Herdr's normal UI. Closing an outer
