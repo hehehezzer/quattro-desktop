@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""Private, bounded notification archive. Payloads stay on this computer."""
+import json
+import os
+from pathlib import Path
+import stat
+import sys
+import tempfile
+import time
+
+CAPACITY = 100
+RETENTION_MS = 86_400_000
+MAX_BYTES = 6 * 1024 * 1024
+
+def normalize(value, now=None):
+    if not isinstance(value, list):
+        raise ValueError("History must be a list")
+    now = int(time.time() * 1000) if now is None else now
+    entries = []
+    keys = set()
+    for item in value[:CAPACITY * 2]:
+        if not isinstance(item, dict):
+            continue
+        timestamp = item.get("time")
+        if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+            continue
+        if not now - RETENTION_MS <= timestamp <= now + 300_000:
+            continue
+        key = str(item.get("key", ""))[:128]
+        if not key or key in keys:
+            continue
+        keys.add(key)
+        entries.append({"key": key, "nativeId": str(item.get("nativeId", ""))[:32],
+                        "app": str(item.get("app", ""))[:256],
+                        "summary": str(item.get("summary", ""))[:2048],
+                        "body": str(item.get("body", ""))[:8192],
+                        "time": int(timestamp), "urgency": item.get("urgency", 1)
+                        if item.get("urgency") in (0, 1, 2) else 1,
+                        "seen": bool(item.get("seen", False))})
+    return sorted(entries, key=lambda item: item["time"], reverse=True)[:CAPACITY]
+
+def store_directory():
+    configured = os.environ.get("XDG_STATE_HOME", "")
+    base = Path(configured) if configured and Path(configured).is_absolute() else Path.home() / ".local/state"
+    directory = base / "quattro/notifications"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise ValueError("Unsafe history directory")
+    directory.chmod(0o700)
+    return directory
+
+def read_history(directory):
+    path = directory / "history.json"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return []
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_size > MAX_BYTES:
+            raise ValueError("Unsafe history file")
+        value = json.loads(handle.read(MAX_BYTES + 1))
+    return normalize(value)
+
+def write_history(directory, value):
+    path = directory / "history.json"
+    if path.is_symlink():
+        raise ValueError("Unsafe history file")
+    encoded = json.dumps(normalize(value), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    if len(encoded) > MAX_BYTES:
+        raise ValueError("History exceeds limit")
+    fd, name = tempfile.mkstemp(prefix=".history-", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(name, 0o600)
+        os.replace(name, path)
+    finally:
+        if Path(name).exists():
+            Path(name).unlink()
+
+def main():
+    if sys.argv[1:] not in (["read"], ["write"]):
+        print('{"error":"Invalid history operation"}')
+        return 2
+    try:
+        directory = store_directory()
+        if sys.argv[1] == "read":
+            print(json.dumps({"entries": read_history(directory)}, ensure_ascii=False))
+        else:
+            payload = sys.stdin.buffer.readline(MAX_BYTES + 1)
+            if len(payload) > MAX_BYTES:
+                raise ValueError("History exceeds limit")
+            write_history(directory, json.loads(payload))
+            print('{"saved":true}')
+        return 0
+    except (OSError, ValueError, TypeError, OverflowError):
+        # Never print a path, incoming notification, JSON parser excerpt or raw exception.
+        print('{"error":"Notification history storage unavailable"}')
+        return 1
+
+if __name__ == "__main__":
+    raise SystemExit(main())

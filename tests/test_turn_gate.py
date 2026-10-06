@@ -33,6 +33,98 @@ class TurnGateTests(unittest.TestCase):
                             telemetry_path=self.path/'events', account='account-1', registry=registry)
         self.addCleanup(self.gate.cancel_all)
 
+    def dynamic_request(self, **changes):
+        request = {
+            "schema_version": "quattro-jev-decisions-v2",
+            "decision_id": "inspect_uncertainty",
+            "question": "Should the next step resolve the missing invariant evidence?",
+            "options": [
+                {"id": "examine_preconditions", "description": "Inspect the missing invariant before selecting the next action.", "effect": "inspect"},
+                {"id": "native_judgement", "description": "Use native semantic reasoning when evidence is insufficient.", "effect": "agent"},
+            ],
+            "context": {"evidence_gap": True, "context_sufficiency": "partial"},
+            "hard_constraints": {"retry_allowed": False, "parallel_allowed": False, "retrieval_allowed": False},
+            "execution_state": {"revision": 123, "phase": "assessment", "attempt": 0},
+            "previous_result": "missing_evidence",
+        }
+        request.update(changes)
+        return request
+
+    def test_model_authored_gate_request_preserves_context_and_host_revision(self):
+        self.gate._decision_options = {"mode": "COOPERATIVE"}
+        self.gate.decisions.close()
+        service = Mock()
+        service.closed = threading.Event()
+        service.decide.return_value = {"selected_action": "examine_preconditions", "selected_effect": "inspect",
+            "confidence": .95, "fallback_required": False}
+        service.snapshot.return_value = {"counts": {"accepted": 1}}
+        self.gate.decisions = service
+        turn = self.gate.begin('thread', 'Inspect the repository invariant and run checks', 'pi')
+        request = self.dynamic_request()
+        original = json.loads(json.dumps(request))
+        result = self.gate.decide(request)
+        self.assertFalse(result["fallback_required"])
+        sent = service.decide.call_args.args[0]
+        self.assertEqual(sent["context"], original["context"])
+        self.assertEqual(sent["question"], original["question"])
+        self.assertEqual(sent["options"], original["options"])
+        self.assertEqual(sent["execution_state"]["revision"], self.gate._decision_revision)
+        self.assertNotEqual(sent["execution_state"]["revision"], 123)
+        self.assertEqual(service.decide.call_args.kwargs["capabilities"], frozenset())
+        self.assertIs(service.decide.call_args.kwargs["cancelled"].__self__, turn.cancel_event)
+        self.assertEqual(request, original)
+        self.assertEqual(turn.initial_context_reuse, 0)
+        self.gate.finish(turn)
+        trace = self.path.joinpath('events').read_text()
+        for private in (request["question"], "examine_preconditions", "context_sufficiency"):
+            self.assertNotIn(private, trace)
+
+    def test_managed_gate_cannot_attest_an_invented_native_tool(self):
+        from quattro_agent.decision_taxonomy import allowed_action
+        self.gate._decision_options = {"mode": "COOPERATIVE"}
+        self.gate.decisions.close()
+        service = Mock()
+        service.closed = threading.Event()
+        def decide(request, *, capabilities, cancelled):
+            permitted = allowed_action(request, "compress_status", capabilities=capabilities)
+            return {"fallback_required": not permitted, "evidence": "hard_policy" if not permitted else "choice"}
+        service.decide.side_effect = decide
+        service.snapshot.return_value = {}
+        self.gate.decisions = service
+        turn = self.gate.begin('thread', 'Inspect the repository invariant and run checks', 'codex')
+        request = self.dynamic_request()
+        request["options"][0] = {"id": "compress_status", "description": "Use bounded compression for the available status operation.", "effect": "rtk", "capability": "rtk.git"}
+        self.assertEqual(self.gate.decide(request)["evidence"], "hard_policy")
+        self.gate.finish(turn)
+
+    def test_dynamic_gate_discards_advice_after_runtime_revision_changes(self):
+        self.gate._decision_options = {"mode": "COOPERATIVE"}
+        self.gate.decisions.close()
+        service = Mock()
+        service.closed = threading.Event()
+        service.snapshot.return_value = {}
+        self.gate.decisions = service
+        turn = self.gate.begin('thread', 'Inspect the repository invariant and run checks', 'pi')
+        def decide(_request, **_kwargs):
+            self.gate.observe_runtime(turn)
+            return {"fallback_required": False, "selected_action": "examine_preconditions"}
+        service.decide.side_effect = decide
+        result = self.gate.decide(self.dynamic_request())
+        self.assertTrue(result["fallback_required"])
+        self.assertEqual(turn.decision_outcomes["stale"], 1)
+        self.gate.finish(turn)
+
+    def test_legacy_gate_request_is_rejected_before_decision_service(self):
+        service = Mock()
+        self.gate.decisions.close()
+        self.gate.decisions = service
+        result = self.gate.decide({
+            "schema_version": "quattro-operational-decisions-v1",
+            "decision_type": "test_recovery", "relevant_context": {},
+        })
+        self.assertTrue(result["fallback_required"])
+        service.decide.assert_not_called()
+
     def test_requested_cases_independent_of_frontend(self):
         cases = (
             ('What is an API gateway?', 'DIRECT'),

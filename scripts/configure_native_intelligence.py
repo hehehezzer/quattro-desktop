@@ -16,10 +16,6 @@ SERVER = "quattro_intelligence"
 ACCOUNT_NAME = re.compile(r"account-[1-9][0-9]*$")
 NATIVE_TOOL_APPROVAL = "approve"
 NATIVE_CONFIG_NAME = "native-intelligence.json"
-NATIVE_CATEGORIES = (
-    "context_strategy", "execution_strategy", "validation_strategy",
-    "retry_strategy", "progress_strategy",
-)
 
 
 def codex_homes(home: pathlib.Path) -> list[pathlib.Path]:
@@ -183,7 +179,6 @@ def configure_native_defaults(home: pathlib.Path) -> bool:
     payload = {
         "schemaVersion": 1,
         "enabled": True,
-        "categories": list(NATIVE_CATEGORIES),
         "timeoutMs": 1500,
         "retrievalEnabled": True,
         "rtkEnabled": True,

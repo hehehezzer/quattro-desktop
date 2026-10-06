@@ -1,11 +1,11 @@
-"""Opt-in native bridge for bounded operational advice; no new access grants."""
+"""Opt-in native bridge for deterministic host guards; no provider requests."""
 from collections import OrderedDict
 import json
 import threading
 import uuid
 
 from .native_intelligence import (NativeContext, NativeTelemetry, load_native_settings,
-                                  native_config_path, native_jev_advice)
+                                  native_config_path)
 from .operational_advice import OperationalAdvisor
 
 _sessions = OrderedDict()
@@ -14,7 +14,9 @@ _lock = threading.RLock()
 
 def operational_enabled():
     try:
-        return json.loads(native_config_path().read_text()).get("operationalEnabled") is True
+        path = native_config_path()
+        return (path.is_file() and not path.is_symlink()
+                and json.loads(path.read_text()).get("operationalEnabled") is True)
     except (OSError, ValueError):
         return False
 
@@ -36,19 +38,12 @@ def operational_call(arguments, *, context=None, decision_session=None):
                 while len(_sessions) > 128:
                     _sessions.popitem(last=False)
         advisor.enabled = enabled
-        def evaluate(request):
-            # No artificial application call cap; identical-loop suppression
-            # below is a state guard rather than a provider usage budget.
-            if decision_session is not None:
-                decision_session.MAX_CALLS = float("inf")
-            return native_jev_advice(request, context=context, decision_session=decision_session)
-        advisor.evaluator = evaluate
         result = advisor.handle(arguments.get("operation"), arguments.get("features", {}),
                                 fingerprint=arguments.get("fingerprint"), outcome=arguments.get("outcome"))
     trace = "operation-" + uuid.uuid4().hex[:20]
     NativeTelemetry(enabled=settings.telemetry_enabled).record(
-        kind="jev", stage="validated", status="ACCEPTED" if result["accepted"] else "FALLBACK",
+        kind="instrumentation", stage="skipped", status="GUARD_ONLY",
         context=context, trace_id=trace, metadata=result)
     result["traceId"] = trace
-    result["coverage"] = "advice_returned; native_action_application_unknown"
+    result["coverage"] = "deterministic_host_guard; no_provider_consultation"
     return result

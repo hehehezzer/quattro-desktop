@@ -15,10 +15,10 @@ sys.path.insert(0, str(Path(__file__).parents[1] / 'src'))
 from quattro_agent import turn_routing
 from quattro_agent.intelligence.classical import DirectDelegateModel, ALGORITHM
 from quattro_agent.intelligence.store import FEATURE_SCHEMA_VERSION
-from quattro_agent.jev_shadow import ShadowRun
+from quattro_agent.jev import JevClient
 from quattro_agent.turn_gate import TurnGate
 from quattro_agent.model_registry import load_model_registry, default_policy_path
-from test_jev import FakeProcess, response, options
+from test_jev import options
 
 SRC = Path(__file__).parents[1] / 'src'
 
@@ -49,7 +49,7 @@ class UnifiedRoutingTests(unittest.TestCase):
         profile = json.loads(features.profile_json)
         profile.update(complexity='low', tier='STANDARD')
         features = replace(features, profile_json=json.dumps(profile))
-        with mock.patch('quattro_agent.routing_signals.start_shadow') as start:
+        with mock.patch.object(JevClient, 'evaluate', side_effect=AssertionError('bootstrap provider call')) as start:
             routed = turn_routing.route_turn(
                 request=features.request, features=features, config=options('COOPERATIVE'),
                 registry=self.registry, account='account-1', database=self.root / 'unused',
@@ -76,9 +76,9 @@ class UnifiedRoutingTests(unittest.TestCase):
         for complexity, model, tier in [('low', 'auto', RoutingTier.STANDARD),
                                         ('high', 'manual', RoutingTier.STANDARD),
                                         ('high', 'auto', RoutingTier.REASONING)]:
-            state = json.loads(original.state_json)
-            state['complexity'] = complexity
-            features = replace(original, state_json=json.dumps(state))
+            profile = json.loads(original.profile_json)
+            profile['complexity'] = complexity
+            features = replace(original, profile_json=json.dumps(profile))
             baseline = RoutingDecision(tier, 'fixture', 'medium',
                                        task_profile=json.loads(original.profile_json))
             request = make_pre_routing_input(
@@ -87,7 +87,7 @@ class UnifiedRoutingTests(unittest.TestCase):
                 workflow='prompt', policy_name='workspace-write',
             )
             for mode in ('SHADOW', 'COOPERATIVE'):
-                with mock.patch('quattro_agent.routing_signals.start_shadow') as start:
+                with mock.patch.object(JevClient, 'evaluate', side_effect=AssertionError('bootstrap provider call')) as start:
                     result = classify_with_signals(
                         pre_routing_input=request, config=options(mode), database=self.root / 'unused',
                         execution='DELEGATE', baseline_override=baseline, canonical_features=features,
@@ -115,7 +115,7 @@ class UnifiedRoutingTests(unittest.TestCase):
                 for prompt in ('Hi', 'What does TUI mean?', 'What is an API gateway?',
                                'Explain this traceback', "What's my dashboard password?"):
                     with self.subTest(mode=mode, frontend=frontend, prompt=prompt), \
-                         mock.patch.object(ShadowRun, 'start', side_effect=AssertionError('remote classification')) as start, \
+                         mock.patch.object(JevClient, 'evaluate', side_effect=AssertionError('remote classification')) as start, \
                          mock.patch('quattro_agent.routing_signals.learned_signal', side_effect=AssertionError('local inference')) as local:
                         turn = self.gate.begin('thread', prompt, frontend)
                         self.assertEqual(turn.decision, 'DIRECT')
@@ -156,7 +156,7 @@ class UnifiedRoutingTests(unittest.TestCase):
     def test_feature_projection_is_immutable_and_local_model_does_not_reextract(self):
         features = turn_routing.extract_turn_features('Modify the repository parser')
         with self.assertRaises(FrozenInstanceError):
-            features.state_json = '{}'
+            features.local_json = '{}'
         projection = features.local_projection()
         projection['complexity'] = 'high'
         self.assertNotEqual(projection, features.local_projection())
@@ -170,24 +170,17 @@ class UnifiedRoutingTests(unittest.TestCase):
             prediction = model.predict(features.local_projection()['request_text'], model_input=features.local_projection())
         self.assertEqual(prediction['prediction'], 'DELEGATE')
         for name in ('production_decision', 'selected_model', 'selected_worker', 'reasoning_effort', 'outcome'):
-            self.assertNotIn(name, features.state_json)
             self.assertNotIn(name, features.local_projection())
 
-    def test_ambiguous_direct_can_receive_capability_signal_without_becoming_agent(self):
-        original = ShadowRun.__init__
-        class DirectHigh(FakeProcess):
-            result = {'response': response(execution='DIRECT', complexity='HIGH', capability='STRONG'),
-                      'failure_category': None, 'jev_latency_ms': 12.0}
-        def init(run, **kwargs):
-            original(run, **kwargs, popen=DirectHigh)
-        with mock.patch.dict(os.environ, {'TYPESAFE_API_KEY': secrets.token_hex(24)}), \
-             mock.patch.object(ShadowRun, '__init__', init):
+    def test_ambiguous_direct_bootstrap_preserves_host_plan_without_static_signal(self):
+        with mock.patch.object(JevClient, 'evaluate', side_effect=AssertionError('fixed questionnaire')):
             turn = self.gate.begin('thread', 'Maybe a strategy for current information and architecture trade-offs is needed', 'codex')
             self.assertEqual(turn.decision, 'DIRECT')
             self.assertEqual(turn.routing_evidence['fast_guard_result'], 'eligible')
-            self.assertEqual(turn.plan.target.tier, 'REASONING')
+            self.assertEqual(turn.plan.target.tier, 'STANDARD')
             self.assertEqual(turn.plan.required_tools, ())
-            self.assertEqual(len(turn.shadow_runs), 1)
+            self.assertEqual(turn.shadow_runs, ())
+            self.assertFalse(turn.routing_evidence['jev_requested'])
             self.gate.finish(turn)
 
     def test_supplied_plan_is_consumed_without_any_request_classifier(self):

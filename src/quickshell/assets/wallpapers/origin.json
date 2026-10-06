@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "id": "instrument",
+      "file": "instrument.png",
+      "sha256": "1dd533ad47ce40b2bc0e6e30b0224e62fc91be14a4c1a2812532d97279b51c59",
+      "dimensions": [
+        1672,
+        941
+      ],
+      "source": "Original artwork generated with builtin image_gen.imagegen",
+      "promptEmbedded": false,
+      "terms": "Generated output subject to OpenAI terms; no downloaded third-party artwork or franchise assets.",
+      "note": "Native1672x941 original; aspect-cropped and modestly enlarged on1920x1080 displays."
+    },
+    {
+      "id": "instrument-paper",
+      "file": "instrument-paper.png",
+      "sha256": "11603026ec04c31912789e59e38dd98856b6288fce605674c884b126252a6aa0",
+      "dimensions": [
+        1672,
+        941
+      ],
+      "source": "Original artwork generated with builtin image_gen.imagegen",
+      "promptEmbedded": false,
+      "terms": "Generated output subject to OpenAI terms; no downloaded third-party artwork or franchise assets.",
+      "note": "Native1672x941 original; aspect-cropped and modestly enlarged on1920x1080 displays."
+    },
+    {
+      "id": "instrument-ember",
+      "file": "instrument-ember.png",
+      "sha256": "6db1b488fcc4056779ebe41429a493b7c342379dc9ec65f58c93046f40d274ad",
+      "dimensions": [
+        1672,
+        941
+      ],
+      "source": "Original artwork generated with builtin image_gen.imagegen",
+      "promptEmbedded": false,
+      "terms": "Generated output subject to OpenAI terms; no downloaded third-party artwork or franchise assets.",
+      "note": "Native1672x941 original; aspect-cropped and modestly enlarged on1920x1080 displays."
+    },
+    {
+      "id": "avengers-doomsday",
+      "file": "avengers-doomsday.png",
+      "sha256": "32bddb1f454320ad80a93d5f7d32450bbd85ff903dcc55a4246e302a81188c15",
+      "dimensions": [
+        1672,
+        941
+      ],
+      "source": "Original artwork generated with builtin image_gen.imagegen",
+      "promptEmbedded": false,
+      "terms": "Generated output subject to OpenAI terms; no downloaded third-party artwork or franchise assets.",
+      "note": "Native1672x941 original; aspect-cropped and modestly enlarged on1920x1080 displays."
+    },
+    {
+      "id": "lofi-noir",
+      "file": "lofi-noir.png",
+      "sha256": "0779daca78818a581041f250856ac0e544f4162c1f966d0b90341928731d29a2",
+      "dimensions": {
+        "width": 1672,
+        "height": 941
+      },
+      "source": "Original artwork generated with builtin image_gen.imagegen",
+      "promptEmbedded": false,
+      "terms": "Generated output subject to OpenAI terms; no downloaded third-party artwork or franchise assets.",
+      "note": "Native1672x941 original; aspect-cropped and modestly enlarged on1920x1080 displays."
+    },
+    {
+      "id": "graphite",
+      "file": "graphite.png",
+      "sha256": "1fdd78985913fc23e5e5921253c88ffb6ff6448beff90812664858e19e28f3d4",
+      "dimensions": {
+        "width": 1672,
+        "height": 941
+      },
+      "source": "Original artwork generated with builtin image_gen.imagegen",
+      "promptEmbedded": false,
+      "terms": "Generated output subject to OpenAI terms; no downloaded third-party artwork or franchise assets.",
+      "note": "Native1672x941 original; aspect-cropped and modestly enlarged on1920x1080 displays."
+    },
+    {
+      "id": "terminal",
+      "file": "terminal.png",
+      "sha256": "0a4e530e01c2b5d855fb78c49fd8d3f928a69301a07b0362355983151a2696b7",
+      "dimensions": {
+        "width": 1672,
+        "height": 941
+      },
+      "source": "Original artwork generated with builtin image_gen.imagegen",
+      "promptEmbedded": false,
+      "terms": "Generated output subject to OpenAI terms; no downloaded third-party artwork or franchise assets.",
+      "note": "Native1672x941 original; aspect-cropped and modestly enlarged on1920x1080 displays."
+    },
+    {
+      "id": "cyberpunk-2077",
+      "file": "cyberpunk-2077.png",
+      "sha256": "15ba7743dff39a1bb46a4615343e4e5d60fdd0aa9bc190ecaef1d3df708c35c8",
+      "dimensions": {
+        "width": 1672,
+        "height": 941
+      },
+      "source": "Original artwork generated with builtin image_gen.imagegen",
+      "promptEmbedded": false,
+      "terms": "Generated output subject to OpenAI terms; no downloaded third-party artwork or franchise assets.",
+      "note": "Native1672x941 original; aspect-cropped and modestly enlarged on1920x1080 displays."
+    }
+  ]
+}

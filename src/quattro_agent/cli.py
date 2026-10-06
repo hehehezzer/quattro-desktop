@@ -15,6 +15,7 @@ import datetime as dt
 import glob
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
@@ -1087,7 +1088,7 @@ def launch_terminal(agent: str, directory_value: str | None, mode: str = "intera
                     profile_name: str | None = None,
                     confirm_full_access: bool = False,
                     write_scopes: Sequence[str] = ()) -> str:
-    """Create a durable interactive task and open its worker in Foot."""
+    """Create a durable interactive task and open its worker in Ghostty."""
     directory = safe_directory(directory_value)
     task_id, _ = harness().submit(
         agent=agent,
@@ -1208,7 +1209,13 @@ def normalize_window(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     used = value.get("usedPercent")
-    if not isinstance(used, (int, float)):
+    if isinstance(used, bool) or not isinstance(used, (int, float)):
+        return None
+    try:
+        percentage = float(used)
+    except OverflowError:
+        return None
+    if not math.isfinite(percentage):
         return None
     duration = value.get("windowDurationMins") if isinstance(value.get("windowDurationMins"), int) else None
     if duration == 300:
@@ -1222,7 +1229,7 @@ def normalize_window(value: Any) -> dict[str, Any] | None:
     else:
         label = "Usage"
     return {
-        "usedPercent": max(0, min(100, round(float(used), 1))),
+        "usedPercent": max(0, min(100, round(percentage, 1))),
         "resetAt": value.get("resetsAt") if isinstance(value.get("resetsAt"), int) else None,
         "windowMinutes": duration,
         "label": label,
@@ -1237,6 +1244,34 @@ def normalized_account_login(account: Any, native_authenticated: bool) -> tuple[
     return bool(native_authenticated), None
 
 
+def usage_error_details(error: Any) -> tuple[str, str]:
+    """Classify locally; never persist or display raw provider response bodies."""
+    text = str(error).lower()[:2000]
+    if any(marker in text for marker in (
+        "401", "unauthorized", "invalidated oauth", "authentication required", "authentication_required",
+        "refresh token has expired", "refresh token expired", "refresh token revoked",
+        "refresh token has already been used", "refresh_token_reused", "invalid_grant",
+        "not logged in", "sign in again",
+    )):
+        return "authentication_required", "Sign in to this Codex account again, then refresh limits."
+    if "429" in text or "too many requests" in text or text == "rate_limited":
+        return "rate_limited", "Usage refresh is temporarily rate limited. Try again later."
+    if "timed out" in text or "timeout" in text:
+        return "timeout", "Usage refresh timed out. Try refreshing again."
+    return "unavailable", "Usage limits could not be refreshed. Try again later."
+
+
+def cached_usage_window(value: Any) -> dict[str, Any] | None:
+    """Validate older display snapshots without filling missing usage with zero."""
+    if not isinstance(value, dict):
+        return None
+    return normalize_window({
+        "usedPercent": value.get("usedPercent"),
+        "resetsAt": value.get("resetAt"),
+        "windowDurationMins": value.get("windowMinutes"),
+    })
+
+
 def refresh_usage(account_id: str | None = None, retries: int = 2) -> int:
     ensure_state_dirs()
     config = load_config()
@@ -1244,7 +1279,7 @@ def refresh_usage(account_id: str | None = None, retries: int = 2) -> int:
     selected = str(record["id"])
     good_path = STATE_ROOT / "usage" / f"{selected}.json"
     refresh_path = STATE_ROOT / "usage" / f"{selected}.refresh.json"
-    last_error = "Unknown refresh error"
+    error_code, last_error = usage_error_details(None)
     for attempt in range(retries):
         try:
             account_result, limits_result = jsonrpc_snapshot(selected)
@@ -1276,12 +1311,15 @@ def refresh_usage(account_id: str | None = None, retries: int = 2) -> int:
             })
             return 0
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-            last_error = str(error)[:240]
+            error_code, last_error = usage_error_details(error)
+            if error_code == "authentication_required":
+                break
             if attempt + 1 < retries:
                 time.sleep(1)
     atomic_json(refresh_path, {
         "schemaVersion": SCHEMA_VERSION, "accountId": selected,
         "attemptedAt": now_iso(), "ok": False, "error": last_error,
+        "errorCode": error_code,
     })
     eprint(f"usage refresh failed for {selected}: {last_error}")
     return 1
@@ -1346,11 +1384,27 @@ def usage_status(account_id: str | None = None) -> dict[str, Any]:
     refresh_failed = isinstance(refresh, dict) and refresh.get("ok") is False
     overdue = usage_is_overdue(config, good.get("lastSuccessfulRefresh"))
     if refresh_failed:
-        good = {**good, "stale": True, "error": refresh.get("error"),
+        error_code, message = usage_error_details(refresh.get("errorCode") or refresh.get("error"))
+        good = {**good, "stale": True, "error": message, "errorCode": error_code,
                 "lastAttempt": refresh.get("attemptedAt")}
     else:
-        good = {**good, "stale": overdue, "error": None,
+        good = {**good, "stale": overdue, "error": None, "errorCode": None,
                 "lastAttempt": refresh.get("attemptedAt") if isinstance(refresh, dict) else None}
+    good["primary"] = cached_usage_window(good.get("primary"))
+    good["secondary"] = cached_usage_window(good.get("secondary"))
+    has_limits = good["primary"] is not None or good["secondary"] is not None
+    good["authenticationRequired"] = good.get("errorCode") == "authentication_required"
+    if good["authenticationRequired"]:
+        good["loggedIn"] = False
+    good["status"] = (
+        "authentication_required" if good["authenticationRequired"] else
+        "stale" if has_limits and good["stale"] else
+        "live" if has_limits else "unavailable"
+    )
+    good["message"] = good.get("error") or (
+        "Showing saved limits. Refresh to check current usage." if good["status"] == "stale" else
+        "Usage limits are not available for this account." if not has_limits else ""
+    )
     return good
 
 
@@ -1506,7 +1560,7 @@ def session_terminal_pid(session: dict[str, Any], proc_root: pathlib.Path = path
             continue
         try:
             executable = (entry / "exe").resolve(strict=True)
-            if executable.name != "foot":
+            if executable.name not in {"foot", "ghostty"}:
                 continue
             raw = (entry / "cmdline").read_bytes()[:65_536]
         except OSError:
@@ -1527,7 +1581,7 @@ def session_terminal_pid(session: dict[str, Any], proc_root: pathlib.Path = path
 
 
 def open_session(identifier: str) -> dict[str, Any]:
-    """Focus the mapped Foot window for one verified live Quattro session."""
+    """Focus the mapped terminal window for one verified live Quattro session."""
     target = identifier.strip()
     if not target:
         die("sessions open requires a session or task id")
@@ -1554,7 +1608,7 @@ def open_session(identifier: str) -> dict[str, Any]:
         clients = []
     client = next((row for row in clients if (
         isinstance(row, dict)
-        and row.get("class") == "quattro-ai"
+        and row.get("class") in {"quattro-ai", "com.quattro.ai"}
         and row.get("mapped") is not False
         and int(row.get("pid") or 0) == terminal_pid
     )), None)
@@ -2715,7 +2769,7 @@ def multi_launch(count: int, directory_value: str | None) -> int:
         subprocess.run([tmux, "split-window", "-v", "-p", "50", "-t", f"{session}:0.0", "-c", str(directory), *worker_argv(agents[2])], check=True)
         subprocess.run([tmux, "split-window", "-v", "-p", "50", "-t", f"{session}:0.1", "-c", str(directory), *worker_argv(agents[3])], check=True)
         subprocess.run([tmux, "select-layout", "-t", f"{session}:0", "tiled"], check=True)
-    detached([require("foot"), "--app-id", "quattro-ai-multi", "--title", f"AI Workspace · {count}", tmux, "attach", "-t", session], directory)
+    detached([require("ghostty"), "--gtk-single-instance=false", "--class=com.quattro.ai.multi", "--title=" + f"AI Workspace · {count}", "-e", tmux, "attach", "-t", session], directory)
     return 0
 
 
@@ -3130,6 +3184,8 @@ def build_parser() -> argparse.ArgumentParser:
     native.add_argument("--include-diagnostics", action="store_true")
     native.add_argument("--directory")
     native.add_argument("--query")
+    native.add_argument("--decision-stdin", action="store_true",
+                        help="read a bounded model-authored v2 decision for the explicit probe")
     native.add_argument("--jev", choices=("on", "off"))
     native.add_argument("--json", action="store_true")
     sub.add_parser("chatgpt")

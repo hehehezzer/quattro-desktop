@@ -7,16 +7,19 @@ DNS stalls; neither provider failures nor advice change execution authority.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
 import queue
+import re
 import subprocess
 import sys
 import threading
 import time
 
-from .decision_taxonomy import SCHEMA_VERSION, allowed_action, question, validate_request
+from .decision_taxonomy import (SCHEMA_VERSION, allowed_action, question, validate_request,
+                                option_effect)
 from .jev import JevFailure, decode, validate_response
 from .jev_shadow import _CAPACITY, FailureCooldown
 from .provider_access import resolve_typesafe_credential
@@ -28,7 +31,6 @@ class DecisionSession:
     # existing conservative bounds. No 25 ms wait default is introduced.
     MAX_CALLS = 64
     MIN_CONFIDENCE = 0.90
-    TEST_RECOVERY_MIN_CONFIDENCE = 0.65  # One bounded host test action; required validation still runs.
 
     def __init__(self, *, mode="OFF", timeout_ms=1500, credential=None, popen=None):
         self.mode = mode if mode in {"OFF", "SHADOW", "COOPERATIVE"} else "OFF"
@@ -96,7 +98,7 @@ class DecisionSession:
             try:
                 env = {name: os.environ[name] for name in ("SYSTEMROOT", "WINDIR") if name in os.environ}
                 self.process = self.popen(
-                    [sys.executable, str(Path(__file__).with_name("jev_worker.py")), "--session"],
+                    [sys.executable, "-B", str(Path(__file__).with_name("jev_worker.py")), "--session"],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                     env=env, cwd=str(Path(__file__).parent),
                 )
@@ -186,12 +188,12 @@ class DecisionSession:
                 work = self.commands.get()
                 if work is None:
                     return
-                request, cacheable, started, abandoned, done, completed, trace, cancelled = work
+                request, cacheable, started, abandoned, done, completed, trace, cancelled, capabilities = work
                 trace["monitor_started"] = time.perf_counter()
                 try:
                     completed.append(self._decide(request, cacheable=cacheable,
                                                   started=started, abandoned=abandoned, trace=trace,
-                                                  cancelled=cancelled))
+                                                  cancelled=cancelled, capabilities=capabilities))
                 except Exception:
                     completed.append(self._fallback("worker_failure"))
                 finally:
@@ -217,10 +219,25 @@ class DecisionSession:
             if not self.retiring:
                 return
 
-    def decide(self, request, *, cacheable=False, cancelled=None):
+    def decide(self, request, *, cacheable=False, cancelled=None, capabilities=()):
         started = time.perf_counter()
         trace = {"request_entered": started}
         self._count("requests")
+        try:
+            if isinstance(capabilities, Mapping):
+                if any(type(value) is not bool for value in capabilities.values()):
+                    raise ValueError
+                capabilities = frozenset(name for name, value in capabilities.items() if value is True)
+            elif isinstance(capabilities, (set, frozenset, tuple, list)):
+                capabilities = frozenset(capabilities)
+            else:
+                raise ValueError
+            if (len(capabilities) > 128 or any(type(name) is not str or
+                    not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}", name) for name in capabilities)):
+                raise ValueError
+        except (TypeError, ValueError):
+            self._count("skipped")
+            return dict(self._fallback("invalid_state"), called=False, provider_attempt="NOT_ATTEMPTED")
         if self.closed.is_set() or self.mode != "COOPERATIVE":
             self._count("skipped")
             result = self._fallback("closed" if self.closed.is_set() else "disabled")
@@ -242,7 +259,10 @@ class DecisionSession:
                         self.monitor = threading.Thread(target=self._monitor_loop, name="jev-session-monitor", daemon=True)
                         self.monitor.start()
                     trace["request_queued"] = time.perf_counter()
-                    self.commands.put_nowait((request, cacheable, started, abandoned, done, completed, trace, cancelled))
+                    # Capabilities are host observations, never fields authored
+                    # by the model. Freeze them with this request admission.
+                    self.commands.put_nowait((request, cacheable, started, abandoned, done, completed, trace, cancelled,
+                                              capabilities))
             except Exception:
                 self.request_lock.release()
                 result = self._fallback("worker_failure")
@@ -279,6 +299,12 @@ class DecisionSession:
                 self._count(name, timing[name])
         timing["timeline_ms"] = {name: (value - started) * 1000 for name, value in observed.items()}
         result["timing"] = timing
+        confirmed = "provider_request_started" in observed or (
+            "answer_received" in observed and result.get("evidence") in
+            {"native_choice_probabilities", "hard_policy", "uncertain"})
+        result["called"] = confirmed and not result.get("cache_hit", False)
+        result["provider_attempt"] = ("CONFIRMED" if result["called"] else
+            "UNKNOWN" if "request_sent" in observed and not result.get("cache_hit") else "NOT_ATTEMPTED")
         with self.metrics_lock:
             self.last_timing = dict(timing)
         self._count("blocking_ms", elapsed)
@@ -291,7 +317,7 @@ class DecisionSession:
             self._count("accepted")
         return result
 
-    def _decide(self, request, *, cacheable, started, abandoned, trace, cancelled):
+    def _decide(self, request, *, cacheable, started, abandoned, trace, cancelled, capabilities):
         result = None
         try:
             if self.closed.is_set() or self.mode != "COOPERATIVE":
@@ -307,6 +333,9 @@ class DecisionSession:
                 result = self._fallback(error.category if isinstance(error, JevFailure) else "invalid_state")
                 return result
             self._count("context_bytes", len(encoded.encode("utf-8")))
+            # Exact question, descriptions, parameters and trusted host
+            # observations all participate in cache identity.
+            cache_key = (encoded, tuple(sorted(capabilities)))
             revision = request["execution_state"]["revision"]
             if revision < self.revision:
                 result = self._fallback("stale")
@@ -314,7 +343,7 @@ class DecisionSession:
             if revision != self.revision:
                 self.cache = None
                 self.revision = revision
-            if cacheable and self.cache is not None and self.cache[0] == encoded:
+            if cacheable and self.cache is not None and self.cache[0] == cache_key:
                 self._count("cache_hits")
                 result = dict(self.cache[1])
                 result["cache_hit"] = True
@@ -331,7 +360,7 @@ class DecisionSession:
                 return result
             self.calls += 1
             with self.metrics_lock:
-                self.by_type[request["decision_type"]] += 1
+                self.by_type["dynamic"] += 1
             self._count("calls")
             try:
                 deadline = started + self.timeout_ms / 1000
@@ -394,17 +423,17 @@ class DecisionSession:
                 timing = {name: value.get(name) for name in ("jev_latency_ms", "catalog_latency_ms")}
                 with self.metrics_lock:
                     self.last_jev_model = response["model"]
-                if not allowed_action(request, action):
+                effect = option_effect(request, action)
+                if not allowed_action(request, action, capabilities=capabilities):
                     result = self._fallback("hard_policy")
-                elif (answer["confidence"] < (
-                        self.TEST_RECOVERY_MIN_CONFIDENCE if request["decision_type"] == "test_recovery"
-                        else self.MIN_CONFIDENCE) or action == "agent"):
+                elif answer["confidence"] < self.MIN_CONFIDENCE or effect == "agent":
                     result = self._fallback("uncertain")
                 else:
                     result = {"selected_action": action, "confidence": answer["confidence"],
                               "evidence": "native_choice_probabilities", "fallback_required": False,
                               "probabilities": answer["probabilities"]}
-                    self.cache = (encoded, dict(result)) if cacheable else None
+                    result["selected_effect"] = effect
+                    self.cache = (cache_key, dict(result)) if cacheable else None
                 trace["decision_validated"] = time.perf_counter()
                 # Keep only the validated categorical provider choice, even
                 # when host policy rejects it. Never retain raw provider text.

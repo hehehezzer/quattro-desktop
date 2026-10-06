@@ -5,16 +5,18 @@ import Quickshell.Io
 import Quickshell.Services.Pipewire
 import Quickshell.Hyprland
 import Quickshell.Wayland
-import Quickshell.Services.SystemTray
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme" as QuattroTheme
 import "../services"
+import "shared"
 
 PanelWindow {
     id: root
     WlrLayershell.namespace: "quattro-bar"
+    // Permit deliberate pointer/keyboard use without claiming startup focus.
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
 
     anchors {
         top: true
@@ -28,7 +30,7 @@ PanelWindow {
     implicitHeight: QuattroTheme.Theme.barHeight
     color: "transparent"
 
-    property string fontFamily: QuattroTheme.Theme.fontFamily
+    property string fontFamily: QuattroTheme.Theme.navbarFontFamily
 
     Rectangle {
         anchors.fill: parent
@@ -60,42 +62,13 @@ PanelWindow {
         : ramStatsMouse.containsMouse
         ? "ram"
         : ""
-    property real systemStatsPopupX: 0
-    property bool systemStatsPopupPositioned: false
     property double countdownNow: Date.now()
 
     function gibibytes(bytes) {
         return (Number(bytes || 0) / 1073741824).toFixed(1)
     }
 
-    function positionSystemStatsPopup() {
-        if (root.hoveredSystemStat === "") {
-            root.systemStatsPopupPositioned = false
-            return
-        }
-
-        const target = root.hoveredSystemStat === "cpu"
-            ? cpuStatsItem
-            : ramStatsItem
-        const point = target.mapToItem(
-            root.contentItem,
-            target.width / 2,
-            0
-        )
-        const desiredX = point.x - systemStatsPopup.implicitWidth / 2
-        root.systemStatsPopupX = Math.max(
-            8,
-            Math.min(
-                root.width - systemStatsPopup.implicitWidth - 8,
-                desiredX
-            )
-        )
-        root.systemStatsPopupPositioned = true
-    }
-
-    onHoveredSystemStatChanged: root.positionSystemStatsPopup()
-
-    function resetCountdown(window) {
+    function resetCountdown(window, saved) {
         if (!window || window.resetAt === undefined || window.resetAt === null)
             return "Reset time unavailable"
 
@@ -107,7 +80,7 @@ PanelWindow {
 
         const totalMinutes = Math.max(0, Math.ceil((resetMs - root.countdownNow) / 60000))
         if (totalMinutes === 0)
-            return "Resets now"
+            return saved ? "Reset passed" : "Resets now"
 
         const days = Math.floor(totalMinutes / 1440)
         const hours = Math.floor((totalMinutes % 1440) / 60)
@@ -131,7 +104,7 @@ PanelWindow {
     function usageWindows(usageValue) {
         const usage = usageValue || root.agentUsage || {}
         return [usage.primary, usage.secondary].filter(window =>
-            window && window.usedPercent !== undefined && window.resetAt !== undefined
+            window && typeof window.usedPercent === "number" && isFinite(window.usedPercent)
         )
     }
 
@@ -205,28 +178,37 @@ PanelWindow {
         spacing: QuattroTheme.Theme.space2xs
 
         Rectangle {
-            width: QuattroTheme.Theme.compactTarget
-            height: QuattroTheme.Theme.barControlHeight
+            id: menuButton
+            implicitWidth: QuattroTheme.Theme.isInstrument ? 76 : QuattroTheme.Theme.compactTarget
+            implicitHeight: QuattroTheme.Theme.barControlHeight
             radius: QuattroTheme.Theme.cornerRadius
 
             color:
-                menuMouse.containsMouse
+                menuMouse.pressed ? QuattroTheme.Theme.pressed
+                : menuMouse.containsMouse
                 ? QuattroTheme.Theme.hover
                 : "transparent"
 
             Accessible.role: Accessible.Button
             Accessible.name: "Open Quattro menu"
+            Accessible.onPressAction: PopupManager.request("menu")
+            activeFocusOnTab: true
+            border.width: activeFocus ? QuattroTheme.Theme.focusLine : 0
+            border.color: QuattroTheme.Theme.textStrong
+            Keys.onReturnPressed: PopupManager.request("menu")
+            Keys.onEnterPressed: PopupManager.request("menu")
+            Keys.onSpacePressed: PopupManager.request("menu")
 
             Text {
                 anchors.centerIn: parent
 
-                text: "󰣇"
+                text: QuattroTheme.Theme.isInstrument ? "QUATTRO" : "󰣇"
 
                 color: QuattroTheme.Theme.textStrong
 
-                font.family: root.fontFamily
-                font.pixelSize: QuattroTheme.Theme.iconMedium
-                anchors.verticalCenterOffset: QuattroTheme.Theme.iconOpticalOffsetY
+                font.family: QuattroTheme.Theme.isInstrument ? root.fontFamily : QuattroTheme.Theme.iconFontFamily
+                font.pixelSize: QuattroTheme.Theme.isInstrument ? 16 : QuattroTheme.Theme.iconMedium
+                anchors.verticalCenterOffset: QuattroTheme.Theme.isInstrument ? 0 : QuattroTheme.Theme.iconOpticalOffsetY
             }
 
             MouseArea {
@@ -238,9 +220,19 @@ PanelWindow {
                 cursorShape: Qt.PointingHandCursor
 
                 onClicked: {
+                    menuButton.forceActiveFocus(Qt.MouseFocusReason)
                     PopupManager.request("menu")
                 }
             }
+        }
+
+        Rectangle {
+            visible: QuattroTheme.Theme.isInstrument
+            implicitWidth: 1
+            implicitHeight: 22
+            color: QuattroTheme.Theme.borderStrong
+            Layout.leftMargin: QuattroTheme.Theme.spaceXs
+            Layout.rightMargin: QuattroTheme.Theme.spaceSm
         }
 
         Repeater {
@@ -260,6 +252,7 @@ PanelWindow {
                 required property var modelData
 
                 implicitWidth:
+                    QuattroTheme.Theme.isInstrument ? 28 :
                     modelData.active
                     ? 26
                     : 20
@@ -269,27 +262,38 @@ PanelWindow {
                 radius: QuattroTheme.Theme.cornerRadius
 
                 color:
+                    workspaceMouse.pressed ? QuattroTheme.Theme.pressed :
                     modelData.active
-                    ? QuattroTheme.Theme.accent
+                    ? (QuattroTheme.Theme.isInstrument ? QuattroTheme.Theme.surfaceRaised : QuattroTheme.Theme.accent)
                     : workspaceMouse.containsMouse
                     ? QuattroTheme.Theme.hover
                     : "transparent"
 
                 Accessible.role: Accessible.Button
                 Accessible.name: "Workspace " + modelData.id
+                Accessible.description: modelData.active ? "Current workspace" : "Switch workspace"
+                Accessible.onPressAction: modelData.activate()
+                activeFocusOnTab: true
+                border.width: activeFocus ? QuattroTheme.Theme.focusLine
+                    : QuattroTheme.Theme.isInstrument && modelData.active ? 1 : 0
+                border.color: activeFocus ? QuattroTheme.Theme.textStrong : QuattroTheme.Theme.borderStrong
+                Keys.onReturnPressed: modelData.activate()
+                Keys.onEnterPressed: modelData.activate()
+                Keys.onSpacePressed: modelData.activate()
 
                 Text {
                     anchors.centerIn: parent
 
-                    text: workspaceButton.modelData.id
+                    text: QuattroTheme.Theme.isInstrument
+                        ? String(workspaceButton.modelData.id).padStart(2, "0") : workspaceButton.modelData.id
 
                     color:
-                        workspaceButton.modelData.active
+                        workspaceButton.modelData.active && !QuattroTheme.Theme.isInstrument
                         ? QuattroTheme.Theme.background
                         : QuattroTheme.Theme.text
 
                     font.family: root.fontFamily
-                    font.pixelSize: QuattroTheme.Theme.typeBody
+                    font.pixelSize: 14
                 }
 
                 MouseArea {
@@ -301,6 +305,7 @@ PanelWindow {
                     cursorShape: Qt.PointingHandCursor
 
                     onClicked: {
+                        workspaceButton.forceActiveFocus(Qt.MouseFocusReason)
                         workspaceButton.modelData.activate()
                     }
                 }
@@ -314,10 +319,15 @@ PanelWindow {
 
     MediaStrip {
         id: mediaStrip
+        fontFamily: root.fontFamily
+        textPixelSize: 12
         x: leftGroup.x + leftGroup.width + QuattroTheme.Theme.spaceSm
         y: (QuattroTheme.Theme.barHeight - height) / 2
-        width: Math.max(0, Math.min(player ? 390 : 136,
-            clockArea.x - x - QuattroTheme.Theme.spaceSm))
+        readonly property real availableWidth: Math.max(0, clockArea.x - x - QuattroTheme.Theme.spaceSm)
+        readonly property real lyricsReserve: root.inlineLyricsAvailable
+            && availableWidth >= (player ? 286 : 126) + 220 + QuattroTheme.Theme.spaceMd
+            ? 220 + QuattroTheme.Theme.spaceMd : 0
+        width: Math.min(player ? 390 : 136, availableWidth - lyricsReserve)
         visible: width >= (player ? 220 : 126)
         onOpenRequested: PopupManager.request("spotify")
     }
@@ -330,8 +340,20 @@ PanelWindow {
         height: QuattroTheme.Theme.barHeight
         visible: root.inlineLyricsAvailable && width >= 220
         clip: true
-        Accessible.role: Accessible.StaticText
+        activeFocusOnTab: true
+        Accessible.role: Accessible.Button
         Accessible.name: "Synchronized Spotify lyrics"
+        Accessible.description: "Open Spotify and full lyrics"
+        Accessible.onPressAction: PopupManager.request("spotify")
+        Keys.onReturnPressed: PopupManager.request("spotify")
+        Keys.onEnterPressed: PopupManager.request("spotify")
+        Keys.onSpacePressed: PopupManager.request("spotify")
+        Rectangle {
+            anchors.fill: parent
+            color: "transparent"
+            border.width: inlineLyrics.activeFocus ? QuattroTheme.Theme.focusLine : 0
+            border.color: QuattroTheme.Theme.textStrong
+        }
 
         Rectangle {
             anchors.left: parent.left
@@ -356,17 +378,19 @@ PanelWindow {
             verticalAlignment: Text.AlignVCenter
             color: QuattroTheme.Theme.textStrong
             font.family: root.fontFamily
-            font.pixelSize: QuattroTheme.Theme.typeMeta
-            font.bold: true
+            font.pixelSize: 14
+            font.bold: false
             fontSizeMode: Text.Fit
             minimumPixelSize: QuattroTheme.Theme.typeMicro
         }
 
         HoverHandler { id: inlineLyricsHover }
         TapHandler { onTapped: PopupManager.request("spotify") }
-        ToolTip.visible: inlineLyricsHover.hovered
-        ToolTip.delay: 700
-        ToolTip.text: "Open Spotify and full lyrics"
+        HoverTooltip {
+            target: parent
+            hoverActive: inlineLyricsHover.hovered
+            text: "Open Spotify and full lyrics"
+        }
     }
 
     Item {
@@ -390,9 +414,23 @@ PanelWindow {
             radius: QuattroTheme.Theme.cornerRadius
 
             color:
+                clockMouse.pressed ? QuattroTheme.Theme.pressed :
                 clockMouse.containsMouse
                 ? QuattroTheme.Theme.hover
                 : "transparent"
+            activeFocusOnTab: true
+            border.width: activeFocus ? QuattroTheme.Theme.focusLine : 0
+            border.color: QuattroTheme.Theme.textStrong
+            Accessible.role: Accessible.Button
+            Accessible.name: "Date, time and weather"
+            Accessible.onPressAction: PopupManager.request("clock")
+            Keys.onReturnPressed: PopupManager.request("clock")
+            Keys.onEnterPressed: PopupManager.request("clock")
+            Keys.onSpacePressed: PopupManager.request("clock")
+            Keys.onMenuPressed: {
+                root.alternateClockFormat = !root.alternateClockFormat
+                root.refreshClock()
+            }
 
             Row {
                 id: clockWeatherRow
@@ -412,7 +450,7 @@ PanelWindow {
                 color: QuattroTheme.Theme.textStrong
 
                 font.family: root.fontFamily
-                    font.pixelSize: QuattroTheme.Theme.typeLabel
+                    font.pixelSize: 16
                 }
 
                 Rectangle {
@@ -428,7 +466,7 @@ PanelWindow {
                     color: DesktopWeather.snapshot.stale
                         ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
                     font.family: root.fontFamily
-                    font.pixelSize: QuattroTheme.Theme.typeMeta
+                    font.pixelSize: 14
                 }
             }
 
@@ -457,6 +495,7 @@ PanelWindow {
                 cursorShape: Qt.PointingHandCursor
 
                 onClicked: function(mouse) {
+                    clockButton.forceActiveFocus(Qt.MouseFocusReason)
                     if (mouse.button === Qt.LeftButton) {
                         PopupManager.request("clock")
 
@@ -492,7 +531,32 @@ PanelWindow {
 
         spacing: QuattroTheme.Theme.space2xs
 
-        RunningApps { barWindow: root }
+        RunningApps {
+            barWindow: root
+            text: "Apps"
+            implicitWidth: 64
+            font.family: root.fontFamily
+            font.pixelSize: 14
+        }
+        DesktopButton {
+            id: notificationsButton
+            text: "󰂚"
+            quiet: true
+            implicitWidth: QuattroTheme.Theme.compactTarget
+            implicitHeight: QuattroTheme.Theme.barControlHeight
+            font.pixelSize: QuattroTheme.Theme.iconSmall
+            Accessible.name: "Notifications" + (NotificationHistory.unseenCount > 0
+                ? " · " + NotificationHistory.unseenCount + " unread" : "")
+            ToolTip.text: Accessible.name
+            onClicked: PopupManager.request("notifications")
+            Rectangle {
+                anchors { top: parent.top; right: parent.right; margins: 3 }
+                width: 5; height: 5; radius: 2.5
+                visible: NotificationHistory.unseenCount > 0
+                color: QuattroTheme.Theme.textStrong
+            }
+        }
+
 
         Rectangle {
             id: systemStatsButton
@@ -500,6 +564,13 @@ PanelWindow {
             implicitWidth: systemStatsRow.implicitWidth + 14
             implicitHeight: QuattroTheme.Theme.barControlHeight
             radius: QuattroTheme.Theme.cornerRadius
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: "Open monitoring"
+            Keys.onReturnPressed: PopupManager.request("monitoring")
+            Keys.onSpacePressed: PopupManager.request("monitoring")
+            border.width: activeFocus ? 2 : 0
+            border.color: QuattroTheme.Theme.textStrong
             color: root.hoveredSystemStat !== "" ? QuattroTheme.Theme.hover : "transparent"
 
             Row {
@@ -509,49 +580,75 @@ PanelWindow {
 
                 Item {
                     id: cpuStatsItem
-                    implicitWidth: cpuStatsLabel.implicitWidth
+                    implicitWidth: cpuStatsContent.implicitWidth
                     implicitHeight: QuattroTheme.Theme.barControlHeight
 
-                    Text {
-                        id: cpuStatsLabel
+                    Row {
+                        id: cpuStatsContent
                         anchors.centerIn: parent
-                        text: root.systemStats && root.systemStats.available
-                            ? "󰍛 " + Math.round(root.systemStats.cpuPercent) + "%"
-                            : "󰍛 --"
-                        color: QuattroTheme.Theme.text
-                        font.family: root.fontFamily
-                        font.pixelSize: QuattroTheme.Theme.typeBody
+                        spacing: QuattroTheme.Theme.spaceXs
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.verticalCenterOffset: QuattroTheme.Theme.iconOpticalOffsetY
+                            text: "󰍛"
+                            color: QuattroTheme.Theme.text
+                            font.family: QuattroTheme.Theme.iconFontFamily
+                            font.pixelSize: QuattroTheme.Theme.iconSmall
+                        }
+                        Text {
+                            id: cpuStatsLabel
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.systemStats && root.systemStats.available
+                                ? Math.round(root.systemStats.cpuPercent) + "%" : "--"
+                            color: QuattroTheme.Theme.text
+                            font.family: root.fontFamily
+                            font.pixelSize: 14
+                        }
                     }
 
                     MouseArea {
                         id: cpuStatsMouse
                         anchors.fill: parent
                         hoverEnabled: true
-                        cursorShape: Qt.ArrowCursor
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: PopupManager.request("monitoring")
                     }
                 }
 
                 Item {
                     id: ramStatsItem
-                    implicitWidth: ramStatsLabel.implicitWidth
+                    implicitWidth: ramStatsContent.implicitWidth
                     implicitHeight: QuattroTheme.Theme.barControlHeight
 
-                    Text {
-                        id: ramStatsLabel
+                    Row {
+                        id: ramStatsContent
                         anchors.centerIn: parent
-                        text: root.systemStats && root.systemStats.available
-                            ? "󰘚 " + Math.round(root.systemStats.ramPercent) + "%"
-                            : "󰘚 --"
-                        color: QuattroTheme.Theme.text
-                        font.family: root.fontFamily
-                        font.pixelSize: QuattroTheme.Theme.typeBody
+                        spacing: QuattroTheme.Theme.spaceXs
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.verticalCenterOffset: QuattroTheme.Theme.iconOpticalOffsetY
+                            text: "󰘚"
+                            color: QuattroTheme.Theme.text
+                            font.family: QuattroTheme.Theme.iconFontFamily
+                            font.pixelSize: QuattroTheme.Theme.iconSmall
+                        }
+                        Text {
+                            id: ramStatsLabel
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.systemStats && root.systemStats.available
+                                ? Math.round(root.systemStats.ramPercent) + "%" : "--"
+                            color: QuattroTheme.Theme.text
+                            font.family: root.fontFamily
+                            font.pixelSize: 14
+                        }
                     }
 
                     MouseArea {
                         id: ramStatsMouse
                         anchors.fill: parent
                         hoverEnabled: true
-                        cursorShape: Qt.ArrowCursor
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: PopupManager.request("monitoring")
                     }
                 }
             }
@@ -560,32 +657,55 @@ PanelWindow {
         Rectangle {
             id: agentUsageButton
             visible: root.width >= 1200
-            implicitWidth: agentLabel.implicitWidth + 14
+            implicitWidth: agentUsageContent.implicitWidth + 14
             implicitHeight: QuattroTheme.Theme.barControlHeight
             radius: QuattroTheme.Theme.cornerRadius
-            color: agentMouse.containsMouse ? QuattroTheme.Theme.hover : "transparent"
+            color: agentMouse.pressed ? QuattroTheme.Theme.pressed
+                : agentMouse.containsMouse ? QuattroTheme.Theme.hover : "transparent"
+            activeFocusOnTab: true
+            border.width: activeFocus ? QuattroTheme.Theme.focusLine : 0
+            border.color: QuattroTheme.Theme.textStrong
+            Accessible.role: Accessible.Button
+            Accessible.name: "AI usage limits"
+            Accessible.onPressAction: PopupManager.request("agents")
+            Keys.onReturnPressed: PopupManager.request("agents")
+            Keys.onEnterPressed: PopupManager.request("agents")
+            Keys.onSpacePressed: PopupManager.request("agents")
 
-            Text {
-                id: agentLabel
+            Row {
+                id: agentUsageContent
                 anchors.centerIn: parent
-                text: {
-                    const usage = root.agentUsage || {}
-                    const windows = [usage.primary, usage.secondary].filter(window =>
-                        window && window.usedPercent !== undefined
-                    )
-                    if (windows.length === 0)
-                        return "󰚩 --"
-                    return "󰚩 " + windows.map(window =>
-                        (window.label || "Usage") + " " + Math.round(100 - window.usedPercent) + "%"
-                    ).join("  ")
+                spacing: QuattroTheme.Theme.spaceXs
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.verticalCenterOffset: QuattroTheme.Theme.iconOpticalOffsetY
+                    text: "󰚩"
+                    color: agentLabel.color
+                    font.family: QuattroTheme.Theme.iconFontFamily
+                    font.pixelSize: QuattroTheme.Theme.iconSmall
                 }
-                color: root.agentUsage && root.agentUsage.stale
-                    ? QuattroTheme.Theme.warning
-                    : root.agentUsage && root.agentUsage.loggedIn
-                    ? QuattroTheme.Theme.success
-                    : QuattroTheme.Theme.text
-                font.family: root.fontFamily
-                font.pixelSize: QuattroTheme.Theme.typeBody
+                Text {
+                    id: agentLabel
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: {
+                        const usage = root.agentUsage || {}
+                        const windows = root.usageWindows(usage)
+                        if (usage.authenticationRequired)
+                            return "Sign in"
+                        if (windows.length === 0)
+                            return "--"
+                        return windows.map(window =>
+                            (window.label || "Usage") + " " + Math.round(100 - window.usedPercent) + "%"
+                        ).join("  ") + (usage.stale ? " · saved" : "")
+                    }
+                    color: root.agentUsage && root.agentUsage.stale
+                        ? QuattroTheme.Theme.warning
+                        : root.agentUsage && root.agentUsage.loggedIn
+                        ? QuattroTheme.Theme.success
+                        : QuattroTheme.Theme.text
+                    font.family: root.fontFamily
+                    font.pixelSize: 14
+                }
             }
 
             MouseArea {
@@ -597,112 +717,13 @@ PanelWindow {
                     if (containsMouse)
                         root.countdownNow = Date.now()
                 }
-                onClicked: PopupManager.request("agents")
-            }
-        }
-
-        Repeater {
-            model: SystemTray.items
-
-            delegate: Rectangle {
-                id: trayEntry
-
-                required property var modelData
-
-                implicitWidth: QuattroTheme.Theme.compactTarget
-                implicitHeight: QuattroTheme.Theme.barControlHeight
-
-                radius: QuattroTheme.Theme.cornerRadius
-
-                color:
-                    trayMouse.containsMouse
-                    ? QuattroTheme.Theme.hover
-                    : "transparent"
-
-                Image {
-                    anchors.centerIn: parent
-
-                    width: QuattroTheme.Theme.iconMedium
-                    height: QuattroTheme.Theme.iconMedium
-
-                    source: trayEntry.modelData.icon
-
-                    sourceSize.width: QuattroTheme.Theme.iconMedium
-                    sourceSize.height: QuattroTheme.Theme.iconMedium
-
-                    fillMode: Image.PreserveAspectFit
-
-                    smooth: true
-                }
-
-                MouseArea {
-                    id: trayMouse
-
-                    anchors.fill: parent
-
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-
-                    acceptedButtons:
-                        Qt.LeftButton
-                        | Qt.MiddleButton
-                        | Qt.RightButton
-
-                    function openMenu() {
-                        const item = trayEntry.modelData
-
-                        if (!item.hasMenu)
-                            return
-
-                        const pos = trayEntry.mapToItem(
-                            root.contentItem,
-                            0,
-                            trayEntry.height
-                        )
-
-                        PopupManager.closeActive()
-                        item.display(
-                            root,
-                            pos.x,
-                            pos.y
-                        )
-                    }
-
-                    onClicked: mouse => {
-                        const item = trayEntry.modelData
-
-                        if (mouse.button === Qt.LeftButton) {
-                            if (
-                                item.onlyMenu
-                                && item.hasMenu
-                            ) {
-                                openMenu()
-                            } else {
-                                item.activate()
-                            }
-
-                            return
-                        }
-
-                        if (mouse.button === Qt.MiddleButton) {
-                            item.secondaryActivate()
-                            return
-                        }
-
-                        if (mouse.button === Qt.RightButton) {
-                            openMenu()
-                        }
-                    }
-
-                    onWheel: wheel => {
-                        trayEntry.modelData.scroll(
-                            wheel.angleDelta.y,
-                            false
-                        )
-                    }
+                onClicked: {
+                    agentUsageButton.forceActiveFocus(Qt.MouseFocusReason)
+                    PopupManager.request("agents")
                 }
             }
         }
+
 
         BarIcon {
             glyph: "󰂯"
@@ -792,42 +813,43 @@ PanelWindow {
         }
     }
 
-    PopupWindow {
-        id: systemStatsPopup
-
-        visible: !PopupManager.activePanel && root.hoveredSystemStat !== "" && root.systemStatsPopupPositioned
-        color: "transparent"
-        anchor.window: root
-        anchor.rect.x: Math.round(root.systemStatsPopupX)
-        anchor.rect.y: root.implicitHeight + 4
-        implicitWidth: 190
-        implicitHeight: 52
-
-        Rectangle {
-            anchors.fill: parent
-            radius: QuattroTheme.Theme.panelRadius
-            color: QuattroTheme.Theme.panelSurface
-            border.color: QuattroTheme.Theme.panelBorder
-            border.width: 1
-
+    HoverTooltip {
+        target: root.hoveredSystemStat === "ram" ? ramStatsItem : cpuStatsItem
+        allowed: !PopupManager.activePanel
+        hoverActive: root.hoveredSystemStat !== ""
+        focusActive: systemStatsButton.activeFocus
+        preferredWidth: 220
+        contentComponent: Component {
             Column {
-                anchors.centerIn: parent
                 spacing: 3
-
                 Text {
-                    text: root.hoveredSystemStat === "cpu"
-                        ? "CPU usage · " + Math.round((root.systemStats && root.systemStats.cpuPercent) || 0) + "%"
-                        : "RAM usage · " + Math.round((root.systemStats && root.systemStats.ramPercent) || 0) + "%"
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: root.hoveredSystemStat === "ram"
+                        ? "RAM usage · " + Math.round((root.systemStats && root.systemStats.ramPercent) || 0) + "%"
+                        : "CPU usage · " + Math.round((root.systemStats && root.systemStats.cpuPercent) || 0) + "%"
                     color: QuattroTheme.Theme.textStrong
                     font.family: root.fontFamily
                     font.pixelSize: 10
                 }
-
                 Text {
-                    text: root.hoveredSystemStat === "cpu"
-                        ? "Aggregate processor load"
-                        : root.gibibytes(root.systemStats && root.systemStats.ramUsedBytes)
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: root.hoveredSystemStat === "ram"
+                        ? root.gibibytes(root.systemStats && root.systemStats.ramUsedBytes)
                             + " / " + root.gibibytes(root.systemStats && root.systemStats.ramTotalBytes) + " GiB in use"
+                        : "Aggregate processor load"
+                    color: QuattroTheme.Theme.text
+                    font.family: root.fontFamily
+                    font.pixelSize: 10
+                }
+                Text {
+                    width: parent.width
+                    visible: systemStatsButton.activeFocus && root.hoveredSystemStat === ""
+                    wrapMode: Text.Wrap
+                    text: "RAM usage · " + Math.round((root.systemStats && root.systemStats.ramPercent) || 0) + "% · "
+                        + root.gibibytes(root.systemStats && root.systemStats.ramUsedBytes)
+                        + " / " + root.gibibytes(root.systemStats && root.systemStats.ramTotalBytes) + " GiB in use"
                     color: QuattroTheme.Theme.text
                     font.family: root.fontFamily
                     font.pixelSize: 10
@@ -836,35 +858,36 @@ PanelWindow {
         }
     }
 
-    PopupWindow {
-        id: agentUsagePopup
-
-        visible: !PopupManager.activePanel && agentMouse.containsMouse
-        color: "transparent"
-        anchor.window: root
-        anchor.rect.x: Math.round(agentUsageButton.mapToItem(root.contentItem, 0, 0).x + agentUsageButton.width - implicitWidth)
-        anchor.rect.y: root.implicitHeight + 4
-        implicitWidth: 122
-        implicitHeight: Math.max(24, root.usageWindowList.length * 15 + 8)
-
-        Rectangle {
-            anchors.fill: parent
-            radius: QuattroTheme.Theme.panelRadius
-            color: QuattroTheme.Theme.panelSurface
-            border.color: QuattroTheme.Theme.panelBorder
-            border.width: 1
-
+    HoverTooltip {
+        target: agentUsageButton
+        allowed: !PopupManager.activePanel
+        hoverActive: agentMouse.containsMouse
+        preferredWidth: 220
+        contentComponent: Component {
             Column {
                 id: agentUsagePopupContent
-                anchors.centerIn: parent
-                spacing: 1
+                Accessible.role: Accessible.ToolTip
+                Accessible.name: root.agentUsage.message || "Current usage limits"
+                spacing: 4
+
+                Text {
+                    width: parent.width
+                    text: root.agentUsage.message || (root.usageWindowList.length ? "Current usage limits" : "Usage limits unavailable")
+                    color: root.agentUsage.stale ? QuattroTheme.Theme.warning : QuattroTheme.Theme.text
+                    font.family: root.fontFamily
+                    font.pixelSize: 10
+                    wrapMode: Text.Wrap
+                }
 
                 Repeater {
                     model: root.usageWindowList
 
                     delegate: Text {
                         required property var modelData
-                        text: (modelData.label || "Usage") + " · " + root.resetCountdown(modelData).replace("Resets in ", "")
+                        width: parent.width
+                        wrapMode: Text.Wrap
+                        text: (root.agentUsage.stale ? "Saved " : "") + (modelData.label || "Usage") + " · "
+                            + root.resetCountdown(modelData, root.agentUsage.stale).replace("Resets in ", "")
                         color: QuattroTheme.Theme.text
                         font.family: root.fontFamily
                         font.pixelSize: 10
@@ -890,8 +913,16 @@ PanelWindow {
         implicitHeight: QuattroTheme.Theme.barControlHeight
 
         radius: QuattroTheme.Theme.cornerRadius
+        activeFocusOnTab: true
+        border.width: activeFocus ? QuattroTheme.Theme.focusLine : 0
+        border.color: QuattroTheme.Theme.textStrong
+        Keys.onReturnPressed: iconRoot.clicked()
+        Keys.onEnterPressed: iconRoot.clicked()
+        Keys.onSpacePressed: iconRoot.clicked()
+        Keys.onMenuPressed: iconRoot.rightClicked()
 
         color:
+            iconMouse.pressed ? QuattroTheme.Theme.pressed :
             iconMouse.containsMouse
             ? QuattroTheme.Theme.hover
             : "transparent"
@@ -906,7 +937,7 @@ PanelWindow {
 
             color: QuattroTheme.Theme.text
 
-            font.family: root.fontFamily
+            font.family: QuattroTheme.Theme.iconFontFamily
             font.pixelSize: QuattroTheme.Theme.iconMedium
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -914,6 +945,7 @@ PanelWindow {
 
         Accessible.role: Accessible.Button
         Accessible.name: iconRoot.accessibleName
+        Accessible.onPressAction: iconRoot.clicked()
 
         MouseArea {
             id: iconMouse
@@ -930,6 +962,7 @@ PanelWindow {
             cursorShape: Qt.PointingHandCursor
 
             onClicked: function(mouse) {
+                iconRoot.forceActiveFocus(Qt.MouseFocusReason)
                 if (mouse.button === Qt.LeftButton) {
                     iconRoot.clicked()
                 } else if (mouse.button === Qt.RightButton) {
@@ -950,8 +983,10 @@ PanelWindow {
             }
         }
 
-        ToolTip.visible: iconMouse.containsMouse
-        ToolTip.delay: 700
-        ToolTip.text: iconRoot.accessibleName
+        HoverTooltip {
+            target: iconRoot
+            hoverActive: iconMouse.containsMouse
+            text: iconRoot.accessibleName
+        }
     }
 }

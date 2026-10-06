@@ -54,15 +54,6 @@ class SystemStatsTests(unittest.TestCase):
         self.assertIn("Aggregate processor load", content)
         self.assertIn("GiB in use", content)
 
-    def test_system_stats_tooltip_is_positioned_from_the_hovered_item(self):
-        content = BAR.read_text(encoding="utf-8")
-        self.assertIn("function positionSystemStatsPopup()", content)
-        self.assertIn("id: cpuStatsItem", content)
-        self.assertIn("id: ramStatsItem", content)
-        self.assertIn("target.mapToItem(", content)
-        self.assertIn("root.width - systemStatsPopup.implicitWidth - 8", content)
-        self.assertIn("anchor.rect.x: Math.round(root.systemStatsPopupX)", content)
-        self.assertIn("root.systemStatsPopupPositioned", content)
 
 
 class InlineLyricsBarTests(unittest.TestCase):

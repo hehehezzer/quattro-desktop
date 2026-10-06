@@ -711,8 +711,8 @@ Scope {
                             Item { Layout.fillWidth: true }
                             ActionButton {
                                 label: actionProcess.running && root.actionKind === "usage" ? "Refreshing…" : "Refresh limits"
-                                enabled: !actionProcess.running
-                                onClicked: root.invoke(["usage", "refresh", "--all"], "usage")
+                                enabled: !actionProcess.running && !!root.dashboard.activeAccount && root.object(root.dashboard.usage).accountId === root.dashboard.activeAccount
+                                onClicked: root.invoke(["usage", "refresh", "--account", root.dashboard.activeAccount], "usage")
                             }
                         }
                         RowLayout {
@@ -727,8 +727,10 @@ Scope {
                                 Layout.fillWidth: true
                             }
                             Text {
-                                text: root.object(root.dashboard.usage).stale ? "STALE" : "LIVE"
-                                color: root.object(root.dashboard.usage).stale ? QuattroTheme.Theme.warning : QuattroTheme.Theme.success
+                                text: root.object(root.dashboard.usage).authenticationRequired ? "SIGN IN"
+                                    : root.object(root.dashboard.usage).status === "live" ? "LIVE"
+                                    : root.object(root.dashboard.usage).status === "stale" ? "SAVED" : "UNAVAILABLE"
+                                color: root.object(root.dashboard.usage).status === "live" ? QuattroTheme.Theme.success : QuattroTheme.Theme.warning
                                 font.family: "JetBrainsMono Nerd Font"
                                 font.pixelSize: 7
                                 font.bold: true
@@ -745,8 +747,13 @@ Scope {
                             visible: !!window
                         }
                         Text {
-                            visible: !root.object(root.dashboard.usage).primary && !root.object(root.dashboard.usage).secondary
-                            text: root.object(root.dashboard.usage).loggedIn ? "Usage limits are not available for this account." : "Authentication required before limits can be read."
+                            visible: text.length > 0
+                            text: {
+                                const usage = root.object(root.dashboard.usage)
+                                const message = usage.message || ""
+                                return message + (usage.stale && usage.lastSuccessfulRefresh
+                                    ? " Last updated " + root.age(usage.lastSuccessfulRefresh) + " ago." : "")
+                            }
                             color: QuattroTheme.Theme.textMuted
                             font.family: "JetBrainsMono Nerd Font"
                             font.pixelSize: 8
