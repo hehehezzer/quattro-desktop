@@ -106,7 +106,8 @@ Windows.
   or Codex execution is used. The endpoint and catalog are configurable;
   Quattro does not bundle OmniRoute.
 - Optional desktop dependencies: Hyprland Lua integration, Quickshell 0.3.x,
-  Foot, `wl-clipboard`, and the commands documented in `docs/desktop.md`.
+  Ghostty, `wl-clipboard`, and the commands documented in `docs/desktop.md`.
+  Foot remains supported for existing terminal sessions.
 
 ## Core-only quick start
 
@@ -236,7 +237,7 @@ Report vulnerabilities through the process in [SECURITY.md](SECURITY.md).
 
 ```bash
 python -m unittest discover -s tests -p 'test_*.py'
-python -m compileall -q src
+python -m compileall -q src scripts
 python scripts/check_python.py
 python scripts/check_public_artifacts.py
 git diff --check
@@ -247,5 +248,6 @@ and [development](docs/development.md).
 
 ## License
 
-Quattro is released under the MIT License. Desktop artwork is intentionally
-not bundled; local artwork can be supplied with `QUATTRO_WALLPAPER_DIR`.
+Quattro code and original bundled desktop artwork are released under the MIT
+License. Bundled fonts retain their accompanying SIL Open Font License notices.
+Local artwork can be supplied with `QUATTRO_WALLPAPER_DIR`.

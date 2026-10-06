@@ -516,5 +516,115 @@ class SessionDiscoveryTests(unittest.TestCase):
 
 
 
+
+class UsageDisplayStateTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = pathlib.Path(self.directory.name)
+        self.config = {"accounts": [{"id": "account-1", "alias": "Account 1"}],
+                       "defaultCodexAccount": "account-1"}
+        for patcher in (mock.patch.object(agent, "STATE_ROOT", self.root),
+                        mock.patch.object(agent, "load_config", return_value=self.config)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.good = {"accountId": "account-1", "loggedIn": True,
+                     "lastSuccessfulRefresh": agent.now_iso(),
+                     "primary": {"usedPercent": 55, "resetAt": 1900000000,
+                                 "windowMinutes": 10080, "label": "W"}, "secondary": None}
+        self.save("account-1.json", self.good)
+
+    def save(self, name, data):
+        (self.root / "usage").mkdir(exist_ok=True)
+        (self.root / "usage" / name).write_text(json.dumps(data))
+
+    def test_auth_failure_preserves_saved_limits_without_claiming_current_login(self):
+        self.save("account-1.refresh.json", {"ok": False, "error":
+                  "401 Unauthorized; body=synthetic-private-provider-body"})
+        value = agent.usage_status()
+        self.assertEqual(value["status"], "authentication_required")
+        self.assertTrue(value["stale"])
+        self.assertFalse(value["loggedIn"])
+        self.assertEqual(value["primary"], self.good["primary"])
+        self.assertNotIn("synthetic-private", json.dumps(value))
+        self.assertIn("Sign in", value["message"])
+
+    def test_unavailable_without_snapshot_does_not_invent_limits_or_auth_failure(self):
+        (self.root / "usage/account-1.json").unlink()
+        value = agent.usage_status()
+        self.assertEqual(value["status"], "unavailable")
+        self.assertFalse(value["authenticationRequired"])
+        self.assertIsNone(value["primary"])
+
+    def test_successful_reauthentication_replaces_failed_state(self):
+        self.save("account-1.refresh.json", {"ok": False, "errorCode": "authentication_required"})
+        with mock.patch.object(agent, "ensure_state_dirs"), mock.patch.object(
+            agent, "jsonrpc_snapshot", return_value=({"account": {"type": "chatgpt"}},
+                {"rateLimits": {"primary": {"usedPercent": 23, "windowDurationMins": 300}}}),
+        ):
+            self.assertEqual(agent.refresh_usage("account-1"), 0)
+        value = agent.usage_status()
+        self.assertEqual(value["status"], "live")
+        self.assertFalse(value["authenticationRequired"])
+        self.assertFalse(value["stale"])
+        self.assertIsNone(value["error"])
+        self.assertEqual(value["primary"]["usedPercent"], 23)
+
+    def test_failed_refresh_never_persists_or_prints_provider_body(self):
+        with mock.patch.object(agent, "ensure_state_dirs"), mock.patch.object(
+            agent, "jsonrpc_snapshot", side_effect=RuntimeError("401 synthetic-private-body"),
+        ) as rpc, mock.patch.object(agent, "eprint") as output:
+            self.assertEqual(agent.refresh_usage("account-1"), 1)
+        self.assertEqual(rpc.call_count, 1)
+        self.assertNotIn("synthetic-private", str(output.call_args))
+        self.assertNotIn("synthetic-private", (self.root / "usage/account-1.refresh.json").read_text())
+        self.assertEqual(json.loads((self.root / "usage/account-1.json").read_text()), self.good)
+
+    def test_transient_failure_does_not_claim_logout(self):
+        for code in ("timeout", "rate_limited", "unavailable"):
+            with self.subTest(code=code):
+                self.save("account-1.refresh.json", {"ok": False, "errorCode": code})
+                value = agent.usage_status()
+                self.assertEqual(value["errorCode"], code)
+                self.assertEqual(value["status"], "stale")
+                self.assertTrue(value["loggedIn"])
+                self.assertFalse(value["authenticationRequired"])
+
+    def test_missing_and_non_finite_percentages_are_unavailable(self):
+        for used in (None, True, False, "0", float("nan"), float("inf"), -float("inf"), 10 ** 400, -(10 ** 400)):
+            with self.subTest(used=used):
+                self.assertIsNone(agent.normalize_window({"usedPercent": used}))
+                self.save("account-1.json", {**self.good, "primary": {"usedPercent": used}})
+                self.assertEqual(agent.usage_status()["status"], "unavailable")
+        self.assertEqual(agent.normalize_window({"usedPercent": 0})["usedPercent"], 0)
+
+    def test_transient_token_refresh_failures_preserve_login_and_retry(self):
+        for error, expected in (
+            ("refresh token request timed out", "timeout"),
+            ("refresh_token request failed: 429 Too Many Requests", "rate_limited"),
+            ("refresh token request failed: 503 Service Unavailable", "unavailable"),
+        ):
+            with self.subTest(error=error), mock.patch.object(agent, "ensure_state_dirs"), \
+                    mock.patch.object(agent, "jsonrpc_snapshot", side_effect=RuntimeError(error)) as rpc, \
+                    mock.patch.object(agent.time, "sleep"), mock.patch.object(agent, "eprint"):
+                self.assertEqual(agent.refresh_usage("account-1"), 1)
+                self.assertEqual(rpc.call_count, 2)
+                value = agent.usage_status()
+                self.assertEqual(value["errorCode"], expected)
+                self.assertTrue(value["loggedIn"])
+                self.assertFalse(value["authenticationRequired"])
+
+    def test_explicit_expired_or_reused_token_requires_authentication(self):
+        for error in ("refresh token has expired", "refresh_token_reused", "invalid_grant"):
+            with self.subTest(error=error):
+                self.assertEqual(agent.usage_error_details(error)[0], "authentication_required")
+
+    def test_expired_success_snapshot_is_saved_not_live(self):
+        self.save("account-1.json", {**self.good, "lastSuccessfulRefresh": "2000-01-01T00:00:00Z"})
+        value = agent.usage_status()
+        self.assertEqual(value["status"], "stale")
+        self.assertIn("saved", value["message"])
+
+
 if __name__ == "__main__":
     unittest.main()

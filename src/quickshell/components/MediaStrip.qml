@@ -2,13 +2,25 @@ import Quickshell
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "shared"
 import "../services"
 import "../theme" as QuattroTheme
 
 Item {
     id: root
 
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: "Open Spotify and full lyrics"
+    Accessible.description: root.hasTrack
+        ? root.player.trackTitle + " · " + root.player.trackArtist : "Spotify"
+    Accessible.onPressAction: root.openRequested()
+    Keys.onReturnPressed: root.openRequested()
+    Keys.onEnterPressed: root.openRequested()
+    Keys.onSpacePressed: root.openRequested()
     signal openRequested()
+    property string fontFamily: QuattroTheme.Theme.fontFamily
+    property int textPixelSize: QuattroTheme.Theme.typeMeta
 
     readonly property var player: DesktopMedia.player
     readonly property bool hasTrack: !!player && !!player.trackTitle
@@ -20,6 +32,8 @@ Item {
         anchors.fill: parent
         radius: QuattroTheme.Theme.cornerRadius
         color: stripHover.hovered ? QuattroTheme.Theme.hover : "transparent"
+        border.width: root.activeFocus ? QuattroTheme.Theme.focusLine : 0
+        border.color: QuattroTheme.Theme.textStrong
 
         Behavior on color {
             ColorAnimation { duration: QuattroTheme.Theme.motionFast }
@@ -73,9 +87,9 @@ Item {
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: QuattroTheme.Theme.textStrong
-                font.family: QuattroTheme.Theme.fontFamily
-                font.pixelSize: QuattroTheme.Theme.typeMeta
-                font.bold: true
+                font.family: root.fontFamily
+                font.pixelSize: root.textPixelSize
+                font.bold: root.fontFamily === QuattroTheme.Theme.fontFamily
             }
 
             Text {
@@ -89,14 +103,17 @@ Item {
                 color: root.player && root.player.isPlaying
                     ? QuattroTheme.Theme.success
                     : QuattroTheme.Theme.textMuted
-                font.family: QuattroTheme.Theme.fontFamily
-                font.pixelSize: QuattroTheme.Theme.typeMicro
+                font.family: root.fontFamily
+                font.pixelSize: root.textPixelSize
             }
 
             TapHandler { onTapped: root.openRequested() }
         }
 
         RowLayout {
+            id: transportRow
+            readonly property bool hovered: rowHover.hovered
+            HoverHandler { id: rowHover }
             visible: root.controlsVisible
             spacing: 0
 
@@ -148,11 +165,15 @@ Item {
 
     HoverHandler { id: stripHover }
 
-    ToolTip.visible: stripHover.hovered
-    ToolTip.delay: 900
-    ToolTip.text: root.hasTrack
-        ? "Spotify · " + root.player.trackTitle + "\n" + root.player.trackArtist
-        : root.player ? "Spotify · ready" : "Spotify · closed"
+    HoverTooltip {
+        target: root
+        delay: 900
+        hoverActive: stripHover.hovered
+        allowed: !transportRow.hovered
+        text: root.hasTrack
+            ? "Spotify · " + root.player.trackTitle + "\n" + root.player.trackArtist
+            : root.player ? "Spotify · ready" : "Spotify · closed"
+    }
 
     component TransportButton: Item {
         id: transport
@@ -170,6 +191,8 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: QuattroTheme.Theme.cornerRadius
+            border.width: transport.activeFocus ? QuattroTheme.Theme.focusLine : 0
+            border.color: QuattroTheme.Theme.textStrong
             color: transportTap.pressed ? QuattroTheme.Theme.pressed
                 : transportHover.hovered ? QuattroTheme.Theme.hover
                 : transport.primary ? QuattroTheme.Theme.accentMuted
@@ -196,8 +219,15 @@ Item {
             enabled: transport.enabled
             onTapped: transport.activated()
         }
-        ToolTip.visible: transportHover.hovered
-        ToolTip.delay: 700
-        ToolTip.text: transport.accessibleName
+        activeFocusOnTab: true
+        Keys.onReturnPressed: if (enabled) activated()
+        Keys.onEnterPressed: if (enabled) activated()
+        Keys.onSpacePressed: if (enabled) activated()
+        Accessible.onPressAction: if (enabled) activated()
+        HoverTooltip {
+            target: transport
+            hoverActive: transportHover.hovered
+            text: transport.accessibleName
+        }
     }
 }

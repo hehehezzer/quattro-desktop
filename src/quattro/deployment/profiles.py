@@ -34,7 +34,7 @@ CORE_DEPLOYMENT_MAPPINGS = {
             "bounded_command.py", "bounded_command_worker.py", "recovering_test.py", "tool_cli.py",
             "collaboration.py", "config.py", "containment.py", "delegation.py", "errors.py",
             "mandatory_context.py", "model_registry.py", "models.py", "omniroute.py", "paths.py", "policy.py",
-            "privacy.py", "recovery.py", "retrieval.py", "shared_intelligence.py", "hermes_bridge.py", "native_intelligence.py", "native_cli.py", "routing.py",
+            "privacy.py", "recovery.py", "retrieval.py", "shared_intelligence.py", "hermes_bridge.py", "native_intelligence.py", "operational_advice.py", "operational_native.py", "native_cli.py", "routing.py",
             "routing_intelligence.py", "routing_signals.py", "scheduler.py",
             "sessions.py", "store.py", "supervisor.py", "terminal_lifecycle.py",
             "validators.py", "workflow.py",
@@ -82,6 +82,8 @@ CORE_DEPLOYMENT_MAPPINGS = {
 }
 
 DESKTOP_DEPLOYMENT_MAPPINGS = {
+    "notification-store-helper": ("src/quattro-notification-store", ".local/bin/quattro-notification-store"),
+    "monitor-helper": ("src/quattro-monitor", ".local/bin/quattro-monitor"),
     "desktop-helper": ("src/quattro_desktop_controls.py", ".local/bin/quattro_desktop_controls.py"),
     "spotify-art-helper": ("src/quattro_spotify_art.py", ".local/bin/quattro_spotify_art.py"),
     "lyrics-helper": ("src/quattro-lyrics", ".local/bin/quattro-lyrics"),
@@ -94,6 +96,15 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
         for name in (
             "services/qmldir", "services/DesktopMedia.qml", "services/DesktopWeather.qml",
             "services/LyricsController.qml", "services/PopupManager.qml",
+            "services/MonitorMetrics.qml", "components/Monitoring.qml",
+            "assets/fonts/Doto.ttf", "assets/fonts/OFL.txt", "assets/fonts/origin.json",
+            "assets/fonts/ndot47/ndot-47-inspired-by-nothing.otf",
+            "assets/fonts/ndot47/license.txt", "assets/fonts/ndot47/readme.txt",
+            "assets/fonts/ndot47/origin.json",
+            "components/shared/MetricPlot.qml",
+            "services/NotificationHistory.qml", "components/shared/NotificationToast.qml",
+            "components/shared/HoverTooltip.qml", "components/shared/TooltipPlacement.js",
+            "components/AppIcon.qml", "components/TrayControls.qml",
             "components/shared/TemporaryPanel.qml",
             "components/panels/WeatherLocationPicker.qml", "components/panels/SpotifyPanel.qml",
             "components/panels/LyricsView.qml",
@@ -132,6 +143,16 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
     "hypr-bindings": ("src/hypr/bindings.lua", ".config/hypr/bindings.lua"),
     "hypr-config": ("src/hypr/hyprland.lua", ".config/hypr/hyprland.lua"),
     "foot-config": ("src/foot/foot.ini", ".config/foot/foot.ini"),
+    "ghostty-config": ("src/ghostty/config", ".config/ghostty/config"),
+    "ghostty-prompt": ("src/ghostty/quattro-prompt.bash", ".config/ghostty/quattro-prompt.bash"),
+    **{
+        "wallpaper-" + name: ("src/quickshell/assets/wallpapers/" + name + ".png",
+                             ".config/quickshell/assets/wallpapers/" + name + ".png")
+        for name in ("lofi-noir", "graphite", "terminal", "cyberpunk-2077",
+                     "avengers-doomsday", "instrument", "instrument-paper", "instrument-ember")
+    },
+    "wallpaper-provenance": ("src/quickshell/assets/wallpapers/origin.json",
+                             ".config/quickshell/assets/wallpapers/origin.json"),
     "usage-service": ("src/systemd/quattro-agent-usage.service", ".config/systemd/user/quattro-agent-usage.service"),
     "usage-timer": ("src/systemd/quattro-agent-usage.timer", ".config/systemd/user/quattro-agent-usage.timer"),
     "reconcile-service": ("src/systemd/quattro-agent-reconcile.service", ".config/systemd/user/quattro-agent-reconcile.service"),

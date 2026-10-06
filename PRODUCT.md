@@ -42,7 +42,7 @@ The product name is Quattro Desktop. Existing selectable themes—Lo-Fi Noir, Gr
 
 ## Evidence on Hand
 
-The repository contains working QML components, theme tokens, native host integrations, hermetic tests, and deployment tooling under `src/quickshell/`, `src/quattro_agent/`, `scripts/`, and `tests/`. No approved external visual reference image is available for this redesign; existing runtime behavior and user requirements are authoritative.
+The repository contains working QML components, theme tokens, native host integrations, hermetic tests, and deployment tooling under `src/quickshell/`, `src/quattro_agent/`, `scripts/`, and `tests/`. The Instrument Sheet composition uses flat ruled topology and broad dotted display lettering; working runtime behavior remains authoritative for real controls and measurements. Reusable design guidance lives in DESIGN.md.
 
 ## Product Principles
 

@@ -13,6 +13,17 @@ Rectangle {
     implicitHeight: QuattroTheme.Theme.primaryTarget
 
     radius: QuattroTheme.Theme.cornerRadius
+    activeFocusOnTab: true
+    opacity: enabled ? 1 : QuattroTheme.Theme.disabledOpacity
+    border.width: activeFocus ? QuattroTheme.Theme.focusLine : QuattroTheme.Theme.isInstrument ? 1 : 0
+    border.color: activeFocus ? QuattroTheme.Theme.textStrong
+        : buttonMouse.containsMouse ? QuattroTheme.Theme.borderStrong : QuattroTheme.Theme.border
+    Accessible.role: Accessible.Button
+    Accessible.name: label
+    Accessible.onPressAction: button.clicked()
+    Keys.onReturnPressed: button.clicked()
+    Keys.onEnterPressed: button.clicked()
+    Keys.onSpacePressed: button.clicked()
 
     color:
         buttonMouse.pressed
@@ -48,6 +59,7 @@ Rectangle {
     }
 
     Rectangle {
+        visible: !QuattroTheme.Theme.isInstrument
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
         width: 1
@@ -55,8 +67,6 @@ Rectangle {
         color: QuattroTheme.Theme.accent
         opacity: buttonMouse.containsMouse ? 1 : 0
 
-        Behavior on height { NumberAnimation { duration: QuattroTheme.Theme.motionFast } }
-        Behavior on opacity { NumberAnimation { duration: QuattroTheme.Theme.motionFast } }
     }
 
     MouseArea {
@@ -70,6 +80,7 @@ Rectangle {
             Qt.PointingHandCursor
 
         onClicked: {
+            button.forceActiveFocus(Qt.MouseFocusReason)
             button.clicked()
         }
     }

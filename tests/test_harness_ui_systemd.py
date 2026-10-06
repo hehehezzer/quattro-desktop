@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import pathlib
+import re
+import json
+import shutil
+import subprocess
 import unittest
 
 
@@ -68,7 +72,8 @@ class HarnessUiContractTests(unittest.TestCase):
         self.assertIn('interval: 2000', self.qml)
         self.assertIn('next.activeAccount = parsed.active', self.qml)
         self.assertIn('next.usage = parsed', self.qml)
-        self.assertIn('"usage", "refresh", "--all"', self.qml)
+        self.assertIn('"usage", "refresh", "--account", root.dashboard.activeAccount', self.qml)
+        self.assertNotIn('"usage", "refresh", "--all"', self.qml)
         self.assertIn("CODEX ACCOUNT & LIMITS", self.qml)
         self.assertIn("% remaining", self.qml)
         self.assertIn("resetAt", self.qml)
@@ -80,6 +85,49 @@ class HarnessUiContractTests(unittest.TestCase):
         self.assertIn('root.startMaintenance("reindex")', self.qml)
         self.assertIn('root.startMaintenance("benchmark")', self.qml)
         self.assertNotIn('onTriggered: root.startMaintenance', self.qml)
+
+    @unittest.skipUnless(shutil.which("node"), "Requires Node for QML JavaScript contract")
+    def test_saved_usage_reset_preserves_unknown_timestamps(self):
+        bar = (ROOT / "src/quickshell/components/Bar.qml").read_text(encoding="utf-8")
+        function = bar[bar.index("function resetCountdown("):bar.index("function usageResetTooltip(")]
+        script = "const root = {countdownNow: 1790959400000};\n" + function + '''
+console.log(JSON.stringify([
+    resetCountdown({resetAt: null}, true),
+    resetCountdown({}, true),
+    resetCountdown({resetAt: Infinity}, true),
+    resetCountdown({resetAt: 1790959300}, true),
+    resetCountdown({resetAt: 1790959300000}, true),
+    resetCountdown({resetAt: 1790959300}, false),
+    resetCountdown({resetAt: 1790960000}, true)
+]));
+'''
+        result = subprocess.run(["node", "-e", script], text=True, capture_output=True, timeout=5, check=True)
+        self.assertEqual(json.loads(result.stdout), [
+            "Reset time unavailable", "Reset time unavailable", "Reset time unavailable",
+            "Reset passed", "Reset passed", "Resets now", "Resets in 10m",
+        ])
+        self.assertIn("root.resetCountdown(modelData, root.agentUsage.stale)", bar)
+
+    @unittest.skipUnless(shutil.which("node"), "Requires Node for QML JavaScript contract")
+    def test_usage_refresh_waits_for_displayed_account_after_switch(self):
+        match = re.search(r'enabled: ([^\n]+)\n\s+onClicked: root.invoke\(\["usage", "refresh"', self.qml)
+        self.assertIsNotNone(match)
+        script = '''
+function enabled(activeAccount, usage, running = false) {
+    const root = {dashboard: {activeAccount, usage}, object: value => value || {}};
+    const actionProcess = {running};
+    return ''' + match.group(1) + ''';
+}
+console.log(JSON.stringify([
+    enabled("account-1", undefined),
+    enabled("account-2", {accountId: "account-1"}),
+    enabled("account-2", {accountId: "account-2"}),
+    enabled("account-2", {accountId: "account-2"}, true),
+    enabled("", {})
+]));
+'''
+        result = subprocess.run(["node", "-e", script], text=True, capture_output=True, timeout=5, check=True)
+        self.assertEqual(json.loads(result.stdout), [False, False, True, False, False])
 
 
 class UsageServiceHardeningTests(unittest.TestCase):

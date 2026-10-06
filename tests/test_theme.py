@@ -98,7 +98,7 @@ class ThemeTests(unittest.TestCase):
             ["pkill", "-USR1", "-x", "footclient"],
         ])
 
-    def test_theme_catalog_contains_only_supported_dark_variants(self):
+    def test_theme_catalog_contains_supported_desktop_variants(self):
         self.assertEqual(
             theme.THEMES,
             (
@@ -107,6 +107,9 @@ class ThemeTests(unittest.TestCase):
                 "terminal",
                 "cyberpunk-2077",
                 "avengers-doomsday",
+                "instrument",
+                "instrument-paper",
+                "instrument-ember",
             ),
         )
 

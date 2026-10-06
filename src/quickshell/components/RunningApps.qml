@@ -181,6 +181,18 @@ DesktopButton {
                 }
             }
             Text {
+                visible: applicationTray.visible
+                text: "Application tray"
+                color: QuattroTheme.Theme.textMuted
+                font.family: QuattroTheme.Theme.fontFamily
+                font.pixelSize: QuattroTheme.Theme.typeBody
+            }
+            TrayControls {
+                id: applicationTray
+                hostWindow: popup
+                Layout.fillWidth: true
+            }
+            Text {
                 text: "Right-click a window for process controls"
                 color: QuattroTheme.Theme.textMuted
                 font.pixelSize: 11
@@ -213,9 +225,18 @@ DesktopButton {
                     border.width: activeFocus ? 1 : 0
                     border.color: QuattroTheme.Theme.textStrong
                     color: root.selected && root.selected.address === modelData.address ? QuattroTheme.Theme.hover : mouse.containsMouse ? QuattroTheme.Theme.surface : "transparent"
+                    AppIcon {
+                        id: runningIcon
+                        anchors.left: parent.left
+                        anchors.leftMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        desktopEntry: DesktopEntries.heuristicLookup(appRow.modelData.app)
+                    }
                     Text {
                         anchors.fill: parent
                         anchors.margins: 8
+                        anchors.leftMargin: 44
+                        font.family: QuattroTheme.Theme.fontFamily
                         text: modelData.app + " · PID " + modelData.pid + "\n" + modelData.title
                         textFormat: Text.PlainText
                         elide: Text.ElideRight

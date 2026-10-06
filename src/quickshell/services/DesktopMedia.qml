@@ -62,10 +62,16 @@ QtObject {
                 function onIsPlayingChanged() {
                     root.updatePosition();
                 }
-                function onTrackChanged() {
+                function onPostTrackChanged() {
                     root.updatePosition();
                 }
                 function onPositionChanged() {
+                    root.updatePosition();
+                }
+                function onPositionSupportedChanged() {
+                    root.updatePosition();
+                }
+                function onRateChanged() {
                     root.updatePosition();
                 }
             }
@@ -101,7 +107,10 @@ QtObject {
         }
     }
     property Timer progressTimer: Timer {
-        interval: 1000
+        // MprisPlayer.position already supplies the advancing playback clock.
+        // Sampling it locally avoids up to a second of late lyric highlighting;
+        // do not add an independent clock or a global lyric offset.
+        interval: 50
         running: !!root.player && root.player.isPlaying && root.player.positionSupported
         repeat: true
         onTriggered: root.updatePosition()
