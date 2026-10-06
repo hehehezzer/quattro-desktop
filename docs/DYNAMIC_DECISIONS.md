@@ -108,3 +108,25 @@ action does not prove accepted Jev advice. Fixture success and configuration do
 not prove real native host adoption; report live results and remaining blockers
 separately. Static menus limited expressiveness, but that alone does not establish
 the cause of historical failures.
+
+## Native workflow and retiring test integrations
+
+Decision transport and RTK inspection alone do not prove editing or command
+execution. Verify the actual native host's registered, permitted tools, then
+check concrete file effects and bounded command results separately. Direct
+native Pi, managed Quattro execution, and protected Projects tools have distinct
+permission boundaries. A working native extension does not make a managed
+read-only route writable or add general shell access.
+
+When retiring a project-specific test integration, first check package consumers,
+current grants, pending approvals and active sessions. Privately archive only
+exclusive policies, launchers and packages; preserve shared enforcement,
+dependency manifests, other project profiles and spent-authority journals.
+Missing retired policy must fail closed. Do not redirect its callers to broader
+tools, revive grants, reset retry budgets or restart active sessions.
+
+Project-specific conveniences may also exist inside a shared policy. Removing
+those settings changes the shared policy digest and can invalidate other
+sessions' grants. Prepare that exact delta for separate approval and coordinate
+sessions before applying it. Preserve rollback provenance and require fresh
+authority through the existing mechanism.
