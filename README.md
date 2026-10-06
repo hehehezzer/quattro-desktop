@@ -174,6 +174,13 @@ user-configurable.
 
 ## Common commands
 
+The staged Herdr → Quattro → OMP replacement is documented in
+[Herdr and OMP](docs/HERDR_OMP.md). `quattro-agent launch omp PATH` locks
+`openai-codex/gpt-6.1-sol` with medium effort and native `always-ask` approval.
+It requires a verified skill catalog and explicit action-time native-access
+approval. Legacy Pi remains available until real replacement acceptance; Codex
+and original skill roots remain intact.
+
 ```text
 quattro-agent                          # choose native Codex or Pi with per-turn routing
 quattro-agent launch                   # same native-agent chooser

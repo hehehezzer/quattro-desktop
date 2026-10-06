@@ -3055,16 +3055,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"quattro-agent {VERSION}")
     sub = parser.add_subparsers(dest="command")
+    from .migration_cli import add_parser as add_migration_parser
+    add_migration_parser(sub)
     launch = sub.add_parser(
         "launch", help="start an interactive session; asks for an agent when omitted"
     )
     launch.add_argument(
-        "agent", nargs="?", choices=("codex", "pi"),
-        help="agent to launch directly (codex or pi)",
+        "agent", nargs="?", choices=("codex", "pi", "omp"),
+        help="agent to launch directly (codex, pi, or staged omp)",
     )
     launch.add_argument("directory", nargs="?")
     launch.add_argument("--policy")
     launch.add_argument("--confirm-full-access", action="store_true")
+    launch.add_argument("--confirm-native-access", action="store_true")
+    launch.add_argument("--skills", help="verified OMP skill catalog directory")
     sub.add_parser("desktop")
     prompt = sub.add_parser("prompt")
     prompt.add_argument("values", nargs="+")
@@ -3582,11 +3586,27 @@ def main() -> int:
     ensure_state_dirs()
     config = load_config()
     command = args.command
+    if command == "herdr":
+        from .migration_cli import command as migration_command
+        try:
+            return migration_command(args)
+        except (OSError, ValueError, RuntimeError) as error:
+            die(str(error))
     if command == "launch":
         from quattro_agent.interactive import choose_agent
         workspace = safe_directory(args.directory)
         print(f"Workspace: {workspace}\n", flush=True)
         agent = args.agent
+        if agent == "omp":
+            from .migration_cli import launch_omp
+            if args.policy or args.confirm_full_access:
+                die("OMP uses explicit native always-ask approval; policy override is unavailable")
+            try:
+                return launch_omp(workspace, skills=args.skills,
+                                  confirmed=args.confirm_native_access,
+                                  environment=tool_environment("omp"))
+            except (OSError, ValueError, RuntimeError) as error:
+                die(str(error))
         if agent is None:
             agent = choose_agent(
                 str(config["defaultAgent"]), input_stream=sys.stdin, output=sys.stdout,
