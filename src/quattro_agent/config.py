@@ -323,10 +323,15 @@ def validate_ai_config(source: Mapping[str, Any], *, home: Path | None = None) -
     normalized = copy.deepcopy(root)
     delegation = _mapping(
         root.get("delegation", {"enabled": True, "maxWorkers": 3}),
-        "$.delegation", {"enabled", "maxWorkers"},
+        "$.delegation", {"enabled", "maxWorkers", "workerAgent"},
+        required={"enabled", "maxWorkers"},
     )
     _bool(delegation["enabled"], "$.delegation.enabled")
     _integer(delegation["maxWorkers"], "$.delegation.maxWorkers", 1, 3)
+    delegation["workerAgent"] = _enum(
+        delegation.get("workerAgent", "omp" if default_agent == "omp" else "pi"),
+        "$.delegation.workerAgent", {"pi", "omp"},
+    )
     normalized["delegation"] = copy.deepcopy(delegation)
     # Legacy worktree fields remain accepted only so existing schema-v3 files
     # continue to launch.  They are deliberately discarded: ordinary sessions

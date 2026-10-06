@@ -3,8 +3,11 @@
 OMP is a distinct durable agent identity. Existing Pi and Codex tasks, runs,
 logical sessions, checkpoints, events and leases retain their original identity.
 Task database schema 4 atomically rebuilds the agent CHECK constraints and
-validates foreign keys before committing. Older runtimes must not execute
-against a migrated database; keep a database backup before rolling back software.
+validates foreign keys before committing. Older schema-3 runtimes must not execute
+against a migrated database. Rollback retains the schema-4-compatible Core and
+restores the previous agent configuration and launcher selection. It does not
+downgrade or replace the database, discard newer OMP history, or copy private
+task contents into migration artifacts.
 
 The durable OMP adapter uses the closed OMP SDK runtime, not the native CLI or
 its `always-ask` launch profile. Quattro supplies a bounded private prompt,

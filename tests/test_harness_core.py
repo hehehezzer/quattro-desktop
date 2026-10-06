@@ -139,7 +139,7 @@ class ConfigTests(unittest.TestCase):
     def test_strict_current_config_validation(self):
         validated = validate_ai_config(self.config, home=self.home)
         self.assertEqual(validated["defaultAgent"], "codex")
-        self.assertEqual(validated["delegation"], {"enabled": True, "maxWorkers": 3})
+        self.assertEqual(validated["delegation"], {"enabled": True, "maxWorkers": 3, "workerAgent": "pi"})
         self.assertEqual(validated["cooperation"]["globalLimit"], 5)
         self.assertEqual(validated["cooperation"]["perRepositoryLimit"], 3)
         self.assertEqual(validated["cooperation"], {

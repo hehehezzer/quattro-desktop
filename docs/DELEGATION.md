@@ -1,4 +1,4 @@
-# Codex-primary Pi delegation
+# Codex-primary specialist delegation
 
 Quattro keeps Codex as the primary coding session. Managed Codex sessions receive a
 small policy instruction that permits one bounded Pi specialist only when isolating
@@ -71,8 +71,11 @@ materially better context.
 
 ## Selected durable OMP workers
 
-With `defaultAgent: "omp"`, new bounded specialists and the read-only specialist
-roles in implementation-review workflows use the closed OMP SDK driver. The
+With `delegation.workerAgent: "omp"`, new bounded specialists and the read-only
+specialist roles in implementation-review workflows use the closed OMP SDK
+driver. Keep `defaultAgent: "codex"` to retain Codex as the primary runtime for
+writable durable tasks. When `workerAgent` is omitted, it defaults to `omp` for
+`defaultAgent: "omp"` and `pi` for other primary settings. The
 existing `delegate run` command remains compatible; historical Pi task and
 session identities remain Pi. Explicit durable submission also accepts
 `submit --agent omp --policy audit-read-only` and `prompt omp`.

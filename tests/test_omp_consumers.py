@@ -11,6 +11,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 import test_harness_integration as integration
 from quattro_agent import cli
+from quattro_agent.config import ConfigError, validate_ai_config
 from quattro_agent.delegation import classify_task_request, select_execution_agent, worker_prompt
 from quattro_agent.policy import PolicyProfile
 from quattro_harness import compact_omp_output
@@ -23,7 +24,8 @@ class OMPConsumerTests(unittest.TestCase):
         self.addCleanup(fixture.tearDown)
         self.runtime, self.project, self.root = fixture.runtime, fixture.project, fixture.root
         config = self.runtime.config()
-        config["defaultAgent"] = "omp"
+        config["defaultAgent"] = "codex"
+        config["delegation"]["workerAgent"] = "omp"
         self.runtime.config_path.write_text(json.dumps(config))
         self.runtime.omp_runtime_pin = (self.root / "manifest.json", "a" * 64)
         self.runtime.omp_sdk_paths = (self.root / "bun", self.root / "sdk")
@@ -34,6 +36,47 @@ class OMPConsumerTests(unittest.TestCase):
         return self.runtime.create_task(agent="omp", project=self.project,
                                         prompt="Inspect repository files for regressions",
                                         mode="prompt", profile_name="audit-read-only", **kwargs)
+
+    def test_specialist_configuration_preserves_codex_primary_and_legacy_defaults(self):
+        config = self.runtime.config()
+        self.assertEqual(config["defaultAgent"], "codex")
+        self.assertEqual(config["delegation"]["workerAgent"], "omp")
+        for primary, expected in (("codex", "pi"), ("pi", "pi"), ("omp", "omp")):
+            config["defaultAgent"] = primary
+            config["delegation"].pop("workerAgent", None)
+            self.assertEqual(validate_ai_config(config)["delegation"]["workerAgent"], expected)
+        config["delegation"]["workerAgent"] = "codex"
+        with self.assertRaises(ConfigError):
+            validate_ai_config(config)
+        config["delegation"] = {"workerAgent": "omp", "enabled": True}
+        with self.assertRaises(ConfigError):
+            validate_ai_config(config)
+
+    def test_omp_specialists_leave_primary_workspace_tasks_writable(self):
+        task_id = self.runtime.create_task(agent=self.runtime.config()["defaultAgent"],
+                                          project=self.project, prompt="Implement repository regression fix",
+                                          mode="prompt")
+        task = self.runtime.store.get_task(task_id)
+        self.assertEqual(task["agent"], "codex")
+        self.assertEqual(task["policy"]["name"], "workspace-write")
+
+    def test_selected_specialist_instructions_and_workflow_retain_codex_primary(self):
+        parent_id = self.runtime.create_workflow(count=2, project=self.project,
+                                                objective="Implement repository regression fix")
+        parent = self.runtime.store.get_task(parent_id, include_private=True)
+        self.assertEqual(parent["agent"], "codex")
+        self.assertEqual(parent["policy"]["name"], "workspace-write")
+        children = self.runtime.store.children(parent_id)
+        roles = {row["metadata"]["role"]: row for row in children}
+        self.assertEqual(roles["implementation"]["agent"], "codex")
+        self.assertEqual(roles["review"]["agent"], "omp")
+        review = self.runtime.store.get_task(roles["review"]["taskId"], include_private=True)
+        self.assertIsNone(review["private_payload"]["executionPlan"])
+        run_id = self.runtime.store.create_run(parent_id, agent="codex")
+        argv, _stdin, _env = self.runtime._agent_plan(parent, run_id, PolicyProfile.from_dict(parent["policy"]))
+        instructions = "\n".join(argv)
+        self.assertIn("OMP returns focused evidence", instructions)
+        self.assertNotIn("Pi returns focused evidence", instructions)
 
     def test_selected_omp_preserves_classifier_identity(self):
         self.assertEqual(classify_task_request("Inspect repository files", preferred_agent="omp").required_agent, "omp")
@@ -112,7 +155,8 @@ class OMPConsumerTests(unittest.TestCase):
         self.assertEqual(parser.parse_args(["new-task", "--agent", "omp", "--mode", "prompt", "--prompt", "Inspect files"]).agent, "omp")
 
     def test_selected_delegation_uses_already_queued_omp_task(self):
-        with mock.patch.object(self.runtime, "run_task", return_value=0) as run:
+        with mock.patch.object(self.runtime, "run_task", return_value=0) as run, \
+             mock.patch.object(self.runtime, "_resolved_agent_binary", side_effect=AssertionError("Pi executable accessed")):
             task_id, code, result = self.runtime.delegate_to_pi(
                 project=self.project, objective="Inspect repository files for an independent review",
                 kind="review", parent_task_id=None)
@@ -120,6 +164,7 @@ class OMPConsumerTests(unittest.TestCase):
         run.assert_called_once_with(task_id)
         self.assertEqual(code, 0)
         self.assertEqual(result["worker"], "omp")
+        self.assertEqual(self.runtime.config()["defaultAgent"], "codex")
         task = self.runtime.store.get_task(task_id)
         self.assertEqual(task["agent"], "omp")
         self.assertEqual(task["state"], "queued")

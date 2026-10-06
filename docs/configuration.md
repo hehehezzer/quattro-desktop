@@ -42,7 +42,11 @@ by mandatory-context resolution.
   data.
 - `defaultPolicyProfile`: strict default such as `workspace-write`.
 - `memory`: disabled by default; paths are user-owned when enabled.
-- `delegation`: optional bounded Pi worker limit, maximum three.
+- `delegation`: optional bounded specialist settings: required `enabled` and
+  `maxWorkers` (maximum three), plus optional `workerAgent` (`pi` or `omp`).
+  Set `workerAgent: "omp"` while keeping `defaultAgent: "codex"` to replace Pi
+  specialists without changing the writable primary runtime. If omitted, the
+  worker defaults to `omp` when the primary is `omp`, otherwise `pi`.
 - `cooperation`: global and per-repository top-level session limits.
 - `routing`: Quattro's three tiers, effort, route labels, and context budgets.
   Optional `jev: {"mode": "OFF", "timeoutMs": 300}` enables direct TypeSafe

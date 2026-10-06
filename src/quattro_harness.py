@@ -2609,7 +2609,7 @@ class HarnessRuntime:
         ):
             delegation_text = codex_delegation_instructions(
                 int(delegation.get("maxWorkers", 3)),
-                agent="omp" if config.get("defaultAgent") == "omp" else "pi",
+                agent=str(delegation["workerAgent"]),
             )
             instruction_parts.append(delegation_text)
         trusted_instructions = "\n\n".join(instruction_parts)
@@ -4553,7 +4553,7 @@ class HarnessRuntime:
         )
         if parent is not None:
             PolicyProfile.from_dict(parent["policy"]).assert_child(worker_policy)
-        if config.get("defaultAgent") == "omp":
+        if config["delegation"]["workerAgent"] == "omp":
             task_id = self.create_task(
                 agent="omp", project=project, prompt=worker_prompt(objective, kind, agent="omp"),
                 mode="prompt", profile_name="audit-read-only", parent_task_id=parent_task_id,
@@ -5170,7 +5170,7 @@ class HarnessRuntime:
         workspace = parent_policy
         parent_policy.assert_child(audit)
 
-        specialist = "omp" if config.get("defaultAgent") == "omp" else "pi"
+        specialist = str(config["delegation"]["workerAgent"])
         roles: list[tuple[str, str, str, PolicyProfile, tuple[str, ...]]] = []
         if count >= 3:
             roles.append((
