@@ -2,11 +2,22 @@
 
 Current diagnostics require the
 [model-authored v2 contract](DYNAMIC_DECISIONS.md). No benchmark supplies a
-built-in task category, question, option list or feature questionnaire.
+built-in decision category, question, option list or feature questionnaire.
 
 `scripts/benchmark_jev.py` is retired and exits with a retired status without
 provider access. Its former simulated routing benchmark cannot be used as
 current provider, native adoption or speedup evidence.
+
+`scripts/benchmark_decision_plane.py` is also explicitly retired. It no longer
+imports the removed taxonomy or manufactures fixed provider questions.
+
+`scripts/benchmark_decision_tasks.py` retains its opt-in synthetic task smoke
+matrix. Its cases are execution tasks, not provider decision alternatives. The
+native execution model authors any v2 decisions; aggregate reports export only
+validated host effects, never authored option identifiers or probability keys.
+`scripts/probe_runtime_milestones.py` remains an opt-in native completion and
+mandatory-validation smoke test. Legacy validation-order settings perform no
+provider consultation or reordering. Neither smoke test establishes a speedup.
 
 ## Explicit authored input
 
