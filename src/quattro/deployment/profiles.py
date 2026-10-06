@@ -29,6 +29,8 @@ CORE_DEPLOYMENT_MAPPINGS = {
             "__init__.py", "__main__.py", "adapters.py", "adaptive_routing.py",
             "benchmark.py", "cli.py", "interactive.py", "codex_turn_bridge.py",
             "native_session.py", "turn_gate.py", "turn_transport.py", "turn_routing.py",
+            "omp_bridge.py", "herdr_runtime.py", "migration_cli.py", "omp_sessions.py",
+            "scoped_omp_runtime.py", "omp_context_worker.py", "omp_deployment.py",
             "jev.py", "jev_shadow.py", "jev_worker.py", "jev_preferences.py", "provider_access.py",
             "decision_checkpoint.py", "operational_advice.py", "operational_native.py",
             "decision_taxonomy.py", "decision_service.py", "decision_mcp.py", "decision_launch.py", "runtime_milestones.py",
@@ -61,6 +63,10 @@ CORE_DEPLOYMENT_MAPPINGS = {
         "src/quattro_agent/data/model-policy.json",
         ".local/bin/quattro_agent/data/model-policy.json",
     ),
+    "core-scoped-omp-runtime": (
+        "src/quattro_agent/data/scoped-omp-runtime.ts",
+        ".local/bin/quattro_agent/data/scoped-omp-runtime.ts",
+    ),
     "core-pi-turn-gate": (
         "src/quattro_agent/data/pi-turn-gate.ts",
         ".local/bin/quattro_agent/data/pi-turn-gate.ts",
@@ -68,6 +74,10 @@ CORE_DEPLOYMENT_MAPPINGS = {
     "core-pi-recovery-tools": (
         "src/quattro_agent/data/pi-recovery-tools.ts",
         ".local/bin/quattro_agent/data/pi-recovery-tools.ts",
+    ),
+    "core-omp-intelligence": (
+        "src/quattro_agent/data/omp-intelligence.ts",
+        ".local/bin/quattro_agent/data/omp-intelligence.ts",
     ),
     **{
         f"namespace-{relative.replace('/', '-').removesuffix('.py')}":
@@ -83,6 +93,8 @@ CORE_DEPLOYMENT_MAPPINGS = {
 }
 
 DESKTOP_DEPLOYMENT_MAPPINGS = {
+    "notification-store-helper": ("src/quattro-notification-store", ".local/bin/quattro-notification-store"),
+    "monitor-helper": ("src/quattro-monitor", ".local/bin/quattro-monitor"),
     "desktop-helper": ("src/quattro_desktop_controls.py", ".local/bin/quattro_desktop_controls.py"),
     "spotify-art-helper": ("src/quattro_spotify_art.py", ".local/bin/quattro_spotify_art.py"),
     "lyrics-helper": ("src/quattro-lyrics", ".local/bin/quattro-lyrics"),
@@ -95,6 +107,15 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
         for name in (
             "services/qmldir", "services/DesktopMedia.qml", "services/DesktopWeather.qml",
             "services/LyricsController.qml", "services/PopupManager.qml",
+            "services/MonitorMetrics.qml", "components/Monitoring.qml",
+            "assets/fonts/Doto.ttf", "assets/fonts/OFL.txt", "assets/fonts/origin.json",
+            "assets/fonts/ndot47/ndot-47-inspired-by-nothing.otf",
+            "assets/fonts/ndot47/license.txt", "assets/fonts/ndot47/readme.txt",
+            "assets/fonts/ndot47/origin.json",
+            "components/shared/MetricPlot.qml",
+            "services/NotificationHistory.qml", "components/shared/NotificationToast.qml",
+            "components/shared/HoverTooltip.qml", "components/shared/TooltipPlacement.js",
+            "components/AppIcon.qml", "components/TrayControls.qml",
             "components/shared/TemporaryPanel.qml",
             "components/panels/WeatherLocationPicker.qml", "components/panels/SpotifyPanel.qml",
             "components/panels/LyricsView.qml",
@@ -133,6 +154,16 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
     "hypr-bindings": ("src/hypr/bindings.lua", ".config/hypr/bindings.lua"),
     "hypr-config": ("src/hypr/hyprland.lua", ".config/hypr/hyprland.lua"),
     "foot-config": ("src/foot/foot.ini", ".config/foot/foot.ini"),
+    "ghostty-config": ("src/ghostty/config", ".config/ghostty/config"),
+    "ghostty-prompt": ("src/ghostty/quattro-prompt.bash", ".config/ghostty/quattro-prompt.bash"),
+    **{
+        "wallpaper-" + name: ("src/quickshell/assets/wallpapers/" + name + ".png",
+                             ".config/quickshell/assets/wallpapers/" + name + ".png")
+        for name in ("lofi-noir", "graphite", "terminal", "cyberpunk-2077",
+                     "avengers-doomsday", "instrument", "instrument-paper", "instrument-ember")
+    },
+    "wallpaper-provenance": ("src/quickshell/assets/wallpapers/origin.json",
+                             ".config/quickshell/assets/wallpapers/origin.json"),
     "usage-service": ("src/systemd/quattro-agent-usage.service", ".config/systemd/user/quattro-agent-usage.service"),
     "usage-timer": ("src/systemd/quattro-agent-usage.timer", ".config/systemd/user/quattro-agent-usage.timer"),
     "reconcile-service": ("src/systemd/quattro-agent-reconcile.service", ".config/systemd/user/quattro-agent-reconcile.service"),

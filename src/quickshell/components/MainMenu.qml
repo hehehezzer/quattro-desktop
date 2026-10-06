@@ -12,6 +12,7 @@ Scope {
 
     property string page: "main"
     property string agentCommand: Quickshell.env("QUATTRO_AGENT_COMMAND") || "quattro-agent"
+    property string projectsOMPCommand: Quickshell.env("QUATTRO_PROJECTS_OMP_COMMAND") || "quattro-projects-omp"
     property string menuCommand: Quickshell.env("QUATTRO_MENU_COMMAND") || "quattro-menu"
     property string themeCommand: Quickshell.env("QUATTRO_THEME_COMMAND") || "quattro-theme"
     property string pointerCommand: Quickshell.env("QUATTRO_POINTER_COMMAND") || "quattro-pointer"
@@ -47,10 +48,15 @@ Scope {
         root.close()
     }
 
+    function openMonitor() {
+        root.close()
+        PopupManager.request("monitoring")
+    }
+
     function editConfig(target, title) {
         Quickshell.execDetached([
-            "foot", "--hold", "--app-id", "quattro-setup",
-            "--title", "Setup · " + title,
+            "ghostty", "--gtk-single-instance=false", "--wait-after-command=true", "--class=com.quattro.setup",
+            "--title=Setup · " + title, "-e",
             root.menuCommand, "edit", target
         ])
         root.close()
@@ -58,8 +64,8 @@ Scope {
 
     function installPackage(packageId, title) {
         Quickshell.execDetached([
-            "foot", "--hold", "--app-id", "quattro-install",
-            "--title", "Install · " + title,
+            "ghostty", "--gtk-single-instance=false", "--wait-after-command=true", "--class=com.quattro.install",
+            "--title=Install · " + title, "-e",
             root.menuCommand, "install", packageId
         ])
         root.close()
@@ -106,6 +112,7 @@ Scope {
 
         let results = []
         const destinations = [
+            { "label": "Monitoring", "detail": "Live CPU, memory, network and sensors", "icon": "󰄧", "page": "monitoring" },
             { "label": "Apps", "detail": "Browse installed applications", "icon": "󰀻", "page": "apps" },
             { "label": "AI / Agents", "detail": "Agents and AI tasks", "icon": "󰚩", "page": "ai" },
             { "label": "Style", "detail": "Desktop themes", "icon": "󰏘", "page": "style" },
@@ -168,6 +175,7 @@ Scope {
 
     function activateGlobalResult(result) {
         if (result.type === "destination") {
+            if (result.page === "monitoring") { root.openMonitor(); return }
             root.page = result.page
             search.text = ""
             return
@@ -290,6 +298,8 @@ Scope {
             root.open("install")
         }
 
+        function monitoring(): void { root.openMonitor() }
+
         function keybindings(): void {
             root.open("keys")
         }
@@ -301,7 +311,7 @@ Scope {
         panelName: "menu"
         onDismissed: root.close()
         implicitWidth: 520
-        implicitHeight: root.page === "main" ? 500 : 620
+        implicitHeight: root.page === "main" ? 500 : root.page === "style" ? 680 : 620
         color: "transparent"
 
 
@@ -313,7 +323,7 @@ Scope {
             height:
                 root.page === "main"
                 ? 500
-                : 620
+                : root.page === "style" ? 680 : 620
 
             color: QuattroTheme.Theme.background
 
@@ -361,8 +371,7 @@ Scope {
 
                         color: QuattroTheme.Theme.textStrong
 
-                        font.family:
-                            "JetBrainsMono Nerd Font"
+                        font.family: QuattroTheme.Theme.fontFamily
 
                         font.pixelSize: 14
 
@@ -428,8 +437,8 @@ Scope {
 
                     MenuRow {
                         icon: "󰔚"
-                        label: "Trigger"
-                        arrow: true
+                        label: "Monitoring"
+                        onClicked: root.openMonitor()
                     }
 
                     MenuRow {
@@ -509,10 +518,15 @@ Scope {
                             anchors.rightMargin: 12
                             spacing: 12
 
+                            AppIcon {
+                                visible: modelData.type === "app"
+                                desktopEntry: modelData.application || null
+                            }
                             Text {
+                                visible: modelData.type !== "app"
                                 text: modelData.icon
                                 color: QuattroTheme.Theme.accent
-                                font.family: "JetBrainsMono Nerd Font"
+                                font.family: QuattroTheme.Theme.iconFontFamily
                                 font.pixelSize: 16
                             }
 
@@ -523,7 +537,7 @@ Scope {
                                 Text {
                                     text: modelData.label
                                     color: QuattroTheme.Theme.textStrong
-                                    font.family: "JetBrainsMono Nerd Font"
+                                    font.family: QuattroTheme.Theme.fontFamily
                                     font.pixelSize: 13
                                     elide: Text.ElideMiddle
                                     Layout.fillWidth: true
@@ -532,7 +546,7 @@ Scope {
                                 Text {
                                     text: modelData.detail
                                     color: QuattroTheme.Theme.textMuted
-                                    font.family: "JetBrainsMono Nerd Font"
+                                    font.family: QuattroTheme.Theme.fontFamily
                                     font.pixelSize: 10
                                     elide: Text.ElideMiddle
                                     Layout.fillWidth: true
@@ -557,7 +571,7 @@ Scope {
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                         color: QuattroTheme.Theme.textMuted
-                        font.family: "JetBrainsMono Nerd Font"
+                        font.family: QuattroTheme.Theme.fontFamily
                         font.pixelSize: 10
                     }
                 }
@@ -603,11 +617,11 @@ Scope {
                     }
 
                     MenuRow {
-                        icon: "π"
-                        label: "Pi"
+                        icon: "󰚩"
+                        label: "OMP"
 
                         onClicked: {
-                            Quickshell.execDetached([root.agentCommand, "launch", "pi"])
+                            Quickshell.execDetached([root.projectsOMPCommand, "--choose-project"])
                             root.close()
                         }
                     }
@@ -644,17 +658,6 @@ Scope {
                     Layout.fillWidth: true
                     spacing: 8
 
-                    Text {
-                        text: "DARK THEMES"
-                        color: QuattroTheme.Theme.textDim
-                        font.family: "JetBrainsMono Nerd Font"
-                        font.pixelSize: 11
-                        font.letterSpacing: 1.5
-                        Layout.leftMargin: 10
-                        Layout.topMargin: 6
-                        Layout.bottomMargin: 4
-                    }
-
                     Repeater {
                         model: QuattroTheme.Theme.availableThemes
 
@@ -669,7 +672,12 @@ Scope {
                             color: themeMouse.containsMouse
                                 ? QuattroTheme.Theme.hover
                                 : "transparent"
-                            border.width: QuattroTheme.Theme.current === modelData.id ? 1 : 0
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.Button
+                            Accessible.name: modelData.label
+                            Keys.onReturnPressed: root.setTheme(modelData.id)
+                            Keys.onSpacePressed: root.setTheme(modelData.id)
+                            border.width: activeFocus ? 2 : QuattroTheme.Theme.current === modelData.id ? 1 : 0
                             border.color: QuattroTheme.Theme.accent
 
                             RowLayout {
@@ -682,11 +690,11 @@ Scope {
                                     implicitWidth: 22
                                     implicitHeight: 22
                                     radius: QuattroTheme.Theme.cornerRadius
-                                    color: modelData.id === "cyberpunk-2077" ? "#fcee09"
+                                    color: QuattroTheme.Theme.instrumentPalettes[modelData.id] ? QuattroTheme.Theme.instrumentPalettes[modelData.id].textStrong : modelData.id === "cyberpunk-2077" ? "#fcee09"
                                         : modelData.id === "terminal" ? "#88a98f"
                                         : modelData.id === "graphite" ? "#aeb5c0" : "#b9ae91"
                                     border.width: 5
-                                    border.color: modelData.id === "cyberpunk-2077" ? "#00f0ff"
+                                    border.color: QuattroTheme.Theme.instrumentPalettes[modelData.id] ? QuattroTheme.Theme.instrumentPalettes[modelData.id].background : modelData.id === "cyberpunk-2077" ? "#00f0ff"
                                         : modelData.id === "terminal" ? "#0d1711"
                                         : modelData.id === "graphite" ? "#181a1d" : "#111317"
                                 }
@@ -698,14 +706,14 @@ Scope {
                                     Text {
                                         text: modelData.label
                                         color: QuattroTheme.Theme.textStrong
-                                        font.family: "JetBrainsMono Nerd Font"
+                                        font.family: QuattroTheme.Theme.fontFamily
                                         font.pixelSize: 14
                                     }
 
                                     Text {
                                         text: modelData.detail
                                         color: QuattroTheme.Theme.textMuted
-                                        font.family: "JetBrainsMono Nerd Font"
+                                        font.family: QuattroTheme.Theme.fontFamily
                                         font.pixelSize: 11
                                     }
                                 }
@@ -713,7 +721,7 @@ Scope {
                                 Text {
                                     text: QuattroTheme.Theme.current === modelData.id ? "ACTIVE" : ""
                                     color: QuattroTheme.Theme.accent
-                                    font.family: "JetBrainsMono Nerd Font"
+                                    font.family: QuattroTheme.Theme.fontFamily
                                     font.pixelSize: 10
                                     font.bold: true
                                 }
@@ -732,7 +740,7 @@ Scope {
                     Text {
                         text: "SUPER + SHIFT + CTRL + T  cycles themes"
                         color: QuattroTheme.Theme.textDim
-                        font.family: "JetBrainsMono Nerd Font"
+                        font.family: QuattroTheme.Theme.fontFamily
                         font.pixelSize: 10
                         Layout.leftMargin: 10
                         Layout.topMargin: 10
@@ -767,50 +775,59 @@ Scope {
                                     .toLowerCase()
                                     .includes(q)
                                 )
-                                .slice(0, 12)
                         }
                     }
 
                     delegate: Rectangle {
+                        id: installedAppRow
                         required property var modelData
-
+                        required property int index
+                        onActiveFocusChanged: if (activeFocus)
+                            ListView.view.positionViewAtIndex(index, ListView.Contain)
                         width: ListView.view.width
                         height: 42
-
-                        color: appMouse.containsMouse
-                            ? QuattroTheme.Theme.hover
-                            : "transparent"
-
-                        radius: QuattroTheme.Theme.cornerRadius
-
-                        Text {
-                            anchors {
-                                left: parent.left
-                                leftMargin: 12
-                                verticalCenter:
-                                    parent.verticalCenter
-                            }
-
-                            text: modelData.name
-
-                            color: QuattroTheme.Theme.textStrong
-
-                            font.family:
-                                "JetBrainsMono Nerd Font"
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Button
+                        Accessible.name: modelData.name
+                        Accessible.onPressAction: launch()
+                        function launch() {
+                            Quickshell.execDetached({
+                                command: modelData.command,
+                                workingDirectory: modelData.workingDirectory
+                            })
+                            root.close()
                         }
-
+                        Keys.onReturnPressed: launch()
+                        Keys.onEnterPressed: launch()
+                        Keys.onSpacePressed: launch()
+                        Keys.onEscapePressed: root.close()
+                        border.width: activeFocus ? QuattroTheme.Theme.focusLine : 0
+                        border.color: QuattroTheme.Theme.textStrong
+                        color: appMouse.containsMouse ? QuattroTheme.Theme.hover : "transparent"
+                        radius: QuattroTheme.Theme.cornerRadius
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            spacing: 12
+                            AppIcon { desktopEntry: installedAppRow.modelData }
+                            Text {
+                                Layout.fillWidth: true
+                                text: installedAppRow.modelData.name
+                                textFormat: Text.PlainText
+                                elide: Text.ElideRight
+                                color: QuattroTheme.Theme.textStrong
+                                font.family: QuattroTheme.Theme.fontFamily
+                            }
+                        }
                         MouseArea {
                             id: appMouse
-
                             anchors.fill: parent
                             hoverEnabled: true
-
+                            cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                Quickshell.execDetached({
-                                    command: modelData.command,
-                                    workingDirectory: modelData.workingDirectory
-                                })
-                                root.close()
+                                installedAppRow.forceActiveFocus(Qt.MouseFocusReason)
+                                installedAppRow.launch()
                             }
                         }
                     }
@@ -915,7 +932,7 @@ Scope {
                         Layout.bottomMargin: 8
                         text: "Software pointer sensitivity · applies immediately"
                         color: QuattroTheme.Theme.textMuted
-                        font.family: "JetBrainsMono Nerd Font"
+                        font.family: QuattroTheme.Theme.fontFamily
                         font.pixelSize: 11
                         wrapMode: Text.WordWrap
                     }
@@ -1075,7 +1092,7 @@ Scope {
 
                     KeyRow {
                         keys: "SUPER + SPACE"
-                        action: "Omarchy menu"
+                        action: "Quattro menu"
                     }
 
                     KeyRow {
@@ -1091,6 +1108,11 @@ Scope {
                     KeyRow {
                         keys: "SUPER + ESC"
                         action: "System"
+                    }
+
+                    KeyRow {
+                        keys: "SUPER + CTRL + M"
+                        action: "Monitoring"
                     }
 
                     KeyRow {
@@ -1179,42 +1201,51 @@ Scope {
             : "transparent"
 
 
-        Column {
-            anchors {
-                left: parent.left
-                leftMargin: 10
-                verticalCenter:
-                    parent.verticalCenter
-            }
+        activeFocusOnTab: true
+        Accessible.role: Accessible.Button
+        Accessible.name: row.label
+        Accessible.description: row.detail
+        Accessible.onPressAction: row.clicked()
+        border.width: activeFocus ? QuattroTheme.Theme.focusLine : 0
+        border.color: QuattroTheme.Theme.textStrong
+        Keys.onReturnPressed: row.clicked()
+        Keys.onEnterPressed: row.clicked()
+        Keys.onSpacePressed: row.clicked()
 
-            spacing: 2
-
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 12
+            anchors.rightMargin: row.arrow ? 32 : 12
+            spacing: 12
             Text {
-                text: row.icon + "  " + row.label
-
+                text: row.icon
                 color: QuattroTheme.Theme.text
-
-                font.family:
-                    "JetBrainsMono Nerd Font"
-
-                font.pixelSize: 14
+                font.family: QuattroTheme.Theme.iconFontFamily
+                font.pixelSize: 16
+                Layout.preferredWidth: 20
             }
-
-            Text {
-                visible: row.detail !== ""
-                text: row.detail
-
-                color: QuattroTheme.Theme.textMuted
-
-                font.family:
-                    "JetBrainsMono Nerd Font"
-
-                font.pixelSize: 10
-
-                leftPadding: 28
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                Text {
+                    text: row.label
+                    color: QuattroTheme.Theme.textStrong
+                    font.family: QuattroTheme.Theme.fontFamily
+                    font.pixelSize: 14
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                }
+                Text {
+                    visible: row.detail !== ""
+                    text: row.detail
+                    color: QuattroTheme.Theme.textMuted
+                    font.family: QuattroTheme.Theme.fontFamily
+                    font.pixelSize: 11
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                }
             }
         }
-
 
         Text {
             visible: row.arrow
@@ -1238,7 +1269,8 @@ Scope {
             anchors.fill: parent
             hoverEnabled: true
 
-            onClicked: row.clicked()
+            cursorShape: Qt.PointingHandCursor
+            onClicked: { row.forceActiveFocus(Qt.MouseFocusReason); row.clicked() }
         }
     }
 

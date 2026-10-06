@@ -1,0 +1,25 @@
+{
+  "family": "NDOT 47 (inspired by NOTHING)",
+  "creator": "Interactivate",
+  "source": "https://fontstruct.com/fontstructions/show/2047444",
+  "license": "SIL Open Font License1.1",
+  "licenseFile": "license.txt",
+  "readmeFile": "readme.txt",
+  "archiveSha256": "2ff3078f67fa1e9e283ae3bc0e79dbfd0975db0552b1466c68ef9465317097e8",
+  "fontSha256": "1f0f7aaa82054d52186177ea3ae9182110c1817ead1b9992cac4ba83ab05ad7b",
+  "usage": "Quickshell navbar text only; terminal font and icon role unchanged; not Nothing official Ndot-Regular",
+  "noticeFiles": [
+    {
+      "file": "license.txt",
+      "source_sha256": "fe9fcf671d8501e51a4e223ed7f59f48404def63262ddcb39d0740c4b91ff867",
+      "sha256": "a00add8dcc16e3002d1946c4cd1e355e5154927b9a71aa698dd226d146a8473e",
+      "normalization": "LF line endings and trailing whitespace only; notice wording unchanged"
+    },
+    {
+      "file": "readme.txt",
+      "source_sha256": "b192e871153c2b8b42c5cc7455e11bf1f415fd51e81d45a2d6a8203ec7a831e0",
+      "sha256": "eac90539300af03123be9edcaadb84832101693f335a839ead7f5f768938d4cd",
+      "normalization": "LF line endings and trailing whitespace only; notice wording unchanged"
+    }
+  ]
+}

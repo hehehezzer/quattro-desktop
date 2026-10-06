@@ -34,7 +34,10 @@ end
 
 -- OnDemand allows focus to follow the mouse. Escape still closes the temporary
 -- panel, but must not consume application Escape keys when no panel is open.
-local escape = hl.bind("Escape", dismissAll, {description = "Close temporary Quattro panel"})
+local escape = hl.bind("Escape", dismissAll, {
+    non_consuming = true,
+    description = "Close temporary Quattro panel",
+})
 local function updateEscape()
     local active = false
     for _, layer in ipairs(hl.get_layers()) do

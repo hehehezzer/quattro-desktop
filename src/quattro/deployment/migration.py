@@ -39,7 +39,7 @@ def _looks_desktop(record: Mapping[str, Any], desktop_names: set[str]) -> bool:
         return True
     source = str(record.get("sourcePath", ""))
     deployed = str(record.get("deployedPath", ""))
-    return source.startswith(("src/quickshell/", "src/hypr/", "src/systemd/", "src/app-theme/", "src/foot/")) or deployed.startswith((".config/quickshell/", ".config/hypr/", ".config/systemd/", ".local/share/quattro/wallpapers/"))
+    return source.startswith(("src/quickshell/", "src/hypr/", "src/systemd/", "src/app-theme/", "src/foot/", "src/ghostty/")) or deployed.startswith((".config/quickshell/", ".config/hypr/", ".config/systemd/", ".local/share/quattro/wallpapers/"))
 
 
 def _partition_rollback(

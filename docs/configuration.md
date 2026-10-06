@@ -42,7 +42,11 @@ by mandatory-context resolution.
   data.
 - `defaultPolicyProfile`: strict default such as `workspace-write`.
 - `memory`: disabled by default; paths are user-owned when enabled.
-- `delegation`: optional bounded Pi worker limit, maximum three.
+- `delegation`: optional bounded specialist settings: required `enabled` and
+  `maxWorkers` (maximum three), plus optional `workerAgent` (`pi` or `omp`).
+  Set `workerAgent: "omp"` while keeping `defaultAgent: "codex"` to replace Pi
+  specialists without changing the writable primary runtime. If omitted, the
+  worker defaults to `omp` when the primary is `omp`, otherwise `pi`.
 - `cooperation`: global and per-repository top-level session limits.
 - `routing`: Quattro's three tiers, effort, route labels, and context budgets.
   Optional `jev: {"mode": "OFF", "timeoutMs": 300}` enables direct TypeSafe
@@ -56,3 +60,44 @@ by mandatory-context resolution.
 
 Unknown fields, unsafe account paths, disabled default accounts, invalid route
 labels, and unconfirmed full access are rejected.
+
+## Optional native session selection
+
+The optional strict `nativeSession` section selects an interactive harness and
+an existing named Herdr server. It does not change `defaultAgent` (`codex`,
+`pi`, or `omp`), durable task adapters, account selection, or sandbox policy profiles.
+All three fields are required when the section is present:
+
+```json
+"nativeSession": {
+  "preferredAgent": "omp",
+  "skillsCatalog": "/opt/quattro/skills",
+  "herdrSocket": "/run/user/1000/herdr/quattro.sock"
+}
+```
+
+`preferredAgent` accepts `codex` or `omp`. Both paths must be explicit absolute
+paths, without home/environment expansion or traversal. Set them to your
+verified complete skills catalog and your named private Herdr socket. Catalog
+existence and socket ownership/privacy are checked when launching; configuration
+validation does not connect to Herdr or read skills. These example paths are
+placeholders, not a deployment recommendation.
+
+With this section, `quattro-agent launch` offers Codex, OMP, and explicit Pi
+compatibility; non-terminal callers use `preferredAgent`. Without it, the
+existing Codex/Pi chooser and default remain unchanged unless `defaultAgent`
+is `omp`, which also enables the OMP chooser. That default still requires an
+explicit `--skills` catalog when no native section is configured. Choosing OMP requires
+`quattro-agent launch --confirm-native-access` at action time and starts a
+persistent terminal through the configured socket. Configuring a preference
+never supplies that confirmation. `--skills` and `--socket` can explicitly select
+a catalog and named socket for an individual OMP launch. Explicit
+`quattro-agent launch omp --skills /absolute/catalog --confirm-native-access`
+without a configured socket retains the staged direct interactive route.
+
+OMP uses the reviewed locked Sol 6.1 Medium route, native-user filesystem/network
+rights, and native always-ask dialogs. Its working directory is not a sandbox.
+Legacy `--policy` and `--confirm-full-access` overrides are rejected for OMP;
+native access flags are rejected for Codex/Pi. Authentication remains a separate
+native login, and real native approvals must still be given by the human. This
+opt-in selection is not a persistent-policy approval or a full Pi replacement.

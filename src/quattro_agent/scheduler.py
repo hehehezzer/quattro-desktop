@@ -21,7 +21,7 @@ def _slot_group(prefix: str, count: int) -> tuple[str, ...]:
 @dataclass(frozen=True, slots=True)
 class SchedulerLimits:
     max_total: int = 5
-    per_agent: dict[str, int] = field(default_factory=lambda: {"codex": 5, "pi": 5})
+    per_agent: dict[str, int] = field(default_factory=lambda: {"codex": 5, "pi": 5, "omp": 5})
     per_account: int = 5
     per_provider: int = 5
     max_delegated_workers: int = 3
@@ -59,11 +59,13 @@ class LocalScheduler:
         return f"repository:{identity.repository_id}"
 
     @staticmethod
-    def session_resource(session_id: str) -> str:
+    def session_resource(session_id: str, *, agent: str = "codex") -> str:
+        if agent not in {"codex", "omp"}:
+            raise ValueError("unsupported native session agent")
         if not session_id or len(session_id) > 200 or "\x00" in session_id:
             raise ValueError("native session id is invalid")
         digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32]
-        return f"codex-session-writer:{digest}"
+        return f"{agent}-session-writer:{digest}"
 
     @staticmethod
     def logical_session_resource(quattro_session_id: str) -> str:
@@ -111,9 +113,9 @@ class LocalScheduler:
         if delegated_worker:
             groups.append(_slot_group("delegated-worker", self.limits.max_delegated_workers))
         fixed = [f"subagent:{task_id}"] if subagent_worker and not delegated_worker else []
-        if top_level and agent == "codex" and native_session_ref:
-            fixed.append(self.session_resource(native_session_ref))
-        if top_level and agent == "codex" and quattro_session_id:
+        if top_level and agent in {"codex", "omp"} and native_session_ref:
+            fixed.append(self.session_resource(native_session_ref, agent=agent))
+        if top_level and agent in {"codex", "omp"} and quattro_session_id:
             fixed.append(self.logical_session_resource(quattro_session_id))
         leases = self.store.acquire_lease_set(
             holder_task_id=task_id,

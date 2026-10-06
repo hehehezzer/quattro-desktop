@@ -26,7 +26,7 @@ if themeFile then
     local themeData = themeFile:read("*a")
     themeFile:close()
     local configuredTheme = themeData:match('"theme"%s*:%s*"([%w%-]+)"')
-    if configuredTheme == "lofi-noir" or configuredTheme == "graphite" or configuredTheme == "terminal" or configuredTheme == "cyberpunk-2077" then
+    if configuredTheme == "lofi-noir" or configuredTheme == "graphite" or configuredTheme == "terminal" or configuredTheme == "cyberpunk-2077" or configuredTheme == "avengers-doomsday" or configuredTheme == "instrument" or configuredTheme == "instrument-paper" or configuredTheme == "instrument-ember" then
         themeName = configuredTheme
     end
 end
@@ -37,6 +37,11 @@ local themeBorders = {
     ["terminal"] = { active = "rgba(58745fff)", inactive = "rgba(1b2a20ff)" },
     ["cyberpunk-2077"] = { active = "rgba(fcee09ff)", inactive = "rgba(25354aff)" },
 }
+
+themeBorders["avengers-doomsday"] = { active = "rgba(8fb99aff)", inactive = "rgba(33443aff)" }
+themeBorders["instrument"] = { active = "rgba(ecece7ff)", inactive = "rgba(494a47ff)" }
+themeBorders["instrument-paper"] = { active = "rgba(20211fff)", inactive = "rgba(b3b2a9ff)" }
+themeBorders["instrument-ember"] = { active = "rgba(ebe5dbff)", inactive = "rgba(51443eff)" }
 
 local activeThemeBorders = themeBorders[themeName]
 
@@ -77,7 +82,7 @@ hl.monitor({
 ---------------------
 
 -- Set programs that you use
-local terminal    = "foot"
+local terminal    = "ghostty"
 local fileManager = "dolphin"
 local menu        = "hyprlauncher"
 
@@ -106,6 +111,7 @@ end)
 
 -- See https://wiki.hypr.land/Configuring/Advanced-and-Cool/Environment-variables/
 
+hl.env("TERMINAL", "ghostty")
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("QT_QPA_PLATFORMTHEME", "gtk3")

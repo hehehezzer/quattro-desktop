@@ -527,6 +527,8 @@ _CHILD_ENVIRONMENT = (
     "QUATTRO_CONFIG", "QUATTRO_STATE_DIR", "QUATTRO_DATA_DIR",
     "QUATTRO_CODEX_DATA_DIR", "QUATTRO_CODEX_HOME_ROOT", "QUATTRO_MODEL_CATALOG",
     "QUATTRO_OMNIROUTE_BASE_URL", "QUATTRO_WORKSPACE", "NO_COLOR",
+    "QUATTRO_OMP_BUN", "QUATTRO_OMP_PACKAGE_ROOT", "QUATTRO_OMP_AGENT_DIR",
+    "QUATTRO_OMP_RUNTIME_MANIFEST", "QUATTRO_OMP_RUNTIME_MANIFEST_SHA256",
 )
 
 
@@ -1088,7 +1090,7 @@ def launch_terminal(agent: str, directory_value: str | None, mode: str = "intera
                     profile_name: str | None = None,
                     confirm_full_access: bool = False,
                     write_scopes: Sequence[str] = ()) -> str:
-    """Create a durable interactive task and open its worker in Foot."""
+    """Create a durable interactive task and open its worker in Ghostty."""
     directory = safe_directory(directory_value)
     task_id, _ = harness().submit(
         agent=agent,
@@ -1560,7 +1562,7 @@ def session_terminal_pid(session: dict[str, Any], proc_root: pathlib.Path = path
             continue
         try:
             executable = (entry / "exe").resolve(strict=True)
-            if executable.name != "foot":
+            if executable.name not in {"foot", "ghostty"}:
                 continue
             raw = (entry / "cmdline").read_bytes()[:65_536]
         except OSError:
@@ -1581,7 +1583,7 @@ def session_terminal_pid(session: dict[str, Any], proc_root: pathlib.Path = path
 
 
 def open_session(identifier: str) -> dict[str, Any]:
-    """Focus the mapped Foot window for one verified live Quattro session."""
+    """Focus the mapped terminal window for one verified live Quattro session."""
     target = identifier.strip()
     if not target:
         die("sessions open requires a session or task id")
@@ -1608,7 +1610,7 @@ def open_session(identifier: str) -> dict[str, Any]:
         clients = []
     client = next((row for row in clients if (
         isinstance(row, dict)
-        and row.get("class") == "quattro-ai"
+        and row.get("class") in {"quattro-ai", "com.quattro.ai"}
         and row.get("mapped") is not False
         and int(row.get("pid") or 0) == terminal_pid
     )), None)
@@ -2769,7 +2771,7 @@ def multi_launch(count: int, directory_value: str | None) -> int:
         subprocess.run([tmux, "split-window", "-v", "-p", "50", "-t", f"{session}:0.0", "-c", str(directory), *worker_argv(agents[2])], check=True)
         subprocess.run([tmux, "split-window", "-v", "-p", "50", "-t", f"{session}:0.1", "-c", str(directory), *worker_argv(agents[3])], check=True)
         subprocess.run([tmux, "select-layout", "-t", f"{session}:0", "tiled"], check=True)
-    detached([require("foot"), "--app-id", "quattro-ai-multi", "--title", f"AI Workspace · {count}", tmux, "attach", "-t", session], directory)
+    detached([require("ghostty"), "--gtk-single-instance=false", "--class=com.quattro.ai.multi", "--title=" + f"AI Workspace · {count}", "-e", tmux, "attach", "-t", session], directory)
     return 0
 
 
@@ -3055,16 +3057,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"quattro-agent {VERSION}")
     sub = parser.add_subparsers(dest="command")
+    from .migration_cli import add_parser as add_migration_parser
+    add_migration_parser(sub)
     launch = sub.add_parser(
         "launch", help="start an interactive session; asks for an agent when omitted"
     )
     launch.add_argument(
-        "agent", nargs="?", choices=("codex", "pi"),
-        help="agent to launch directly (codex or pi)",
+        "agent", nargs="?", choices=("codex", "pi", "omp"),
+        help="agent to launch directly (codex, pi, or staged omp)",
     )
     launch.add_argument("directory", nargs="?")
     launch.add_argument("--policy")
     launch.add_argument("--confirm-full-access", action="store_true")
+    launch.add_argument("--confirm-native-access", action="store_true")
+    launch.add_argument("--skills", help="verified OMP skill catalog directory")
+    launch.add_argument("--socket", help="named private Herdr socket for persistent OMP launch")
+    launch.add_argument("--native-session-ref", help=argparse.SUPPRESS)
     sub.add_parser("desktop")
     prompt = sub.add_parser("prompt")
     prompt.add_argument("values", nargs="+")
@@ -3105,7 +3113,7 @@ def build_parser() -> argparse.ArgumentParser:
     sessions.add_argument("action", choices=("status", "clean", "native", "open", "stop"), nargs="?", default="status")
     sessions.add_argument("session_id", nargs="?")
     new_task = sub.add_parser("new-task")
-    new_task.add_argument("--agent", choices=("codex", "pi"), default=None)
+    new_task.add_argument("--agent", choices=("codex", "pi", "omp"), default=None)
     new_task.add_argument("--directory")
     new_task.add_argument("--prompt", default="")
     new_task.add_argument("--mode", choices=("interactive", "prompt"), default="interactive")
@@ -3113,7 +3121,7 @@ def build_parser() -> argparse.ArgumentParser:
     new_task.add_argument("--confirm-full-access", action="store_true")
     new_task.add_argument("--scope", action="append", default=[], help="repository-relative writable scope; repeatable")
     submit = sub.add_parser("submit", help="queue a durable task and return immediately")
-    submit.add_argument("--agent", choices=("auto", "codex", "pi"), default="auto")
+    submit.add_argument("--agent", choices=("auto", "codex", "pi", "omp"), default="auto")
     submit.add_argument("--directory")
     submit.add_argument("--prompt", required=True)
     submit.add_argument("--policy")
@@ -3184,6 +3192,8 @@ def build_parser() -> argparse.ArgumentParser:
     native.add_argument("--include-diagnostics", action="store_true")
     native.add_argument("--directory")
     native.add_argument("--query")
+    native.add_argument("--decision-stdin", action="store_true",
+                        help="read a bounded model-authored v2 decision for the explicit probe")
     native.add_argument("--jev", choices=("on", "off"))
     native.add_argument("--json", action="store_true")
     sub.add_parser("chatgpt")
@@ -3580,17 +3590,49 @@ def main() -> int:
     ensure_state_dirs()
     config = load_config()
     command = args.command
+    if command == "herdr":
+        from .migration_cli import command as migration_command
+        try:
+            return migration_command(args)
+        except (OSError, ValueError, RuntimeError) as error:
+            die(str(error))
     if command == "launch":
         from quattro_agent.interactive import choose_agent
         workspace = safe_directory(args.directory)
         print(f"Workspace: {workspace}\n", flush=True)
         agent = args.agent
+        native = config.get("nativeSession")
         if agent is None:
             agent = choose_agent(
-                str(config["defaultAgent"]), input_stream=sys.stdin, output=sys.stdout,
+                str(native["preferredAgent"] if native else config["defaultAgent"]),
+                input_stream=sys.stdin, output=sys.stdout,
+                native_selection=native is not None or config["defaultAgent"] == "omp",
             )
             if agent is None:
                 return 0
+        if agent == "omp":
+            from .migration_cli import launch_omp, native_access
+            if args.policy or args.confirm_full_access:
+                die("OMP uses explicit native always-ask approval; policy override is unavailable")
+            try:
+                native_access(args.confirm_native_access)
+                skills = args.skills or (native["skillsCatalog"] if native else None)
+                socket = args.socket or (native["herdrSocket"] if native else None)
+                if socket and not args.native_session_ref:
+                    from .migration_cli import start_omp
+                    return start_omp(workspace, skills=skills, socket=socket,
+                                     confirmed=args.confirm_native_access)
+                launch_options = {
+                    "skills": skills, "confirmed": args.confirm_native_access,
+                    "environment": tool_environment("omp"),
+                }
+                if args.native_session_ref:
+                    launch_options["native_session_ref"] = args.native_session_ref
+                return launch_omp(workspace, **launch_options)
+            except (OSError, ValueError, RuntimeError) as error:
+                die(str(error))
+        if args.confirm_native_access or args.skills or args.socket or args.native_session_ref:
+            die("--confirm-native-access, --skills and --socket require OMP selection")
         try:
             native_interactive_handoff(
                 agent, workspace,
@@ -3624,7 +3666,7 @@ def main() -> int:
         return open_diff_in_zed(safe_directory(args.directory))
     if command == "prompt":
         values = list(args.values)
-        agent = values.pop(0) if values and values[0] in ("codex", "pi") else str(config["defaultAgent"])
+        agent = values.pop(0) if values and values[0] in ("codex", "pi", "omp") else str(config["defaultAgent"])
         prompt_value = values.pop(0) if values else ""
         directory_value = values.pop(0) if values else None
         if values:
@@ -3697,10 +3739,10 @@ def main() -> int:
             try:
                 logical = harness().store.get_logical_session(logical_id)
                 logical_agent = str(logical.get("agent") or "codex")
-                if logical_agent == "pi":
+                if logical_agent in {"pi", "omp"}:
                     die(
-                        "native Pi resume is unavailable because managed logical sessions "
-                        "do not yet store a Pi-native session reference"
+                        f"native {logical_agent.upper()} resume is unavailable for managed logical sessions; "
+                        "use resume --prompt for checkpoint context recovery"
                     )
                 native_interactive_handoff(
                     logical_agent,
@@ -3714,9 +3756,11 @@ def main() -> int:
                 return 0  # reached only by test doubles
             except (ConfigError, LeaseConflict, OSError, ValueError, RuntimeError) as error:
                 die(str(error))
-        prepare_codex_launch(config, args.account or str(config["defaultCodexAccount"]))
-        native_rows = scan_codex_sessions(config)
         logical = harness().store.get_logical_session(logical_id)
+        native_rows = []
+        if logical.get("agent") == "codex":
+            prepare_codex_launch(config, args.account or str(config["defaultCodexAccount"]))
+            native_rows = scan_codex_sessions(config)
         native_id = logical.get("current_codex_session_id")
         native_available = bool(native_id and any(
             row.get("sessionId") == native_id and row.get("resumable") for row in native_rows

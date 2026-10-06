@@ -21,7 +21,7 @@ import time
 SOURCE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE / 'src'))
 from quattro_agent.config import load_ai_config
-from quattro_agent.decision_taxonomy import ACTIONS
+from quattro_agent.decision_taxonomy import option_effect, validate_request
 from quattro_agent.paths import config_path, state_root
 from quattro_agent.models import TaskState, TERMINAL_TASK_STATES
 from quattro_agent.turn_gate import TurnGate
@@ -105,14 +105,21 @@ def parse_output(path):
         if item.get('type') == 'mcp_tool_call' and item.get('server') == 'quattro_decisions':
             observation = {'status': item.get('status')}
             arguments = item.get('arguments')
-            if isinstance(arguments, dict) and arguments.get('decision_type') in ACTIONS:
-                observation['decision_type'] = arguments['decision_type']
+            try:
+                authored = validate_request(arguments)
+            except Exception:
+                decisions.append(observation)
+                continue
+            observation['decision_schema'] = authored['schema_version']
             for part in (item.get('result') or {}).get('content', []):
                 if part.get('type') == 'text':
                     try:
                         result = json.loads(part['text'])
                         observation.update({name: result.get(name) for name in
-                                            ('selected_action', 'confidence', 'fallback_required', 'timing', 'outcome')})
+                                            ('confidence', 'fallback_required', 'timing', 'outcome')})
+                        # Arbitrary authored ids and probability keys may carry
+                        # private details. Export only the validated host effect.
+                        observation['selected_effect'] = option_effect(authored, result.get('selected_action'))
                     except (ValueError, AttributeError):
                         pass
             decisions.append(observation)
@@ -188,7 +195,7 @@ def main():
                         help='Safety ceiling; exploratory successful pilot maximum was 86 seconds')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--experimental-validation-order', action='store_true',
-                        help='Opt into the unpromoted post-agent validation-order experiment')
+                        help='Legacy compatibility setting; mandatory checks keep their original host order')
     args = parser.parse_args()
     if not args.live:
         parser.error('--live is required; real models and native task stores are used')
@@ -200,6 +207,7 @@ def main():
     output = {'measurement': 'LIVE synthetic task smoke matrix; one pair per scenario, not statistical quality evidence',
               'source_sha256': digest, 'source_unchanged': None, 'rows': rows,
               'experimental_validation_order': args.experimental_validation_order,
+              'validation_order_behavior': 'original_host_order',
               'limits': ['No price data or model-turn counter.', 'No causal speed attribution; provider caching and load vary.',
                          'Subagent candidate respects the one-worker hard budget; it does not benchmark spawning.']}
     for index, case in enumerate(args.case or CASES):

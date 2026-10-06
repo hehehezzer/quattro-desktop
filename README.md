@@ -55,7 +55,8 @@ do not create Quattro tasks or select providers.
 
 - Deterministic DIRECT versus DELEGATE request classification.
 - FAST/STANDARD/REASONING routing and bounded effort escalation.
-- Codex and optional Pi adapters with task-scoped policy profiles.
+- Codex, closed OMP context workers, and retained Pi compatibility adapters with
+  task-scoped policy profiles.
 - SQLite/WAL persistence, checkpoints, resume/recovery, cancellation, and
   terminal validation.
 - Cooperative global/repository limits and repository-relative write scopes.
@@ -101,12 +102,17 @@ Windows.
 - Pi 0.8x or a compatible newer release only when delegated specialists are
   enabled. Pi is optional and writable Pi execution remains fail-closed unless
   the runtime can enforce the requested network policy.
+- OMP 18.6.3 and Bun 1.3.14 or newer for the reviewed OMP SDK route. Durable OMP
+  currently accepts context-only read-only tasks; native coding terminals use
+  the separate reviewed Herdr/OMP route. See [the durable contract](docs/DURABLE_OMP.md)
+  and [the scoped host-tool contract](docs/SCOPED_OMP.md).
 - OmniRoute with the Responses-compatible local endpoint and the Quattro,
   account-qualified GPT-6 Astra/GPT-5.6, and verified Antigravity route labels when direct
   or Codex execution is used. The endpoint and catalog are configurable;
   Quattro does not bundle OmniRoute.
 - Optional desktop dependencies: Hyprland Lua integration, Quickshell 0.3.x,
-  Foot, `wl-clipboard`, and the commands documented in `docs/desktop.md`.
+  Ghostty, `wl-clipboard`, and the commands documented in `docs/desktop.md`.
+  Foot remains supported for existing terminal sessions.
 
 ## Core-only quick start
 
@@ -157,6 +163,13 @@ machine walkthrough.
 
 ## Configuration and paths
 
+Interactive OMP selection is an explicit opt-in through the strict optional
+`nativeSession` configuration. It uses a verified skills catalog and named
+private Herdr socket, requires `--confirm-native-access` for each launch, and
+retains native always-ask approval. Existing Codex/Pi defaults and durable tasks
+remain compatible. See [native session configuration](docs/configuration.md#optional-native-session-selection)
+for the boundary and command examples.
+
 Configuration is strict schema version 3 JSON. Use `QUATTRO_CONFIG` to select a
 file, otherwise Quattro uses `$XDG_CONFIG_HOME/quattro/ai.json` (or
 `~/.config/quattro/ai.json`). Runtime state defaults to
@@ -172,6 +185,13 @@ clone destination from the maintainer's machine; project-root defaults are
 user-configurable.
 
 ## Common commands
+
+The staged Herdr → Quattro → OMP replacement is documented in
+[Herdr and OMP](docs/HERDR_OMP.md). `quattro-agent launch omp PATH` locks
+`openai-codex/gpt-6.1-sol` with medium effort and native `always-ask` approval.
+It requires a verified skill catalog and explicit action-time native-access
+approval. Legacy Pi remains available until real replacement acceptance; Codex
+and original skill roots remain intact.
 
 ```text
 quattro-agent                          # choose native Codex or Pi with per-turn routing
@@ -236,7 +256,7 @@ Report vulnerabilities through the process in [SECURITY.md](SECURITY.md).
 
 ```bash
 python -m unittest discover -s tests -p 'test_*.py'
-python -m compileall -q src
+python -m compileall -q src scripts
 python scripts/check_python.py
 python scripts/check_public_artifacts.py
 git diff --check
@@ -247,5 +267,6 @@ and [development](docs/development.md).
 
 ## License
 
-Quattro is released under the MIT License. Desktop artwork is intentionally
-not bundled; local artwork can be supplied with `QUATTRO_WALLPAPER_DIR`.
+Quattro code and original bundled desktop artwork are released under the MIT
+License. Bundled fonts retain their accompanying SIL Open Font License notices.
+Local artwork can be supplied with `QUATTRO_WALLPAPER_DIR`.

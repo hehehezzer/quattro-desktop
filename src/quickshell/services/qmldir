@@ -2,3 +2,5 @@ singleton DesktopMedia 1.0 DesktopMedia.qml
 singleton LyricsController 1.0 LyricsController.qml
 singleton DesktopWeather 1.0 DesktopWeather.qml
 singleton PopupManager 1.0 PopupManager.qml
+MonitorMetrics 1.0 MonitorMetrics.qml
+singleton NotificationHistory 1.0 NotificationHistory.qml

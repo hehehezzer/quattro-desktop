@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import "../../theme" as QuattroTheme
@@ -7,6 +9,8 @@ ComboBox {
     implicitHeight: QuattroTheme.Theme.compactTarget
     font.family: QuattroTheme.Theme.fontFamily
     hoverEnabled: true
+    focusPolicy: Qt.StrongFocus
+    opacity: enabled ? 1 : QuattroTheme.Theme.disabledOpacity
     palette.button: QuattroTheme.Theme.surface
     palette.buttonText: QuattroTheme.Theme.textStrong
     palette.base: QuattroTheme.Theme.surface
@@ -19,40 +23,50 @@ ComboBox {
         height: root.height
         text: "󰅀"
         color: root.enabled ? QuattroTheme.Theme.textMuted : QuattroTheme.Theme.textDim
-        font: root.font
+        font.family: QuattroTheme.Theme.iconFontFamily
+        font.pixelSize: QuattroTheme.Theme.iconSmall
+        width: 16
+        horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
     }
     contentItem: Text {
         leftPadding: 8
         rightPadding: 26
         text: root.displayText
-        color: QuattroTheme.Theme.textStrong
+        color: root.enabled ? QuattroTheme.Theme.textStrong : QuattroTheme.Theme.textDim
         font: root.font
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
     }
     background: Rectangle {
-        color: root.hovered || root.popup.visible ? QuattroTheme.Theme.hover : QuattroTheme.Theme.surface
-        border.width: root.activeFocus ? QuattroTheme.Theme.focusLine : 0
-        border.color: root.activeFocus ? QuattroTheme.Theme.textStrong : QuattroTheme.Theme.border
+        color: root.down ? QuattroTheme.Theme.pressed
+            : root.hovered || root.popup.visible ? QuattroTheme.Theme.hover : QuattroTheme.Theme.surface
+        border.width: root.activeFocus ? QuattroTheme.Theme.focusLine : QuattroTheme.Theme.isInstrument ? 1 : 0
+        border.color: root.activeFocus ? QuattroTheme.Theme.textStrong
+            : root.hovered ? QuattroTheme.Theme.borderStrong : QuattroTheme.Theme.border
         radius: QuattroTheme.Theme.cornerRadius
     }
     delegate: ItemDelegate {
+        id: option
+        required property int index
+        required property var modelData
         width: root.popup.width - root.popup.leftPadding - root.popup.rightPadding
         height: 32
         hoverEnabled: true
-        highlighted: root.highlightedIndex === index
+        highlighted: root.highlightedIndex === option.index
         contentItem: Text {
             leftPadding: 8
             rightPadding: 8
-            text: modelData
-            color: parent.enabled ? QuattroTheme.Theme.textStrong : QuattroTheme.Theme.textDim
+            text: option.modelData
+            color: option.enabled ? QuattroTheme.Theme.textStrong : QuattroTheme.Theme.textDim
             font: root.font
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
         background: Rectangle {
-            color: parent.highlighted || parent.hovered ? QuattroTheme.Theme.hover : "transparent"
+            color: option.highlighted || option.hovered ? QuattroTheme.Theme.hover : "transparent"
+            border.width: option.activeFocus ? QuattroTheme.Theme.focusLine : 0
+            border.color: QuattroTheme.Theme.textStrong
             radius: QuattroTheme.Theme.cornerRadius
         }
     }

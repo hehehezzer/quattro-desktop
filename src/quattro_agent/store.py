@@ -27,11 +27,10 @@ from .policy import PolicyProfile
 from .privacy import decode_json, display_json, display_text, private_json, redact_secret_text
 
 
-# The durability tables are an additive schema extension intentionally kept
-# readable by the deployed schema-v2 runtime. Existing v2 binaries ignore the
-# new tables instead of refusing to open the shared database during rollout.
-SCHEMA_VERSION = 3
-SUPPORTED_AGENTS = frozenset({"codex", "pi"})
+# Schema v4 adds OMP identities without relabeling historical Pi/Codex rows.
+# Older runtimes must not open the migrated database for execution.
+SCHEMA_VERSION = 4
+SUPPORTED_AGENTS = frozenset({"codex", "pi", "omp"})
 
 
 def _id(prefix: str) -> str:
@@ -108,7 +107,7 @@ class TaskStore:
                     task_id TEXT PRIMARY KEY,
                     parent_task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
                     workflow TEXT NOT NULL,
-                    agent TEXT NOT NULL CHECK(agent IN ('codex','pi')),
+                    agent TEXT NOT NULL CHECK(agent IN ('codex','pi','omp')),
                     project_path TEXT NOT NULL,
                     project_name TEXT NOT NULL,
                     display_title TEXT NOT NULL,
@@ -131,7 +130,7 @@ class TaskStore:
                     run_id TEXT PRIMARY KEY,
                     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
                     attempt INTEGER NOT NULL CHECK(attempt > 0),
-                    agent TEXT NOT NULL CHECK(agent IN ('codex','pi')),
+                    agent TEXT NOT NULL CHECK(agent IN ('codex','pi','omp')),
                     account_id TEXT,
                     native_session_ref TEXT,
                     state TEXT NOT NULL,
@@ -251,7 +250,7 @@ class TaskStore:
                     current_task_id TEXT REFERENCES tasks(task_id) ON DELETE SET NULL,
                     repository_path TEXT NOT NULL,
                     working_directory TEXT NOT NULL,
-                    agent TEXT NOT NULL DEFAULT 'codex' CHECK(agent IN ('codex','pi')),
+                    agent TEXT NOT NULL DEFAULT 'codex' CHECK(agent IN ('codex','pi','omp')),
                     originating_account_id TEXT,
                     last_account_id TEXT,
                     provider_id TEXT NOT NULL,
@@ -394,8 +393,82 @@ class TaskStore:
                 except BaseException:
                     connection.rollback()
                     raise
+            if version == 3:
+                self._migrate_omp_agents(connection)
+                version = 4
             if version != SCHEMA_VERSION:
                 raise RuntimeError(f"unsupported harness database schema: {version}")
+
+    @staticmethod
+    def _migrate_omp_agents(connection: sqlite3.Connection) -> None:
+        """Rebuild agent constraints without rewriting history or foreign keys.
+
+        Foreign keys must be disabled outside the transaction for SQLite's
+        documented table-rebuild procedure. Every dependent row is retained;
+        an explicit foreign-key check runs before the atomic commit.
+        """
+        tables = ("tasks", "runs", "logical_sessions")
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            # Another initializer may have completed while this one waited.
+            version = connection.execute(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+            ).fetchone()[0]
+            if str(version) == "4":
+                connection.commit()
+                return
+            if str(version) != "3":
+                raise RuntimeError("database version changed during OMP migration")
+            indexes = []
+            for table in tables:
+                definition = connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+                ).fetchone()[0]
+                old = "CHECK(agent IN ('codex','pi'))"
+                new = "CHECK(agent IN ('codex','pi','omp'))"
+                if old in definition:
+                    definition = definition.replace(old, new)
+                elif new not in definition:
+                    # Schema-v2 logical sessions acquired an unconstrained
+                    # agent column via ALTER TABLE in the v3 migration.
+                    marker = "agent TEXT NOT NULL DEFAULT 'codex'"
+                    if table != "logical_sessions" or marker not in definition:
+                        raise RuntimeError("unexpected durable agent schema")
+                    definition = definition.replace(marker, marker + " " + new, 1)
+                target = table + "_omp_migration"
+                prefix = "CREATE TABLE " + table
+                quoted_prefix = 'CREATE TABLE "' + table + '"'
+                if definition.startswith(prefix + " ") or definition.startswith(prefix + "("):
+                    definition = definition.replace(prefix, "CREATE TABLE " + target, 1)
+                elif definition.startswith(quoted_prefix):
+                    definition = definition.replace(quoted_prefix, "CREATE TABLE " + target, 1)
+                else:
+                    raise RuntimeError("unexpected durable table declaration")
+                indexes.extend(row[0] for row in connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL",
+                    (table,),
+                ))
+                if connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?", (table,)
+                ).fetchone():
+                    raise RuntimeError("unexpected triggers on durable agent tables")
+                connection.execute(definition)
+                connection.execute(f"INSERT INTO {target} SELECT * FROM {table}")
+            for table in tables:
+                connection.execute(f"DROP TABLE {table}")
+                connection.execute(f"ALTER TABLE {table}_omp_migration RENAME TO {table}")
+            for definition in indexes:
+                connection.execute(definition)
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise RuntimeError("OMP migration failed foreign-key validation")
+            connection.execute("UPDATE schema_meta SET value = '4' WHERE key = 'schema_version'")
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
 
     @staticmethod
     def _event(
@@ -1101,7 +1174,7 @@ class TaskStore:
         repository = str(Path(repository_path).expanduser().resolve(strict=False))
         workdir = str(Path(working_directory).expanduser().resolve(strict=False))
         provider = display_text(provider_id, field="provider_id", maximum=100)
-        if agent not in {"codex", "pi"}:
+        if agent not in SUPPORTED_AGENTS:
             raise ValueError(f"unsupported session agent: {agent}")
         with self._transaction(immediate=True) as connection:
             task = self._task_row(connection, task_id)

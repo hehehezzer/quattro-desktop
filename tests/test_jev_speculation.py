@@ -12,10 +12,28 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parents[1] / 'src'))
 from quattro_agent import routing_signals, turn_routing
-from quattro_agent.jev import JevClient, JevFailure, MODEL, serialize_state
-from test_jev import response
-from quattro_agent.jev_shadow import ShadowRun, current_evidence, lifecycle
+from quattro_agent.jev import JevClient, JevFailure, MODEL
+from quattro_agent.jev_shadow import current_evidence, lifecycle
 from quattro_agent.model_registry import default_policy_path, load_model_registry
+
+
+def authored_request():
+    return {'schema_version': 'quattro-jev-decisions-v2', 'decision_id': 'inspect_context',
+            'question': 'Should evidence be inspected before the next adjustment?',
+            'options': [
+                {'id': 'inspect_evidence', 'description': 'Inspect the available abstract evidence.', 'effect': 'inspect'},
+                {'id': 'reason_locally', 'description': 'Use native reasoning to determine the next step.', 'effect': 'agent'}],
+            'context': {'evidence_complete': False},
+            'hard_constraints': {'retry_allowed': False, 'parallel_allowed': False, 'retrieval_allowed': False},
+            'execution_state': {'revision': 1, 'phase': 'implementation', 'attempt': 0},
+            'previous_result': 'none'}
+
+
+def response():
+    return {'model': MODEL, 'answers': {'decision': {
+        'type': 'choice', 'choice': 'inspect_evidence', 'confidence': .96,
+        'probabilities': {'inspect_evidence': .96, 'reason_locally': .04}}},
+        'usage': {'input_tokens': 10, 'output_tokens': 2}}
 
 
 class SpeculationTests(unittest.TestCase):
@@ -32,18 +50,10 @@ class SpeculationTests(unittest.TestCase):
             config={'routing': {'jev': {'mode': 'COOPERATIVE', 'timeoutMs': 100}}},
             registry=self.registry, account='account-1', database=self.root / 'unused', **kwargs)
 
-    def test_worker_starts_before_health_and_learned_work_without_duplicate(self):
+    def test_bootstrap_preserves_health_and_learned_work_without_provider(self):
         order = []
-        completed = threading.Event()
-        run = mock.Mock(started=time.perf_counter(), timeout_ms=100, done=completed,
-                        record={'status': 'failed'})
-        def start(**kwargs):
-            order.append('jev')
-            return run
         def health(baseline):
-            self.assertEqual(order, ['jev'])
             order.append('health')
-            completed.set()
             return ()
         def learned(*args):
             order.append('learned')
@@ -52,64 +62,50 @@ class SpeculationTests(unittest.TestCase):
         def candidate(*args, **kwargs):
             order.append('candidate')
             return select(*args, **kwargs)
-        with mock.patch.object(routing_signals, 'start_shadow', side_effect=start) as start_mock, \
+        with mock.patch.object(JevClient, 'evaluate', side_effect=AssertionError('fixed provider question')) as start, \
              mock.patch.object(turn_routing, 'select_execution_target', side_effect=candidate), \
              mock.patch.object(routing_signals, 'learned_signal', side_effect=learned):
             routed = self.route(runtime_filter=health)
-        self.assertEqual(order, ['jev', 'health', 'candidate', 'learned'])
-        self.assertEqual(start_mock.call_count, 1)
+        self.assertEqual(order, ['health', 'candidate', 'learned'])
+        start.assert_not_called()
         self.assertEqual(routed.decision.decision, 'DELEGATE')
-        run.close.assert_not_called()
 
-    def test_failed_start_is_not_retried_at_fusion(self):
-        with mock.patch.object(routing_signals, 'start_shadow', return_value=None) as start:
-            self.route()
-        self.assertEqual(start.call_count, 1)
+    def test_static_shadow_provider_api_has_been_removed(self):
+        from quattro_agent import jev_shadow
+        for name in ('ShadowRun', 'start_shadow'):
+            self.assertFalse(hasattr(jev_shadow, name))
+        for name in ('start_signal_run', 'fuse'):
+            self.assertFalse(hasattr(routing_signals, name))
 
     def test_local_runtime_failure_is_not_swallowed_by_optional_signals(self):
-        with mock.patch.object(routing_signals, 'start_shadow', return_value=None), \
-             self.assertRaisesRegex(ValueError, 'runtime failed'):
+        with self.assertRaisesRegex(ValueError, 'runtime failed'):
             self.route(runtime_filter=mock.Mock(side_effect=ValueError('runtime failed')))
 
-    def test_request_deadline_is_not_restarted_after_local_preparation(self):
-        done = mock.Mock()
-        done.wait.return_value = False
-        run = mock.Mock(started=time.perf_counter() - 1, timeout_ms=100, done=done,
-                        record={'status': 'failed'})
-        with mock.patch.object(routing_signals, 'start_shadow', return_value=run):
-            self.route()
-        done.wait.assert_called_once_with(0)
-        run.close.assert_not_called()
+    def test_learned_evidence_cannot_change_host_bootstrap_plan(self):
+        from test_jev import boundary, options
+        from quattro_agent.routing import classify_pre_routing
+        request = boundary()
+        baseline = classify_pre_routing(pre_routing_input=request, config={})
+        learned = {'prediction': 'DELEGATE', 'confidence': 1.0,
+                   'model_version': 'synthetic_observation'}
+        with mock.patch.object(routing_signals, 'learned_signal', return_value=learned):
+            result = routing_signals.classify_with_signals(pre_routing_input=request,
+                config=options(), database=self.root / 'unused', execution='DELEGATE',
+                baseline_override=baseline)
+        self.assertEqual(result, baseline)
 
-    def test_dispatch_budget_can_expire_without_provider_timeout(self):
-        done = mock.Mock()
-        done.wait.return_value = False
-        run = mock.Mock(started=time.perf_counter(), timeout_ms=1500, done=done,
-                        record={'status': 'pending'})
-        @lifecycle
-        def route():
-            config = {'routing': {'jev': {'mode': 'COOPERATIVE', 'timeoutMs': 1500,
-                                         'decisionWaitMs': 0}}}
-            with mock.patch.object(routing_signals, 'start_shadow', return_value=run):
-                turn_routing.route_turn(
-                    request='Debug the repository regression and reproduce the root cause',
-                    config=config, registry=self.registry, account='account-1', database=self.root / 'unused')
-            return current_evidence()
-        evidence = route()
-        done.wait.assert_called_once_with(0)
-        run.close.assert_not_called()
-        self.assertTrue(evidence['jev_wait_budget_expired'])
-        self.assertEqual(run.record['status'], 'pending')
-
-    def test_routing_wall_time_is_not_reported_as_jev_rtt(self):
+    def test_routing_wall_time_has_no_provider_wait_or_claimed_rtt(self):
         @lifecycle
         def route():
             result = self.route()
             return result, current_evidence()
-        with mock.patch.object(routing_signals, 'start_shadow', return_value=None):
-            result, evidence = route()
-        self.assertAlmostEqual(evidence['routing_critical_path_ms'],
-            evidence['local_routing_ms'] + evidence['jev_wait_ms'] + evidence['fusion_ms'])
+        result, evidence = route()
+        self.assertEqual(evidence['jev_wait_ms'], 0)
+        self.assertEqual(evidence['fusion_ms'], 0)
+        self.assertFalse(evidence['jev_requested'])
+        self.assertTrue(evidence['static_questionnaire_retired'])
+        self.assertEqual(evidence['decision_boundary'], 'native_model_authored_operational')
+        self.assertAlmostEqual(evidence['routing_critical_path_ms'], evidence['local_routing_ms'])
         self.assertLessEqual(evidence['routing_critical_path_ms'], result.routing_ms)
         self.assertNotIn('jev_rtt_ms', evidence)
 
@@ -140,7 +136,7 @@ class SpeculationTests(unittest.TestCase):
         with mock.patch('quattro_agent.jev.http.client.HTTPSConnection', return_value=connection):
             client = JevClient(secrets.token_hex(24), 1.5)
             with self.assertRaisesRegex(JevFailure, 'http_error'):
-                client.evaluate(serialize_state('hello'))
+                client.evaluate(authored_request())
             client.close()
         self.assertEqual(connection.request.call_count, 1)
         reply.read.assert_not_called()
@@ -156,7 +152,7 @@ class SpeculationTests(unittest.TestCase):
         connection.getresponse.side_effect = [reply({'models': [{'name': MODEL}]}), reply(response())]
         with mock.patch('quattro_agent.jev.http.client.HTTPSConnection', return_value=connection) as create:
             client = JevClient(secrets.token_hex(24), 1.5)
-            result = client.evaluate(serialize_state('hello'))
+            result = client.evaluate(authored_request())
             client.close()
         create.assert_called_once_with('api.typesafe.ai', timeout=1.5)
         self.assertEqual(connection.request.call_count, 2)
@@ -170,22 +166,23 @@ class SpeculationTests(unittest.TestCase):
             with mock.patch('quattro_agent.jev.http.client.HTTPSConnection', return_value=connection):
                 client = JevClient(secrets.token_hex(24), 1.5)
                 with self.assertRaisesRegex(JevFailure, 'connection'):
-                    client.evaluate(serialize_state('hello'))
+                    client.evaluate(authored_request())
                 client.close()
             self.assertEqual(connection.request.call_count, 1)
             connection.close.assert_called_once()
 
-    def test_overlap_is_actual_interval_intersection_not_elapsed_minus_wait(self):
-        run = ShadowRun(database=self.root / 'evidence', request='', decision='DELEGATE',
-                        record_id=None, source_task_id=None, authoritative_tier=None, timeout_ms=100)
-        run.done.set()
-        run.thread = mock.Mock()
-        run.record.update(jev_request_started=10.0, jev_request_finished=10.4)
-        run.annotations.update(local_preparation_started=9.0, local_preparation_finished=10.1)
-        with mock.patch('quattro_agent.jev_shadow.persist', return_value=True):
-            run.close()
-        self.assertAlmostEqual(run.record['jev_overlap_ms'], 100)
-        self.assertLessEqual(run.record['jev_overlap_ms'], 400)
+    def test_lifecycle_restores_evidence_on_exception(self):
+        from quattro_agent.jev_shadow import annotate, mark_dispatch, take_scope
+        @lifecycle
+        def fail():
+            annotate(safe_marker=True)
+            mark_dispatch()
+            self.assertTrue(current_evidence()['dispatch_boundary_observed'])
+            self.assertEqual(take_scope(), ())
+            raise RuntimeError('synthetic failure')
+        with self.assertRaises(RuntimeError):
+            fail()
+        self.assertEqual(current_evidence(), {})
 
 
 if __name__ == '__main__':

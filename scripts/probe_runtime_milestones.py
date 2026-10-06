@@ -2,8 +2,8 @@
 """Live managed Codex AND standalone Pi completion-to-validation probes.
 
 This does not force an agent to request Jev. The host observes completion and
-runs its gated validation-order experiment. Zero avoided model reasoning is the
-expected baseline; a host reordering alone is not a contribution/ROI claim.
+runs mandatory checks in their original order. The old validation-order setting
+is accepted for compatibility; it performs no provider work or reordering.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from benchmark_decision_tasks import SOURCE, fixture, source_hash, parse_output
 sys.path.insert(0, str(SOURCE / "src"))
 from quattro_agent.config import load_ai_config
@@ -76,6 +77,7 @@ def main():
     before = source_hash()
     rows = []
     result = {"measurement": "LIVE managed completion boundary; no mid-turn interception claim",
+              "validation_order_behavior": "original_host_order",
               "source_sha256": before, "source_unchanged": None, "rows": rows,
               "limits": ["Marker task, not an implementation benchmark.",
                          "Host validation ordering does not eliminate baseline agent reasoning.",

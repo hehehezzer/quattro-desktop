@@ -9,6 +9,7 @@ import json
 import hashlib
 import os
 import pathlib
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -28,6 +29,8 @@ from .native_intelligence import (
     native_jev_advice, split_native_context,
 )
 from .decision_service import DecisionSession
+from .jev import JevFailure, decode
+from .supervisor import minimal_environment
 from .paths import config_path as configured_config_path
 from quattro_memory import MemoryError as VaultConfigError, memory_settings, project_memory_path
 
@@ -148,9 +151,12 @@ def _index_episodes(store: RetrievalStore, repository: str, *, full: bool = Fals
 
 def refresh_history(*, directory: str | None = None,
                     telemetry_context: NativeContext | None = None) -> dict[str, Any]:
+    settings = load_native_settings()
+    if not settings.retrieval_enabled:
+        return {"repository": None, "episodic": "disabled",
+                "usageEvidence": {"answer": False, "requested": False}}
     root = _directory(directory)
     state = repository_state(root)
-    settings = load_native_settings()
     telemetry = NativeTelemetry(enabled=settings.telemetry_enabled)
     native_context = telemetry_context or NativeContext(host="cli", project=str(root))
     trace_id = "history-" + uuid.uuid4().hex[:20]
@@ -174,6 +180,9 @@ def search_knowledge(query: str, *, directory: str | None = None,
     if type(limit) is not int or not 1 <= limit <= MAX_RESULTS:
         raise ValueError("limit must be between 1 and 8")
     settings = load_native_settings()
+    if not settings.retrieval_enabled:
+        return {"route": "retrieval_disabled", "context": None, "retrievedTokens": 0,
+                "usageEvidence": {"requested": False, "completed": False}}
     telemetry = NativeTelemetry(enabled=settings.telemetry_enabled)
     root = _directory(directory)
     native_context = telemetry_context or NativeContext(host="cli", project=str(root))
@@ -267,7 +276,7 @@ def rtk_status(*, telemetry_context: NativeContext | None = None) -> dict[str, A
     telemetry = NativeTelemetry(enabled=settings.telemetry_enabled)
     context = telemetry_context or NativeContext(host="cli")
     trace_id = "rtk-status-" + uuid.uuid4().hex[:16]
-    binary = shutil.which("rtk")
+    binary = shutil.which("rtk") if settings.rtk_enabled else None
     if binary is None:
         telemetry.record(kind="rtk", stage="status_checked", status="UNAVAILABLE", context=context,
                          trace_id=trace_id, metadata={"actualCommand": False})
@@ -276,31 +285,45 @@ def rtk_status(*, telemetry_context: NativeContext | None = None) -> dict[str, A
                                    "actualCommand": False}}
     try:
         result = subprocess.run([binary, "--version"], capture_output=True, text=True,
-                                timeout=3, check=False)
+                                timeout=3, check=False, env=minimal_environment())
     except (OSError, subprocess.TimeoutExpired) as error:
         telemetry.record(kind="rtk", stage="status_checked", status="ERROR", context=context,
                          trace_id=trace_id, metadata={"reason": type(error).__name__, "actualCommand": False})
         return {"available": False, "reason": type(error).__name__,
                 "usageEvidence": {"traceId": trace_id, "statusChecked": True,
                                    "actualCommand": False}}
+    supported = []
+    if result.returncode == 0:
+        try:
+            help_result = subprocess.run([binary, "--help"], capture_output=True, text=True,
+                                         timeout=3, check=False, env=minimal_environment())
+            if help_result.returncode == 0:
+                # Derive support from this installed client, not from a static
+                # policy allowlist or a model's assertion about RTK versions.
+                advertised = set(re.findall(r"^  ([a-z][a-z0-9_-]*) {2,}", help_result.stdout[:32000], re.M))
+                supported = sorted(advertised.intersection(RTK_COMMANDS))
+        except (OSError, subprocess.TimeoutExpired):
+            pass  # Unknown command support is not affirmative availability.
+    available = [name for name in supported if shutil.which(name) is not None]
     telemetry.record(kind="rtk", stage="status_checked", status="AVAILABLE" if result.returncode == 0 else "FAILED",
                      context=context, trace_id=trace_id,
                      metadata={"version": result.stdout.strip()[:100], "actualCommand": False})
     return {"available": result.returncode == 0, "version": result.stdout.strip()[:100],
+            "supportedCommandRoots": supported, "availableCommandRoots": available,
             "usageEvidence": {"traceId": trace_id, "statusChecked": True,
                                "actualCommand": False}}
 
 
 def rtk_run(command: list[str], *, directory: str | None = None,
             telemetry_context: NativeContext | None = None) -> dict[str, Any]:
-    binary = shutil.which("rtk")
+    settings = load_native_settings()
+    binary = shutil.which("rtk") if settings.rtk_enabled else None
     if binary is None:
         raise RuntimeError("rtk is unavailable; use the native shell tool")
     if (not isinstance(command, list) or not command or len(command) > 32
             or not all(isinstance(part, str) and part and len(part) <= 1_000 for part in command)
             or command[0] not in RTK_COMMANDS):
         raise ValueError("command must be an argument array beginning with an allowed RTK command")
-    settings = load_native_settings()
     telemetry = NativeTelemetry(enabled=settings.telemetry_enabled)
     context = telemetry_context or NativeContext(host="cli", project=directory)
     trace_id = "rtk-" + uuid.uuid4().hex[:20]
@@ -309,7 +332,8 @@ def rtk_run(command: list[str], *, directory: str | None = None,
                      trace_id=trace_id, metadata={"command": command[0], "argumentCount": len(command)})
     try:
         result = subprocess.run([binary, *command], cwd=_directory(directory),
-                                capture_output=True, text=True, timeout=30, check=False)
+                                capture_output=True, text=True, timeout=30, check=False,
+                                env=minimal_environment())
     except subprocess.TimeoutExpired as error:
         raise RuntimeError("rtk command exceeded 30 seconds") from error
     telemetry.record(kind="rtk", stage="executed", status="COMPLETED", context=context,
@@ -344,14 +368,93 @@ def image_generate(prompt: str, *, size: str | None = None,
     return result["structuredContent"]
 
 
+_SHARED_TOOL_NAMES = frozenset({"search_knowledge", "rtk_status", "rtk_run", "refresh_history",
+    "operational_decision", "operational_guard", "decision_capabilities", "image_generate"})
+
+
+def decision_capabilities(*, context: NativeContext | None = None,
+                          host_tools: list[str] | None = None) -> dict[str, Any]:
+    """Observe local callable capabilities without inferring native permissions.
+
+    Host tool inventory can only narrow Python-owned tools. Builtins and other
+    names from adapter JSON are explicitly unverified: they never become an
+    affirmative capability attestation. No paths, environments or credentials
+    appear in the returned snapshot or the evaluator's boolean capability map.
+    """
+    if host_tools is not None and (type(host_tools) is not list or len(host_tools) > 128
+            or any(type(name) is not str or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", name) for name in host_tools)):
+        raise ValueError("bounded host tool inventory required")
+    context = context or NativeContext()
+    settings = load_native_settings()
+    registered = _SHARED_TOOL_NAMES if host_tools is None else _SHARED_TOOL_NAMES.intersection(host_tools)
+    status = rtk_status(telemetry_context=context)
+    rtk_available = settings.rtk_enabled and status.get("available") is True and "rtk_run" in registered
+    capabilities = {"tool." + name: True for name in sorted(registered)}
+    capabilities["tool.search_knowledge"] = settings.retrieval_enabled and "search_knowledge" in registered
+    capabilities["tool.refresh_history"] = settings.retrieval_enabled and "refresh_history" in registered
+    capabilities["tool.rtk_run"] = rtk_available
+    supported_roots = sorted(set(status.get("supportedCommandRoots", [])).intersection(RTK_COMMANDS))
+    available_roots = set(status.get("availableCommandRoots", [])).intersection(supported_roots)
+    capabilities.update({"rtk." + name: rtk_available and name in available_roots
+                         for name in sorted(RTK_COMMANDS)})
+    # No native parallel/retry/network admission is supplied by this helper.
+    capabilities.update(parallel=False, retry_exact=False)
+    return {"capabilities": capabilities, "available_tools": sorted(registered),
+            "rtk": {"available": rtk_available, "status_checked": True,
+                    "command_executed": False, "supported_command_roots": supported_roots,
+                    "available_command_roots": sorted(available_roots)},
+            "retrieval": {"available": capabilities["tool.search_knowledge"],
+                          "scope": "existing_repository_branch_and_configured_origins",
+                          "max_results": MAX_RESULTS, "max_tokens": MAX_BUDGET},
+            "host": {"permissions": "native_host_authoritative", "network": "unknown",
+                     "authorization": "not_attested", "grants_permissions": False,
+                     "unverified_tools": sorted(set(host_tools or []) - _SHARED_TOOL_NAMES)}}
+
+
 def call(name: str, arguments: dict[str, Any], *, telemetry_context: NativeContext | None = None,
          decision_session: DecisionSession | None = None) -> dict[str, Any]:
     if not isinstance(arguments, dict):
         raise ValueError("tool arguments must be an object")
     clean, embedded_context = split_native_context(arguments)
     context = telemetry_context or embedded_context
+    host_tools = clean.pop("__quattro_host_tools", None)
+    if name == "observe_omp_session":
+        # Private supported-host hook, absent from the model/MCP tool inventory.
+        # Selection comes from the launcher's fixed environment, never arguments.
+        if clean or context.host != "omp":
+            raise ValueError("trusted OMP session-start metadata required")
+        from .omp_sessions import OMPSessionRegistry
+        from .herdr_runtime import HerdrSession
+        registry = OMPSessionRegistry(pathlib.Path(os.environ.get("QUATTRO_OMP_REGISTRY", "")))
+        registry.observe_native(os.environ.get("QUATTRO_OMP_LOGICAL_SESSION", ""),
+            socket=pathlib.Path(os.environ.get("QUATTRO_OMP_HERDR_SOCKET", "")),
+            directory=_directory(context.project),
+            handle=HerdrSession(os.environ.get("QUATTRO_OMP_HERDR_WORKSPACE", ""),
+                                os.environ.get("QUATTRO_OMP_HERDR_PANE", "")),
+            native_session_id=context.session_id)
+        return {"nativeIdentityObserved": True, "approvalGranted": False,
+                "coordinationSupported": False, "nativeRestartResumeSupported": False}
+    if name == "decision_capabilities":
+        if clean:
+            raise ValueError("capability discovery takes no model parameters")
+        return decision_capabilities(context=context, host_tools=host_tools)
+    def authored_capabilities(request: Any) -> dict[str, bool]:
+        from .decision_taxonomy import validate_request
+        try:
+            validate_request(request)
+        except (JevFailure, ValueError, TypeError):
+            return {}
+        return decision_capabilities(context=context, host_tools=host_tools)["capabilities"]
+
     if name == "operational_guard":
         from .operational_native import operational_call
+        if clean.get("operation") == "checkpoint":
+            envelope = clean.get("checkpoint")
+            authored = envelope.get("decision") if isinstance(envelope, dict) else None
+            if authored is None:
+                authored = clean.get("decision")
+            return operational_call(clean, context=context, decision_session=decision_session,
+                                    capabilities=authored_capabilities(authored))
         return operational_call(clean, context=context, decision_session=decision_session)
     if name == "search_knowledge":
         from .operational_native import operational_call, operational_enabled
@@ -386,10 +489,10 @@ def call(name: str, arguments: dict[str, Any], *, telemetry_context: NativeConte
                               directory=clean.get("directory"))
     if name == "refresh_history":
         return refresh_history(directory=clean.get("directory"), telemetry_context=context)
-    if name == "operational_decision":
-        return native_jev_advice(clean, context=context, decision_session=decision_session)
-    if name == "jev_advice":
-        return native_jev_advice(clean, context=context, decision_session=decision_session)
+    if name in {"operational_decision", "jev_advice"}:
+        capabilities = authored_capabilities(clean)
+        return native_jev_advice(clean, context=context, decision_session=decision_session,
+                                 capabilities=capabilities)
     if name == "native_event":
         return native_event(arguments)
     raise ValueError(f"unknown shared intelligence tool: {name}")
@@ -401,7 +504,7 @@ def cli_main() -> int:
     parser.add_argument("--server", action="store_true",
                         help="serve bounded JSON-line requests for one native session")
     parser.add_argument("name", choices=("search_knowledge", "rtk_status", "rtk_run", "image_generate",
-                                         "refresh_history", "jev_advice", "native_event", "operational_decision", "operational_guard"),
+                                         "refresh_history", "jev_advice", "native_event", "operational_decision", "operational_guard", "decision_capabilities"),
                         nargs="?")
     parser.add_argument("arguments", nargs="?", default="{}")
     args = parser.parse_args()
@@ -434,14 +537,17 @@ def server_main() -> int:
             # Native calls still fail open through their normal settings and
             # credential checks.  Do not make helper startup a hard dependency.
             decision_session = None
-        for line in sys.stdin:
+        while True:
+            line = sys.stdin.readline(128 * 1024 + 1)
+            if not line:
+                break
             if len(line.encode("utf-8", "replace")) > 128 * 1024:
                 response = {"id": None, "error": "request too large"}
                 print(json.dumps(response, separators=(",", ":")), flush=True)
-                continue
+                break  # Never reinterpret a truncated frame as another call.
             envelope: Any = None
             try:
-                envelope = json.loads(line)
+                envelope = decode(line)
                 if not isinstance(envelope, dict):
                     raise ValueError("request must be an object")
                 name = envelope.get("name")
