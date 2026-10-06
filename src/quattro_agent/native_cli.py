@@ -9,14 +9,17 @@ import re
 import shutil
 import uuid
 import tomllib
-from typing import Any
+from typing import Any, Mapping
+import sys
 
 from .native_intelligence import (
     NativeContext, NativeTelemetry, credential_status, host_version,
     load_native_settings, native_jev_advice, native_telemetry_path,
     write_native_settings,
 )
-from .shared_intelligence import rtk_status, search_knowledge
+from .shared_intelligence import rtk_status, search_knowledge, decision_capabilities
+from .decision_taxonomy import DYNAMIC_SCHEMA_VERSION, MAX_REQUEST_BYTES, validate_request
+from .jev import decode
 from .paths import xdg_config_home
 
 
@@ -119,7 +122,8 @@ def native_status() -> dict[str, Any]:
             "configPath": str(settings.path) if settings else str(xdg_config_home() / "quattro/native-intelligence.json"),
             "configured": bool(settings and settings.configured),
             "enabled": settings.enabled if settings else False,
-            "categories": list(settings.categories) if settings else [],
+            "decisionSchema": DYNAMIC_SCHEMA_VERSION,
+            "legacyCategoriesIgnored": bool(settings and settings.legacy_categories_ignored),
             "timeoutMs": settings.timeout_ms if settings else None,
             "credential": credential_status(),
             "fallbackCondition": config_error or ("missing_credential" if credential_status() == "missing" else None),
@@ -169,37 +173,50 @@ def native_trace(session_id: str, *, limit: int = 100,
             "note": "Delivery/application is UNKNOWN or UNVERIFIED unless a native host boundary recorded it; model reliance is never inferred."}
 
 
-def native_probe(directory: str | None, query: str | None) -> dict[str, Any]:
-    """Explicit diagnostic activity, kept out of ordinary counters."""
+def read_authored_decision(stream: Any) -> dict[str, Any]:
+    """Read one bounded private JSON envelope; never persist or echo input."""
+    raw = stream.read(MAX_REQUEST_BYTES + 1)
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8")
+    if len(raw) > MAX_REQUEST_BYTES:
+        raise ValueError("authored decision exceeds limit")
+    try:
+        value = decode(raw)
+        return validate_request(value)
+    except Exception:
+        raise ValueError("invalid authored decision") from None
+
+
+def native_probe(directory: str | None, query: str | None = None, *,
+                 decision: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Probe only an explicitly supplied authored decision, once, privately."""
+    if decision is None:
+        return {"schemaVersion": 2, "diagnostic": True, "excludedFromOrdinaryUse": True,
+                "status": "skipped", "reason": "native_authoring_required",
+                "providerRequested": False}
+    try:
+        request = validate_request(dict(decision))
+    except Exception:
+        return {"schemaVersion": 2, "diagnostic": True, "status": "invalid",
+                "reason": "invalid_authored_decision", "providerRequested": False}
     root = str(Path(directory or os.getcwd()).expanduser().resolve())
     session_id = "probe-" + uuid.uuid4().hex[:16]
     context = NativeContext(host="probe", session_id=session_id, project=root, diagnostic=True)
     telemetry = NativeTelemetry(enabled=True)
-    request = {
-        "decision_type": "context_strategy",
-        "available_actions": ["inspect", "retrieve", "sufficient", "agent"],
-        "relevant_context": {
-            "repository_required": True, "modification_required": False,
-            "retrieval_required": True, "multi_step_required": True,
-            "verification_required": False, "context_missing": True,
-            "independent_steps": False, "tests_available": False,
-            "changes_present": False,
-        },
-        "hard_constraints": {"retry_allowed": False, "parallel_allowed": False,
-                              "retrieval_allowed": True},
-        "execution_state": {"revision": 0, "phase": "inspection", "attempt": 0},
-        "previous_result": "none",
-    }
-    jev = native_jev_advice(request, context=context, telemetry=telemetry)
-    retrieval = search_knowledge(query or "native intelligence diagnostic retrieval probe",
-                                 directory=root, budget=2_000, limit=3,
-                                 telemetry_context=context)
+    # The helper's own capabilities are observed separately from author input.
+    snapshot = decision_capabilities(context=context)
+    jev = native_jev_advice(request, context=context, telemetry=telemetry,
+                           cacheable=False, capabilities=snapshot["capabilities"])
+    retrieval = search_knowledge(query, directory=root, budget=2_000, limit=3,
+                                 telemetry_context=context) if query else {"status": "not_requested"}
     rtk = rtk_status(telemetry_context=context)
     return {
-        "schemaVersion": 1, "diagnostic": True, "excludedFromOrdinaryUse": True,
+        "schemaVersion": 2, "diagnostic": True, "excludedFromOrdinaryUse": True,
         "sessionId": session_id,
-        "jev": {key: jev.get(key) for key in ("selected_action", "confidence", "evidence", "fallback_required", "traceId", "usageEvidence")},
-        "retrieval": {key: retrieval.get(key) for key in ("route", "retrievedTokens", "memory", "episodic", "indexPartial", "usageEvidence")},
+        # Authored ids/descriptions/questions and provider bodies never become
+        # command output. A selected safety effect remains bounded evidence.
+        "jev": {key: jev.get(key) for key in ("selected_effect", "confidence", "evidence", "fallback_required", "traceId", "usageEvidence")},
+        "retrieval": {key: retrieval.get(key) for key in ("status", "route", "retrievedTokens", "memory", "episodic", "indexPartial", "usageEvidence")},
         "rtk": {key: rtk.get(key) for key in ("available", "version", "reason", "usageEvidence")},
     }
 
@@ -213,7 +230,10 @@ def native_command(args: Any) -> int:
         value = native_trace(args.session, limit=args.limit,
                              include_diagnostics=args.include_diagnostics)
     elif args.action == "probe":
-        value = native_probe(args.directory, args.query)
+        authored = None
+        if getattr(args, "decision_stdin", False):
+            authored = read_authored_decision(getattr(sys.stdin, "buffer", sys.stdin))
+        value = native_probe(args.directory, args.query, decision=authored)
     elif args.action == "set":
         if args.jev is None:
             raise ValueError("native set requires --jev on|off")

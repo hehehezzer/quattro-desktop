@@ -11,9 +11,9 @@ import time
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from quattro_agent.jev import JevClient, JevFailure, MAX_RESPONSE_BYTES, decode, serialize_state
+from quattro_agent.jev import JevClient, JevFailure, MAX_RESPONSE_BYTES, MAX_REQUEST_BODY_BYTES, decode
 from quattro_agent.provider_access import resolve_typesafe_credential
-from benchmark_jev_live import distribution
+from benchmark_jev_live import distribution, read_authored_decisions
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -38,6 +38,8 @@ class ExperimentalClient(JevClient):
             self.connection.connect()
             self.connect_ms.append((time.perf_counter() - started) * 1000)
         data = None if payload is None else json.dumps(payload, allow_nan=False).encode()
+        if data is not None and len(data) > MAX_REQUEST_BODY_BYTES:
+            raise JevFailure('invalid_state')
         self.connection.request('GET' if data is None else 'POST', path, body=data,
             headers={'Authorization': 'Bearer ' + self._key, 'Content-Type': 'application/json'})
         with self.connection.getresponse() as response:
@@ -52,19 +54,20 @@ class ExperimentalClient(JevClient):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--samples', type=int, choices=range(10, 51), default=10)
-    args = parser.parse_args()
+    parser.add_argument('--decisions-stdin', action='store_true', required=True,
+                        help='read an authored v2 envelope or bounded JSON array from private stdin')
+    parser.parse_args()
+    decisions = read_authored_decisions(getattr(sys.stdin, "buffer", sys.stdin))
     key = resolve_typesafe_credential()
     if not key:
         raise JevFailure('missing_credential')
-    state = serialize_state('Debug the repository regression and reproduce the root cause')
     session = ExperimentalClient(key)
     rows = {name: [] for name in ('urllib_fresh', 'https_per_turn', 'https_session')}
     try:
-        for index in range(args.samples):
+        for index, state in enumerate(decisions):
             order = list(rows)
             order = order[index % 3:] + order[:index % 3]
-            for mode in order:
+            for mode in order[:1]:
                 client = JevClient(key, 3, opener=urllib.request.build_opener(
                     urllib.request.ProxyHandler({}), NoRedirect(),
                 )) if mode == 'urllib_fresh' else (
@@ -89,7 +92,9 @@ def main():
     finally:
         session.close()
     print(json.dumps({
-        'measurement': 'LIVE transport-only; catalog verified every evaluation; no execution calls',
+        'measurement': 'LIVE authored transport-only; each envelope evaluated once; no execution calls',
+        'provider_retries': 0, 'authored_decisions': len(decisions),
+        'allocation': 'round-robin transport per authored envelope',
         'dns_tcp_tls': 'combined connect measurement; phases not separately attributed',
         'modes': {name: {
             **{metric: distribution([row[metric] for row in samples])

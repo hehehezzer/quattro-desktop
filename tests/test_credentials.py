@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -121,33 +122,60 @@ class CredentialTests(unittest.TestCase):
         self.assertNotIn(self.secret, out.getvalue())
 
     def test_persistent_key_only_crosses_worker_pipe_not_env_or_telemetry(self):
-        from quattro_agent.jev_shadow import ShadowRun
-        from test_jev import FakeProcess
+        from quattro_agent.decision_service import DecisionSession
+        from quattro_agent.native_intelligence import NativeContext, NativeSettings, NativeTelemetry, native_jev_advice
+        from test_decision_plane import WORKER, request
         parent = self
+        processes, setup_seen = [], []
 
-        class Process(FakeProcess):
-            def __init__(self, argv, **kwargs):
-                parent.assertNotIn(parent.secret, json.dumps([argv, kwargs["env"]]))
-                super().__init__()
+        class PrivatePipe:
+            def __init__(self, stream):
+                self.stream = stream
+                self.first = True
 
-            def communicate(self, payload, **kwargs):
-                parent.assertEqual(json.loads(payload)["key"], parent.secret)
-                return super().communicate(payload, **kwargs)
+            def write(self, payload):
+                if self.first:
+                    self.first = False
+                    parent.assertEqual(json.loads(payload)["key"], parent.secret)
+                    setup_seen.append(True)
+                else:
+                    parent.assertNotIn(parent.secret.encode(), payload)
+                return self.stream.write(payload)
+
+            def flush(self):
+                return self.stream.flush()
+
+            def close(self):
+                return self.stream.close()
+
+        def popen(argv, **kwargs):
+            parent.assertNotIn(parent.secret, json.dumps([argv, kwargs["env"]]))
+            parent.assertNotIn("QUATTRO_PRIVATE_FIXTURE", kwargs["env"])
+            code = WORKER.replace("DELAY", "0").replace("CONFIDENCE", ".99")
+            process = subprocess.Popen([sys.executable, "-c", code], **kwargs)
+            process.stdin = PrivatePipe(process.stdin)
+            processes.append(process)
+            return process
 
         environment = dict(os.environ)
         environment.pop("TYPESAFE_API_KEY", None)
+        environment["QUATTRO_PRIVATE_FIXTURE"] = self.secret
         database = self.root / "evidence.sqlite3"
         with mock.patch.dict(os.environ, environment, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()) as out, \
                 contextlib.redirect_stderr(io.StringIO()) as err:
-            run = ShadowRun(database=database, request="hello", decision="DIRECT",
-                            record_id=None, source_task_id=None, authoritative_tier="FAST",
-                            timeout_ms=300, popen=Process)
-            run.start()
-            self.assertTrue(run.done.wait(2))
-            run.close()
-        self.assertEqual(run.record["status"], "success")
-        self.assertNotIn(self.secret, json.dumps(run.record))
+            session = DecisionSession(mode="COOPERATIVE", timeout_ms=1000, popen=popen)
+            self.addCleanup(session.close)
+            result = native_jev_advice(request(), context=NativeContext(host="pi", session_id="fixture"),
+                                      settings=NativeSettings(), telemetry=NativeTelemetry(database),
+                                      decision_session=session)
+            session.close()
+        self.assertFalse(result["fallback_required"])
+        self.assertEqual(setup_seen, [True])
+        self.assertEqual(len(processes), 1)
+        self.assertIsNotNone(processes[0].poll())
+        self.assertNotIn(self.secret, json.dumps(session.snapshot()))
+        self.assertNotIn(self.secret, json.dumps(result))
         self.assertNotIn(self.secret.encode(), database.read_bytes())
         self.assertNotIn(self.secret, out.getvalue() + err.getvalue())
 

@@ -17,7 +17,6 @@ from collections.abc import Callable, Mapping, Sequence
 from .delegation import TaskDelegationDecision, classify_task_request
 from .intelligence.features import extract_decision_features, SAFE_FEATURES
 from .intelligence.telemetry import sanitize_request, redact_request_credentials
-from .jev import serialize_features
 from .jev_shadow import annotate, current_evidence
 from .model_registry import (
     ExecutionPlan, ModelTarget, build_execution_plan, execution_target_for_route,
@@ -28,7 +27,7 @@ from .routing_intelligence import (
     ContextProfile, RoutingTierName, profile_task, task_profile_from_dict,
     make_pre_routing_input,
 )
-from .routing_signals import classify_with_signals, start_signal_run
+from .routing_signals import classify_with_signals
 from .errors import ConfigError
 
 CREDENTIAL_RESPONSE = (
@@ -72,7 +71,6 @@ class TurnRoutingFeatures:
     """Immutable local state. Classifiers see only the allowlisted projections."""
     request: str = field(repr=False)
     local_json: str = field(repr=False)
-    state_json: str
     profile_json: str
     gate: TaskDelegationDecision
     sensitive: bool
@@ -119,7 +117,6 @@ def extract_turn_features(request: str, *, agent="codex", workflow="general-task
     )
     return TurnRoutingFeatures(
         request, json.dumps(model_input, sort_keys=True, separators=(",", ":")),
-        serialize_features(requirements, request=safe),
         json.dumps(profile.to_dict(), sort_keys=True, separators=(",", ":")),
         gate, sensitive, lookup, (time.perf_counter() - started) * 1000,
     )
@@ -212,17 +209,9 @@ def route_turn(*, request: str, config: Mapping, registry: Sequence[ModelTarget]
     elif profile.complexity.value == "low":
         guard = "conclusive_requirements"
     guard_ms = (time.perf_counter() - guard_started) * 1000
-    # The canonical projection and privacy guards are ready. Launch before
-    # account/health/capability preparation; a failed attempt must not be retried
-    # at fusion. The existing turn scope retains cancellation ownership.
-    try:
-        run = start_signal_run(
-            config=config, database=database, execution=decision.decision,
-            state=features.state_json, baseline=baseline,
-            manual=selected_model != "auto", eligible=guard == "eligible",
-        )
-    except Exception:
-        run = None
+    # Bootstrap is host-owned and locks an approved initial model. Contextual
+    # Jev questions are authored by that native model at operational milestones;
+    # no historical fixed questionnaire runs before it has started execution.
     annotate(local_preparation_started=time.perf_counter())
     accounts = (frozenset(str(row["id"]) for row in config["accounts"] if row.get("enabled", True))
                 if "accounts" in config else frozenset({account}))
@@ -253,7 +242,7 @@ def route_turn(*, request: str, config: Mapping, registry: Sequence[ModelTarget]
             return bool(select(proposed))
         except (ConfigError, ValueError):
             return False
-    # Prepare the local candidate while Jev is in flight. Cache only successful
+    # Prepare the local candidate. Cache only successful
     # selections for this immutable runtime snapshot; preserve ordinary errors
     # at final selection and still permit a valid fused profile to be checked.
     preparation_started = time.perf_counter()
@@ -266,7 +255,7 @@ def route_turn(*, request: str, config: Mapping, registry: Sequence[ModelTarget]
             agent=agent, workflow=workflow, policy_name=policy_name,
         ), config=config, database=database, execution=decision.decision,
         baseline_override=baseline, can_select=available,
-        canonical_features=features, eligible=guard == "eligible", speculative_run=(run,),
+        canonical_features=features, eligible=guard == "eligible",
     )
     selection_started = time.perf_counter()
     target = select(final)

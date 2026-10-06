@@ -10,7 +10,7 @@ export default function quattroRecovery(pi: ExtensionAPI) {
   if (process.env.QUATTRO_TEST_ALLOWED !== "1") return;
   pi.registerTool({
     name: "quattro_test", label: "Quattro test",
-    description: "Run one unit test file in tests/. Supply test_flaky.py or tests/test_flaky.py, never an absolute path. Quattro may run one bounded retry within policy.",
+    description: "Run one unit test file in tests/. Supply test_flaky.py or tests/test_flaky.py, never an absolute path. Run one bounded invocation; failures return to the native model for a decision-specific follow-up.",
     promptSnippet: "Use quattro_test to run an existing tests/test_*.py file when validating work.",
     parameters: Type.Object({ test_file: Type.String({ pattern: "^(tests/)?test_[A-Za-z0-9_]{1,60}\\.py$" }) }),
     async execute(_id, params, signal) {

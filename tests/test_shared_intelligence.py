@@ -60,31 +60,24 @@ class SharedIntelligenceTests(unittest.TestCase):
 
     def test_mcp_discovers_only_shared_tools(self) -> None:
         names = {item["name"] for item in handle({"id": 1, "method": "tools/list"})["result"]["tools"]}
-        self.assertEqual(names, {"search_knowledge", "rtk_status", "rtk_run", "refresh_history", "operational_decision", "operational_guard"})
+        self.assertEqual(names, {"search_knowledge", "rtk_status", "rtk_run", "refresh_history", "operational_decision", "operational_guard", "decision_capabilities"})
         self.assertFalse(any("route" in name or "delegate" in name for name in names))
         response = handle({"id": 2, "method": "tools/call",
                            "params": {"name": "search_knowledge", "arguments": {"query": "what is 2 times 3"}}})
         self.assertEqual(json.loads(response["result"]["content"][0]["text"])["retrievedTokens"], 0)
 
-    def test_mcp_jev_schema_matches_category_action_sets(self) -> None:
+    def test_mcp_jev_schema_exposes_model_authored_content(self) -> None:
+        from quattro_agent.decision_taxonomy import dynamic_schema
         tool = next(item for item in TOOLS if item["name"] == "operational_decision")
-        schema = tool["inputSchema"]
-        actions = set(schema["properties"]["available_actions"]["items"]["enum"])
-        self.assertEqual(actions, {action for values in (
-            {"inspect", "retrieve", "sufficient", "agent"},
-            {"sequential", "parallel", "agent"},
-            {"targeted_first", "broad_first", "agent"},
-            {"retry", "change_strategy", "agent"},
-            {"continue", "validate", "more_context", "agent"},
-        ) for action in values})
-        self.assertIn("validation_strategy=[targeted_first,broad_first,agent]", tool["description"])
-        context = schema["properties"]["relevant_context"]["properties"]
-        self.assertEqual(set(context), {
-            "repository_required", "modification_required", "retrieval_required",
-            "multi_step_required", "verification_required", "context_missing",
-            "independent_steps", "tests_available", "changes_present",
-        })
-        self.assertNotIn("initial_complexity", context)
+        self.assertEqual(tool["inputSchema"], dynamic_schema())
+        properties = tool["inputSchema"]["properties"]
+        self.assertNotIn("decision_type", properties)
+        self.assertNotIn("available_actions", properties)
+        self.assertNotIn("enum", properties["decision_id"])
+        self.assertIn("question", properties)
+        self.assertIn("context", properties)
+        self.assertIn("options", properties)
+        self.assertIn("author", tool["description"].lower())
 
     def test_native_helper_server_reuses_one_decision_session(self) -> None:
         class FakeSession:

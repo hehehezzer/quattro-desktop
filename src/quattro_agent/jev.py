@@ -12,40 +12,11 @@ import urllib.request
 from collections.abc import Mapping
 from typing import Any
 
-SCHEMA_VERSION = "quattro-jev-routing-v1"
+SCHEMA_VERSION = "quattro-jev-decisions-v2"
 MODEL = "jev-latest"
 BASE_URL = "https://api.typesafe.ai"
 MAX_RESPONSE_BYTES = 32_768
-# Frozen v1 wire vocabulary (not the broader training/probe vocabulary).
-TASK_CATEGORIES = frozenset({
-    "repository_modification", "repository_verification", "repository_inspection",
-    "current_information_research", "external_research", "implementation", "verification",
-    "tool_execution", "summarization", "drafting", "comparison", "reasoning", "explanation", "general",
-})
-FLAGS = (
-    "repository_required", "modification_required", "tool_required",
-    "retrieval_required", "current_information_required", "execution_required",
-    "multi_step_required", "verification_required",
-    "frontend", "security_sensitive", "debugging", "review",
-)
-CHOICES = {
-    "execution": {"DIRECT": "Answer without external actions or retrieval.",
-                  "DELEGATE": "Requires tools, repository work, retrieval or verification."},
-    "complexity": {"LOW": "Simple single-step task.", "MEDIUM": "Bounded multi-step task.",
-                   "HIGH": "Complex interacting requirements."},
-    "task_type": {name: None for name in (
-        "CODING", "RESEARCH", "GENERAL", "REASONING", "FRONTEND", "DEBUGGING", "REVIEW", "OTHER",
-    )},
-    "capability": {"CHEAP": "Minimal capability suffices.",
-                     "STANDARD": "Normal engineering capability needed.",
-                     "STRONG": "Strong reasoning capability needed.",
-                     "FRONTIER": "Exceptional reasoning capability needed."},
-}
-QUESTIONS = {
-    name: {"type": "choice", "instructions": f"Classify {name} from the requirement signals only.",
-           "criteria": criteria}
-    for name, criteria in CHOICES.items()
-}
+MAX_REQUEST_BODY_BYTES = 16_384
 
 
 class JevFailure(Exception):
@@ -54,45 +25,6 @@ class JevFailure(Exception):
     def __init__(self, category: str):
         super().__init__(category)
         self.category = category
-
-
-def serialize_state(request: str) -> str:
-    """Discard text entirely; derive only bounded pre-decision requirement signals."""
-    from .intelligence.features import extract_decision_features
-
-    return serialize_features(extract_decision_features(request[:32_000]), request=request)
-
-
-def serialize_features(requirements: Mapping[str, Any], *, request: str) -> str:
-    """Project the canonical extraction without re-running requirement analysis."""
-    text = request[:32_000]
-    features = dict(requirements)
-    features.update({name: bool(re.search(pattern, text, re.IGNORECASE)) for name, pattern in {
-        "frontend": r"\b(?:frontend|front-end|css|html|ui|ux|react|accessibility)\b",
-        "security_sensitive": r"\b(?:security|credentials?|authentication|authorization|secrets?)\b",
-        "debugging": r"\b(?:debug|debugging|reproduce|root cause|regression)\b",
-        "review": r"\b(?:review|audit|inspect)\b",
-    }.items()})
-    return json.dumps({
-        "schema_version": SCHEMA_VERSION,
-        **{name: features[name] for name in FLAGS},
-        "complexity": features["complexity"],
-        "category": features["category"],
-        "task_category": features["task_category"],
-    }, sort_keys=True, separators=(",", ":"), allow_nan=False)
-
-
-def validate_state(state: Any) -> None:
-    expected = {"schema_version", *FLAGS, "complexity", "category", "task_category"}
-    if not isinstance(state, dict) or set(state) != expected:
-        raise JevFailure("invalid_state")
-    if (state["schema_version"] != SCHEMA_VERSION
-            or any(type(state[name]) is not bool for name in FLAGS)
-            or state["complexity"] not in ("low", "medium", "high")
-            or state["category"] not in ("general", "coding", "research", "reasoning")
-            or not isinstance(state["task_category"], str)
-            or state["task_category"] not in TASK_CATEGORIES):
-        raise JevFailure("invalid_state")
 
 
 def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -105,17 +37,23 @@ def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def decode(data: bytes) -> Any:
+    def reject_constant(_value: str) -> None:
+        raise JevFailure("invalid_json")
     try:
-        return json.loads(data, object_pairs_hook=_pairs)
-    except (ValueError, UnicodeError):
+        return json.loads(data, object_pairs_hook=_pairs, parse_constant=reject_constant)
+    except (ValueError, UnicodeError, RecursionError, OverflowError):
         raise JevFailure("invalid_json") from None
 
 
 def _probability(value: Any) -> bool:
-    return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1
+    return type(value) in (int, float) and 0 <= value <= 1 and math.isfinite(value)
 
 
-def validate_response(body: Any, choices: Mapping[str, Any] = CHOICES) -> dict[str, Any]:
+def validate_response(body: Any, choices: Mapping[str, Any]) -> dict[str, Any]:
+    if (not isinstance(choices, Mapping) or not choices
+            or any(not isinstance(vocabulary, Mapping) or not 2 <= len(vocabulary) <= 8
+                   for vocabulary in choices.values())):
+        raise JevFailure("schema_mismatch")
     if not isinstance(body, dict) or set(body) != {"model", "answers", "usage"}:
         raise JevFailure("schema_mismatch")
     model = body["model"]
@@ -174,6 +112,8 @@ class JevClient:
             payload, sort_keys=True, separators=(",", ":"), allow_nan=False,
         ).encode()
         if data is not None:
+            if len(data) > MAX_REQUEST_BODY_BYTES:
+                raise JevFailure("invalid_state")
             self.timings["request_body_bytes"] = len(data)
         request = urllib.request.Request(
             BASE_URL + path, data=data,
@@ -209,18 +149,34 @@ class JevClient:
             raise JevFailure("response_too_large")
         return decode(raw)
 
-    def evaluate(self, state_json: str) -> dict[str, Any]:
-        state = decode(state_json.encode())
-        validate_state(state)
-        return self.evaluate_questions(state, QUESTIONS)
+    def evaluate(self, request: Mapping[str, Any], *, reuse_catalog: bool = False,
+                 verify_catalog: bool = True) -> dict[str, Any]:
+        """Evaluate only an authored dynamic envelope; legacy routing is rejected."""
+        if __package__:
+            from .decision_taxonomy import question, validate_dynamic_request
+        else:
+            from decision_taxonomy import question, validate_dynamic_request
+        validated = validate_dynamic_request(request)
+        return self.evaluate_questions(validated, question(validated), reuse_catalog=reuse_catalog,
+                                       verify_catalog=verify_catalog)
+
+    def evaluate_dynamic(self, request: Mapping[str, Any], *, reuse_catalog: bool = False,
+                         verify_catalog: bool = True) -> dict[str, Any]:
+        return self.evaluate(request, reuse_catalog=reuse_catalog, verify_catalog=verify_catalog)
 
     def evaluate_questions(self, state: Mapping[str, Any], questions: Mapping[str, Any],
                            *, reuse_catalog: bool = False, verify_catalog: bool = True) -> dict[str, Any]:
-        """Use the native named-choice API; callers validate their own state schema.
-
-        Initial routing retains per-call catalog verification. A lifecycle-owned
-        session can explicitly reuse its verified catalog until the client closes.
-        """
+        """Use the authored native Choice contract with no raw-state bypass."""
+        if __package__:
+            from .decision_taxonomy import question, validate_dynamic_request
+        else:
+            from decision_taxonomy import question, validate_dynamic_request
+        validated = validate_dynamic_request(state)
+        state = decode(json.dumps(validated, sort_keys=True, separators=(",", ":"), allow_nan=False).encode())
+        expected_questions = question(state)
+        if questions != expected_questions:
+            raise JevFailure("invalid_state")
+        questions = expected_questions
         catalog = None
         if verify_catalog:
             start = time.perf_counter()

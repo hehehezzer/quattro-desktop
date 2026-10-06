@@ -15,12 +15,17 @@ from quattro_agent.native_cli import native_status
 
 def request() -> dict:
     return {
-        "decision_type": "context_strategy",
-        "available_actions": ["inspect", "retrieve", "sufficient", "agent"],
-        "relevant_context": {"repository_required": True, "context_missing": True},
+        "schema_version": "quattro-jev-decisions-v2",
+        "decision_id": "inspection_evidence_gap",
+        "question": "Should narrowly relevant inspection precede further implementation?",
+        "options": [
+            {"id": "narrow_inspection", "description": "Inspect narrowly relevant repository evidence before further work.", "effect": "inspect"},
+            {"id": "native_reasoning", "description": "Use native semantic reasoning when evidence does not support inspection.", "effect": "agent"},
+        ],
+        "context": {"evidence_missing": True, "inspection_count": 0},
         "hard_constraints": {"retry_allowed": False, "parallel_allowed": False,
                               "retrieval_allowed": True},
-        "execution_state": {"revision": 0, "phase": "inspection", "attempt": 0},
+        "execution_state": {"revision": 0, "phase": "evidence_gathering", "attempt": 0},
         "previous_result": "none",
     }
 
@@ -38,15 +43,13 @@ class NativeIntelligenceTests(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         self.addCleanup(self.temporary.cleanup)
 
-    def test_trivial_admission_never_constructs_jev_session(self) -> None:
+    def test_missing_authoring_never_constructs_jev_session(self) -> None:
         native.write_native_settings(enabled=True)
-        value = dict(request())
-        value["relevant_context"] = {}
         with mock.patch.object(native, "DecisionSession") as session:
             result = native.native_jev_advice(
-                value, context=native.NativeContext(host="pi", session_id="trivial"),
+                {}, context=native.NativeContext(host="pi", session_id="unauthored"),
             )
-        self.assertEqual(result["evidence"], "trivial")
+        self.assertEqual(result["evidence"], "invalid_state")
         session.assert_not_called()
 
     def test_explicit_off_is_fail_open_and_persisted(self) -> None:
@@ -72,9 +75,9 @@ class NativeIntelligenceTests(unittest.TestCase):
             def decide(self, _request, **_kwargs):
                 self.counts["calls"] += 1
                 return {
-                    "selected_action": "retrieve", "confidence": 0.98,
-                    "evidence": "native_choice_probabilities", "fallback_required": False,
-                    "probabilities": {"retrieve": 0.98, "agent": 0.02},
+                    "selected_action": "narrow_inspection", "selected_effect": "inspect", "confidence": 0.98,
+                    "evidence": "native_choice_probabilities", "fallback_required": False, "called": True,
+                    "probabilities": {"narrow_inspection": 0.98, "native_reasoning": 0.02},
                     "timing": {"worker_roundtrip_ms": 12.0},
                 }
 
@@ -85,7 +88,7 @@ class NativeIntelligenceTests(unittest.TestCase):
                                        project="/private/project", turn_id="3")
         with mock.patch.object(native, "DecisionSession", FakeSession):
             result = native.native_jev_advice(request(), context=context)
-        self.assertEqual(result["selected_action"], "retrieve")
+        self.assertEqual(result["selected_action"], "narrow_inspection")
         self.assertEqual(result["usageEvidence"]["providerResponse"], "RECEIVED")
         events = native.NativeTelemetry().trace("session-1")
         self.assertEqual({event["stage"] for event in events}, {
@@ -110,8 +113,8 @@ class NativeIntelligenceTests(unittest.TestCase):
                 self.counts["calls"] += 1
                 return {
                     "selected_action": None, "confidence": 0.49,
-                    "evidence": "uncertain", "fallback_required": True,
-                    "probabilities": {"retrieve": 0.51, "agent": 0.49},
+                    "evidence": "uncertain", "fallback_required": True, "called": True,
+                    "probabilities": {"narrow_inspection": 0.51, "native_reasoning": 0.49},
                     "timing": {"worker_roundtrip_ms": 12.0},
                 }
 
@@ -126,38 +129,25 @@ class NativeIntelligenceTests(unittest.TestCase):
         rejected = next(event for event in events if event["stage"] == "rejected")
         self.assertEqual(rejected["metadata"]["fallbackReason"], "uncertain")
 
-    def test_native_boundary_adds_only_missing_agent_fallback(self) -> None:
-        native.write_native_settings(enabled=True)
+    def test_native_boundary_rejects_missing_authored_fallback(self) -> None:
         value = request()
-        value["available_actions"] = ["inspect", "retrieve"]
-        received_actions = []
+        value["options"] = [value["options"][0], {
+            "id": "wait_for_evidence", "description": "Wait for additional evidence before continuing.", "effect": "advise"}]
+        with mock.patch.object(native, "DecisionSession") as session:
+            result = native.native_jev_advice(value)
+        self.assertTrue(result["fallback_required"])
+        self.assertEqual(result["evidence"], "invalid_state")
+        session.assert_not_called()
 
-        class FakeSession:
-            def __init__(self, **_kwargs):
-                self.counts = {"calls": 0}
-
-            def snapshot(self):
-                return {"counts": dict(self.counts)}
-
-            def decide(self, received, **_kwargs):
-                self.counts["calls"] += 1
-                received_actions.append(received["available_actions"])
-                return {
-                    "selected_action": "inspect", "confidence": 0.9,
-                    "evidence": "native_choice_probabilities", "fallback_required": False,
-                    "timing": {"worker_roundtrip_ms": 1.0},
-                }
-
-            def close(self):
-                return None
-
-        with mock.patch.object(native, "DecisionSession", FakeSession):
-            result = native.native_jev_advice(
-                value, context=native.NativeContext(host="codex", session_id="normalized"),
-            )
-        self.assertTrue(result["usageEvidence"]["requested"])
-        self.assertEqual(result["usageEvidence"]["requestNormalized"], "agent_fallback_added")
-        self.assertEqual(received_actions, [["inspect", "retrieve", "agent"]])
+    def test_obsolete_category_configuration_is_ignored_and_removed_on_write(self):
+        path = Path(os.environ["QUATTRO_NATIVE_INTELLIGENCE_CONFIG"])
+        path.write_text(json.dumps({"enabled": True, "categories": ["old_category"], "checkpointsEnabled": False}))
+        self.assertTrue(native.load_native_settings().legacy_categories_ignored)
+        native.write_native_settings(enabled=False)
+        value = json.loads(path.read_text())
+        self.assertNotIn("categories", value)
+        self.assertFalse(value["checkpointsEnabled"])
+        self.assertEqual(value["schemaVersion"], 2)
 
     def test_passive_status_does_not_create_telemetry(self) -> None:
         native.write_native_settings(enabled=True)

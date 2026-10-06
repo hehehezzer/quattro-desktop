@@ -18,53 +18,59 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from quattro_agent.decision_service import DecisionSession
-from quattro_agent.decision_taxonomy import ACTIONS, CONTEXT_FLAGS, CONTEXT_CATEGORIES
+from quattro_agent.decision_taxonomy import dynamic_schema
+from quattro_agent.jev import decode
 from quattro_agent.recovering_test import recovering_test
 
 
 DESCRIPTION = (
-    "Prefer this fast decision service over lengthy model deliberation for routine "
-    "context, sequencing/parallelization, test-order, retry, and continue-versus-validate "
-    "choices at meaningful execution milestones. Not for every tool call. Pass only "
-    "categorical signals, never prompt text, code, paths, tool output, or secrets. "
-    "Increment revision whenever execution evidence changes. Use agent reasoning on "
-    "fallback_required, ambiguous semantic choices, architecture, or debugging. "
-    "The selected action is advice: Quattro permissions, user constraints, budgets, "
-    "hard retry limits and mandatory validation always win. This tool cannot select "
-    "models, authorize actions, certify validation, or complete a task."
+    "Author the question, option ids/descriptions and relevant abstract context for "
+    "the actual development decision, then call operational_decision. At substantive "
+    "planning, tool/RTK choice, context, verification and next-action milestones, "
+    "refresh decision_capabilities first and create a new decision when evidence "
+    "changes. Options are 2..8 model-authored alternatives with exactly one effect "
+    "agent fallback. Effect names are transport safety mappings, not a question "
+    "catalog. Use capability ids returned by the host for capability-bearing options. "
+    "Pass only abstract prose and scalar evidence: no prompts, source, paths, "
+    "commands, outputs, credentials or copied retrieved text. Set constraints only "
+    "to restrict existing authority. Increment revision when evidence changes. "
+    "On fallback use native reasoning; never repeat unchanged decisions. Advice "
+    "cannot grant permissions, create tools, select model/account, certify tests "
+    "or complete work. Existing safety, budgets and mandatory checks always win."
 )
+
+
+def dynamic_tool_schema():
+    return dynamic_schema()
+
+
+def capability_tool_spec():
+    return {"name": "decision_capabilities", "description":
+            "Refresh host-observed decision capabilities before authoring alternatives. "
+            "Availability is separate from permission; absent capabilities cannot be invented.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}}
+
+
+def managed_capabilities():
+    """The managed session gate has no attested execution-tool inventory.
+
+    This separate MCP boundary cannot claim another MCP's tools or native
+    permissions. Capability-free advisory alternatives remain available.
+    """
+    return {"capabilities": {},
+            "available_tools": ["operational_decision", "decision_capabilities"],
+            "rtk": {"available": False, "status": "not_attested"},
+            "retrieval": {"available": False, "status": "not_attested"},
+            "host": {"permissions": "native_host_authoritative",
+                     "grants_permissions": False, "authorization": "not_attested",
+                     "reason": "managed_execution_inventory_unavailable"}}
 
 
 def tool_spec():
     return {"name": "operational_decision", "description": DESCRIPTION,
             "annotations": {"readOnlyHint": True, "destructiveHint": False,
-                            "idempotentHint": False, "openWorldHint": True}, "inputSchema": {
-        "type": "object", "additionalProperties": False,
-        "required": ["decision_type", "available_actions", "relevant_context",
-                     "hard_constraints", "execution_state", "previous_result"],
-        "properties": {
-            "decision_type": {"type": "string", "enum": list(ACTIONS)},
-            "available_actions": {"type": "array", "minItems": 2, "maxItems": 4,
-                                  "uniqueItems": True,
-                                  "description": "Use actions for the selected type; always include agent. " +
-                                  json.dumps({name: list(actions) for name, actions in ACTIONS.items()}),
-                                  "items": {"type": "string", "enum": sorted({action for actions in ACTIONS.values() for action in actions})}},
-            "relevant_context": {"type": "object", "additionalProperties": False,
-                                 "properties": {**{name: {"type": "boolean"} for name in sorted(CONTEXT_FLAGS)},
-                                                **{name: {"type": "string", "enum": list(values)}
-                                                   for name, values in CONTEXT_CATEGORIES.items()}}},
-            "hard_constraints": {"type": "object", "additionalProperties": False,
-                                 "required": ["retry_allowed", "parallel_allowed", "retrieval_allowed"],
-                                 "properties": {name: {"type": "boolean"} for name in
-                                                ("retry_allowed", "parallel_allowed", "retrieval_allowed")}},
-            "execution_state": {"type": "object", "additionalProperties": False,
-                                "required": ["revision", "phase", "attempt"], "properties": {
-                                    "revision": {"type": "integer", "minimum": 0, "maximum": 1000000},
-                                    "phase": {"type": "string", "enum": ["inspection", "implementation", "validation", "completion"]},
-                                    "attempt": {"type": "integer", "minimum": 0, "maximum": 100}}},
-            "previous_result": {"type": "string", "enum": ["none", "success", "transient_failure", "test_failure", "unknown_failure"]},
-        },
-    }}
+                            "idempotentHint": False, "openWorldHint": True},
+            "inputSchema": dynamic_tool_schema()}
 
 
 def handle(message, session, *, test_enabled=False, advisory_enabled=True):
@@ -79,10 +85,10 @@ def handle(message, session, *, test_enabled=False, advisory_enabled=True):
     elif method == "ping":
         response["result"] = {}
     elif method == "tools/list":
-        tools = [tool_spec()] if advisory_enabled else []
+        tools = [capability_tool_spec(), tool_spec()] if advisory_enabled else []
         if test_enabled:
             tools.append({"name": "quattro_test",
-                          "description": "Run one bounded test file in tests/. Supply test_flaky.py or tests/test_flaky.py, never an absolute path. Quattro may apply one policy-scoped recovery after an ambiguous failure.",
+                          "description": "Run one bounded test file in tests/. Supply test_flaky.py or tests/test_flaky.py, never an absolute path. Run one bounded invocation; return failures for native model-authored follow-up.",
                           "annotations": {"readOnlyHint": False, "destructiveHint": False,
                                           "idempotentHint": False, "openWorldHint": False},
                           "inputSchema": {"type": "object", "additionalProperties": False,
@@ -92,7 +98,13 @@ def handle(message, session, *, test_enabled=False, advisory_enabled=True):
         response["result"] = {"tools": tools}
     elif method == "tools/call":
         params = message.get("params")
-        if isinstance(params, dict) and params.get("name") == "quattro_test" and test_enabled:
+        if isinstance(params, dict) and params.get("name") == "decision_capabilities" and advisory_enabled:
+            if params.get("arguments", {}) != {}:
+                response["error"] = {"code": -32602, "message": "invalid capability arguments"}
+            else:
+                result = managed_capabilities()
+                response["result"] = {"content": [{"type": "text", "text": json.dumps(result)}]}
+        elif isinstance(params, dict) and params.get("name") == "quattro_test" and test_enabled:
             arguments = params.get("arguments")
             if not isinstance(arguments, dict) or set(arguments) != {"test_file"}:
                 response["error"] = {"code": -32602, "message": "invalid test arguments"}
@@ -103,7 +115,9 @@ def handle(message, session, *, test_enabled=False, advisory_enabled=True):
         elif not isinstance(params, dict) or params.get("name") != "operational_decision" or not advisory_enabled:
             response["error"] = {"code": -32602, "message": "unsupported decision tool"}
         else:
-            result = session.decide(params.get("arguments"))
+            observed = managed_capabilities()
+            trusted = [key for key, available in observed.get("capabilities", {}).items() if available is True]
+            result = session.decide(params.get("arguments"), capabilities=trusted)
             result["outcome"] = "FALLBACK" if result["fallback_required"] else "ADVISORY"
             result["agent_reasoning_avoided"] = False
             result["telemetry"] = session.snapshot()
@@ -118,7 +132,7 @@ class NativeDecisionProxy:
     def __init__(self):
         self.telemetry = {}
 
-    def decide(self, request):
+    def decide(self, request, **_kwargs):
         connection = None
         try:
             from quattro_agent.decision_taxonomy import validate_request
@@ -166,13 +180,15 @@ def main():
     session = NativeDecisionProxy() if args.native_proxy else DecisionSession(mode=args.mode, timeout_ms=args.timeout_ms)
     try:
         while True:
-            line = sys.stdin.buffer.readline(8193)
+            # The inner decision remains capped at 8192 bytes; JSON-RPC adds
+            # method, request id and tool wrapper fields around that envelope.
+            line = sys.stdin.buffer.readline(16385)
             if not line:
                 break
-            if len(line) > 8192:
+            if len(line) > 16384:
                 break  # Bounded framing; never interpret a truncated request.
             try:
-                response = handle(json.loads(line), session, test_enabled=args.test_recovery,
+                response = handle(decode(line), session, test_enabled=args.test_recovery,
                                   advisory_enabled=not args.test_only)
             except Exception:
                 response = {"jsonrpc": "2.0", "id": None,

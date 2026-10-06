@@ -17,7 +17,7 @@ import threading
 import time
 from urllib.parse import urlencode, urlsplit
 
-from .jev_shadow import lifecycle as jev_lifecycle, annotate as annotate_signals, take_scope, current_evidence
+from .jev_shadow import lifecycle as jev_lifecycle, annotate as annotate_signals, current_evidence
 from .turn_routing import route_turn, active_account_health, CREDENTIAL_RESPONSE
 from .model_registry import (
     ExecutionPlan, default_policy_path, load_model_registry, target_matches_actual,
@@ -26,7 +26,7 @@ from .omniroute import APPROVED_BASE_URL, validate_omniroute_runtime_capabilitie
 from .paths import model_catalog_path
 from .privacy import redact_secret_text
 from .decision_service import DecisionSession
-from .decision_taxonomy import CONTEXT_FLAGS, CONTEXT_CATEGORIES, validate_request
+from .decision_taxonomy import validate_request
 
 
 _SECRET = re.compile(r"(?i)\b(password|passwd|api[ _-]?key|access[ _-]?token|secret|credential)\b")
@@ -61,7 +61,6 @@ class Turn:
     model_requests: int = 0
     shadow_runs: tuple = field(default=(), repr=False)
     routing_evidence: dict = field(default_factory=dict, repr=False)
-    decision_context: dict = field(default_factory=dict, repr=False)
     initial_context_reuse: int = 0
     decision_outcomes: dict = field(default_factory=dict, repr=False)
 
@@ -105,10 +104,6 @@ class TurnGate:
                     'evidence': 'inactive_or_stale', 'fallback_required': True}
         try:
             validate_request(request)
-            if (self._decision_options.get('mode', 'OFF') == 'OFF'
-                    and self._decision_options.get('testRecoveryMode') == 'COOPERATIVE'
-                    and request['decision_type'] != 'test_recovery'):
-                return fallback
             with self._lock:
                 turns = [turn for turn in self._active.values() if not turn.finished]
                 if len(turns) != 1:
@@ -123,23 +118,11 @@ class TurnGate:
                 revision = self._decision_revision
                 state = json.loads(json.dumps(request))
                 state['execution_state']['revision'] = revision
-                context = state['relevant_context']
-                for key in ('initial_complexity', 'initial_task_type'):
-                    context.pop(key, None)  # Initial Jev evidence is host-owned.
-                context.update(turn.decision_context)
-                # Consume a completed initial evaluation, never re-evaluate it.
-                # Its task features remain context, not a cached next action.
-                for run in turn.shadow_runs:
-                    if run.done.is_set() and run.record.get('status') == 'success':
-                        answers = run.record.get('answers') or {}
-                        for key, name in (('initial_complexity', 'complexity'), ('initial_task_type', 'task_type')):
-                            answer = answers.get(name, {})
-                            if answer.get('confidence', 0) >= DecisionSession.MIN_CONFIDENCE:
-                                context[key] = answer['choice']
-                if turn.decision_context:
-                    turn.initial_context_reuse += 1
                 service = self.decisions
-            result = service.decide(state)
+            # The managed child inventory is not attested. Capability-bearing
+            # options cannot manufacture availability or host permission.
+            result = service.decide(state, capabilities=frozenset(),
+                                    cancelled=turn.cancel_event.is_set)
             with self._lock:
                 if (revision != self._decision_revision or turn.finished or turn.cancel_event.is_set()
                         or self._active.get(turn.thread_id) is not turn):
@@ -190,8 +173,6 @@ class TurnGate:
                 outcome_source='interactive-turns.jsonl',
             )
             turn.routing_evidence = current_evidence()
-            initial_state = json.loads(routed.features.state_json)
-            turn.decision_context = {name: initial_state[name] for name in CONTEXT_FLAGS if name in initial_state}
             turn.request_id = (params or {}).get('request_id')
             self._active[thread_id] = turn
             self._decision_revision += 1
@@ -203,7 +184,6 @@ class TurnGate:
                                              self.cancel, args=(turn,))
                 turn.timer.daemon = True
                 turn.timer.start()
-            turn.shadow_runs = take_scope()
             return turn
 
     def remaining(self, turn: Turn) -> float:
@@ -437,14 +417,6 @@ class TurnGate:
             turn.failure_code = 'locked_receipt_mismatch'
             raise RuntimeError("locked execution receipt failed verification")
 
-    @staticmethod
-    def _close_signals(turn: Turn):
-        for run in getattr(turn, 'shadow_runs', ()):
-            try:
-                run.finish_owned()
-            except Exception:
-                pass  # Optional evidence must not interrupt turn cleanup.
-
     def cancel(self, turn: Turn):
         turn.failure_code = ('budget_exceeded' if turn.budget and
                              time.monotonic() - turn.started >= turn.budget else 'cancelled')
@@ -460,7 +432,6 @@ class TurnGate:
         connection = turn.connection
         if connection:
             connection.close()
-        TurnGate._close_signals(turn)
 
     def cancel_thread(self, thread_id: str, request_id: str | None = None):
         with self._lock:
@@ -474,7 +445,6 @@ class TurnGate:
                 return
             turn.finished = True
             self._decision_revision += 1
-            TurnGate._close_signals(turn)
             if turn.timer:
                 turn.timer.cancel()
             if turn.connection:
@@ -508,12 +478,6 @@ class TurnGate:
                  "decision_plane": self.decisions.snapshot(),
                  "initial_context_reuse": turn.initial_context_reuse,
                  "decision_plane_turn_outcomes": dict(turn.decision_outcomes)}
-        for run in turn.shadow_runs:
-            if run.done.is_set():
-                event['routing']['jev'] = {name: run.record.get(name) for name in (
-                    'answers', 'jev_model', 'jev_latency_ms', 'input_usage', 'output_usage',
-                    'cost', 'cost_source', 'failure_category', 'status',
-                )}
         self.telemetry_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         fd = os.open(self.telemetry_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, 'a') as stream:
