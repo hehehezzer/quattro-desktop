@@ -130,3 +130,29 @@ those settings changes the shared policy digest and can invalidate other
 sessions' grants. Prepare that exact delta for separate approval and coordinate
 sessions before applying it. Preserve rollback provenance and require fresh
 authority through the existing mechanism.
+
+## Prepared protected Projects authoring metadata
+
+The protected Projects candidate exposes `scoped_decision_capabilities` as a
+read-only local metadata tool. Its closed empty input returns mappings for the
+currently active, host-configured operations and aliases, including each exact
+`tool.scoped_<operation>` capability identifier. During a read-only startup
+phase, unavailable mutation tools are absent from the snapshot. A configured,
+active fixed-command tool reports its existing capability and confirmation
+requirement. Discovery performs no broker or provider request and emits no
+paths, credentials, private transport tokens or session identifiers.
+
+Each action's decision schema exposes only effects supported by that execution
+boundary and requires the exact bound capability for a native-tool option.
+Questions, option identifiers, descriptions and abstract context remain authored
+by the model. Unsupported retrieval, RTK, parallelism and retry constraints stay
+unavailable. The metadata is a registration snapshot; action admission still
+revalidates current host authority, preimages and policy independently.
+
+Discovery is available only in the correctly bound session and locked model
+route. Closure, model mismatch or invalid input denies it. File aliases and
+fixed-command descriptions explain the same mapping and authoring requirements.
+Uncertain protected mutations retain their existing owner-review gates and
+fixed commands retain per-invocation native confirmation. The candidate requires
+reviewed package and policy-pin cutover before installed native acceptance; no
+permission, shell, operation registry or model-route expansion is included.
