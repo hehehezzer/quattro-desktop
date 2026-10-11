@@ -5,6 +5,8 @@ import hashlib
 import json
 import pathlib
 import sqlite3
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -271,3 +273,32 @@ class KnowledgeCoreTests(unittest.TestCase):
         with closing(sqlite3.connect(path)) as db:
             self.assertEqual(db.execute("SELECT value FROM historical_knowledge").fetchone()[0], "preserved")
             self.assertIsNone(db.execute("SELECT name FROM sqlite_master WHERE name='documents'").fetchone())
+
+    @unittest.skipUnless(shutil.which("git"), "Git provenance requires Git")
+    def test_git_citations_refresh_without_reembedding_uncommitted_or_ignored_files(self):
+        def git(*arguments):
+            return subprocess.run(["git", "-C", str(self.a), "-c", "user.name=Quattro Test",
+                                   "-c", "user.email=example@invalid.test", "-c", "commit.gpgsign=false",
+                                   "-c", "core.hooksPath=" + str(self.root / "no-hooks"),
+                                   "-c", "core.fsmonitor=false", *arguments],
+                                  check=True, capture_output=True, text=True).stdout.strip()
+
+        git("init", "-q", "-b", "main")
+        self.write(self.a, "README.md", "# Versioned project\nInitial project evidence.")
+        self.write(self.a, ".gitignore", "ignored.py\n")
+        git("add", "README.md", ".gitignore")
+        git("commit", "-qm", "Initial evidence")
+        self.write(self.a, "new.py", "def newly_published_symbol():\n    return 1\n")
+        self.write(self.a, "ignored.py", "def intentionally_unversioned_symbol():\n    return 1\n")
+        self.service.index_source("a")
+        self.assertIsNone(self.service.search_knowledge("alpha", "newly_published_symbol")["results"][0]["citation"]["commit_sha"])
+        git("add", "new.py")
+        git("commit", "-qm", "Publish unchanged indexed evidence")
+        commit = git("rev-parse", "HEAD")
+        result = self.service.index_source("a")
+        self.assertEqual((result["updated"], result["embedded"]), (0, 0))
+        self.assertEqual(self.service.search_knowledge("alpha", "newly_published_symbol")["results"][0]["citation"]["commit_sha"], commit)
+        self.assertIsNone(self.service.search_knowledge("alpha", "intentionally_unversioned_symbol")["results"][0]["citation"]["commit_sha"])
+        self.write(self.a, "new.py", "def newly_published_symbol():\n    return 2\n")
+        self.service.index_source("a")
+        self.assertIsNone(self.service.search_knowledge("alpha", "newly_published_symbol")["results"][0]["citation"]["commit_sha"])

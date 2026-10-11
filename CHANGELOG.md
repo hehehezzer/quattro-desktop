@@ -10,6 +10,7 @@
 - Enforce configured write/verification permissions, safe source opens, credential/exclusion filtering and complete context budgets. Fix fact-key/dedup/escaped-credential bypasses and cross-project migration mapping with regressions.
 - Package only the intelligence core; install into an isolated virtual environment without global commands, native agent configuration, desktop/service deployment or future ecosystem installation.
 - Document architecture, database/tool contracts, migration/retirement, operating procedures, independent client integration and executed baseline/acceptance evidence. Existing installed legacy desktop/execution consumers remain untouched.
+- Correct commit provenance for untracked/ignored/dirty source content and refresh unchanged-file Git metadata without reembedding. Add real Git-transition regression and installed CLI proof.
 
 ## Historical execution architecture (pre-rebuild)
 

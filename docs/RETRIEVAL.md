@@ -25,6 +25,8 @@ Knowledge results carry stable ID, content, symbol/type, fused/semantic scores, 
 
 Source-file hashes are checked at query time using safe opens; status is cached per source/path/hash for that query. Search can surface outdated evidence with explicit provenance. Context does not present missing/changed files as current facts; reindex after edits. Citations allow clients to locate and independently inspect the evidence, not execute it.
 
+A commit citation is emitted only for tracked evidence indexed from a known clean Git state. Uncommitted, ignored/untracked or unknown-status evidence keeps path/line/content hashes but no invented commit reference. Incremental passes refresh commit/dirty metadata when unchanged content becomes committed, without regenerating vectors; old dirty legacy records also omit misleading commit links.
+
 ## Context assembly
 
 `get_project_context` retrieves relevant evidence and scoped active memories, prioritizes source quality/currentness and verified newer memory, removes duplication and marks evidence untrusted. Only relevant result candidates enter the context; unrelated projects and unqueryable legacy global records never enter.

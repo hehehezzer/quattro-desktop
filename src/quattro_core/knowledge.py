@@ -167,7 +167,8 @@ class KnowledgeService:
                     raise ValueError("source identity is already assigned to a different project or root")
                 current = set()
                 total_bytes = total_units = 0
-                state = repository_state(root)
+                state = repository_state(root, include_tracked=True)
+                tracked = set(state.get("trackedPaths", ()))
                 for directory, dirs, files in os.walk(root, followlinks=False, onerror=_walk_error):
                     directory_path = pathlib.Path(directory)
                     dirs[:] = sorted(d for d in dirs if d.lower() not in DENIED_PARTS and not (directory_path / d).is_symlink())
@@ -194,9 +195,23 @@ class KnowledgeService:
                             raise ValueError("source exceeds indexing byte limit")
                         current.add(name)
                         digest = hashlib.sha256(content.encode()).hexdigest()
+                        commit_sha = state["commitSha"] if state["dirty"] is False and name in tracked else None
                         old = self.connection.execute("SELECT content_hash FROM knowledge_files WHERE project=? AND source_id=? AND path=?", (source.project, source.id, name)).fetchone()
                         if old and old[0] == digest and not reindex:
                             summary["unchanged"] += 1
+                            changed_provenance = False
+                            rows = self.connection.execute("""SELECT d.id,d.commit_sha,d.metadata_json FROM documents d
+                                JOIN knowledge_documents k ON k.document_id=d.id
+                                WHERE k.project=? AND k.source_id=? AND d.path=?""", (source.project,source.id,name))
+                            for row in rows:
+                                metadata = json.loads(row["metadata_json"])
+                                if row["commit_sha"] != commit_sha or metadata.get("workingTreeDirty") != state["dirty"]:
+                                    metadata["workingTreeDirty"] = state["dirty"]
+                                    self.connection.execute("UPDATE documents SET commit_sha=?,metadata_json=? WHERE id=?",
+                                                            (commit_sha,json.dumps(metadata),row["id"]))
+                                    changed_provenance = True
+                            if changed_provenance:
+                                self.store._bump()
                             continue
                         retained = {row["id"]:(row["content_hash"],row["embedding"],row["embedding_model"]) for row in self.connection.execute("""SELECT d.* FROM documents d JOIN knowledge_documents k ON k.document_id=d.id WHERE k.project=? AND k.source_id=? AND d.path=?""", (source.project,source.id,name))} if self.config.embedding == "lexical" else {}
                         self._remove_file(source.project, source.id, name)
@@ -211,7 +226,7 @@ class KnowledgeService:
                             identifier = self.store.upsert_document(identifier=identifier,
                                 source_type=classify_markdown(name) if path.suffix.lower() in {".md", ".txt", ".rst"} else "code",
                                 content=unit["content"], repository=source.project, branch=source.id,
-                                commit_sha=state["commitSha"], path=name, symbol=unit.get("symbol"),
+                                commit_sha=commit_sha, path=name, symbol=unit.get("symbol"),
                                 symbol_type=unit.get("symbol_type"), language=language_for(path),
                                 start_line=unit.get("start_line"), end_line=unit.get("end_line"),
                                 importance=source.authority, metadata={"source_id":source.id,"namespace":source.project,
@@ -326,7 +341,7 @@ class KnowledgeService:
                 spans.setdefault(location, []).append((start, end))
             provenance = item["provenance"]
             metadata = json.loads(row["metadata_json"])
-            citation = {"path":row["path"],"start_line":row["start_line"],"end_line":row["end_line"],"content_hash":row["content_hash"],"file_hash":row["file_hash"],"source_id":row["source_id"],"source_kind":source_map[row["source_id"]].kind,"namespace":project,"project":project,"provenance":provenance,"commit_sha":row["commit_sha"]}
+            citation = {"path":row["path"],"start_line":row["start_line"],"end_line":row["end_line"],"content_hash":row["content_hash"],"file_hash":row["file_hash"],"source_id":row["source_id"],"source_kind":source_map[row["source_id"]].kind,"namespace":project,"project":project,"provenance":provenance,"commit_sha":None if metadata.get("workingTreeDirty") else row["commit_sha"]}
             output.append({"id":row["id"],"content":row["content"],"symbol":row["symbol"],"source_type":row["source_type"],"score":item["score"],"semantic_score":item["semantic"],"citation":citation,"claims":metadata.get("claims", {}),"authority":source_map[row["source_id"]].authority,"updated_at":row["updated_at"],"untrusted":True})
         return {"results":output[offset:offset+limit],"total":len(output),"limit":limit,"offset":offset,"semantic":semantic}
 

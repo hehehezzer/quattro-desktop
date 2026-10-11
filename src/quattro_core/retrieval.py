@@ -770,22 +770,30 @@ class RetrievalStore:
         return dict(row) if row else None
 
 
-def repository_state(path: pathlib.Path) -> dict[str, Any]:
+def repository_state(path: pathlib.Path, *, include_tracked: bool = False) -> dict[str, Any]:
     def git(*args: str) -> str | None:
         if args not in {("rev-parse", "--show-toplevel"), ("branch", "--show-current"),
-                        ("rev-parse", "--abbrev-ref", "HEAD"), ("rev-parse", "HEAD"), ("status", "--porcelain")}:
+                        ("rev-parse", "--abbrev-ref", "HEAD"), ("rev-parse", "HEAD"),
+                        ("status", "--porcelain"), ("ls-files", "-z")}:
             raise ValueError("unsupported Git metadata command")
         try:
             result = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(path), *args], text=True, capture_output=True, timeout=5, check=False)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, UnicodeError, subprocess.TimeoutExpired):
             return None
-        return result.stdout.strip() if result.returncode == 0 else None
+        if result.returncode != 0 or len(result.stdout) > 1_048_576:
+            return None
+        return result.stdout if args == ("ls-files", "-z") else result.stdout.strip()
     root = git("rev-parse", "--show-toplevel")
     if not root:
         return {"repository": str(path.resolve()), "branch": None, "commitSha": None, "dirty": None}
     branch = git("branch", "--show-current") or git("rev-parse", "--abbrev-ref", "HEAD")
-    return {"repository": str(pathlib.Path(root).resolve()), "branch": branch,
-            "commitSha": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
+    status = git("status", "--porcelain")
+    state = {"repository": str(pathlib.Path(root).resolve()), "branch": branch,
+             "commitSha": git("rev-parse", "HEAD"), "dirty": None if status is None else bool(status)}
+    if include_tracked:
+        tracked = git("ls-files", "-z")
+        state["trackedPaths"] = tracked.split("\0")[:-1] if tracked is not None else []
+    return state
 
 
 class RepositoryIndexer:

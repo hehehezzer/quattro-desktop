@@ -7,7 +7,7 @@ Verification date: 2026-10-11 UTC. Linux x86_64; Python 3.14.7, SQLite 3.53.4. N
 | Check | Observed result |
 |---|---|
 | Original full suite | 1,189 tests, 11 skipped, OK; 74.021 seconds |
-| Final rebuilt full suite | 210 tests, 1 skipped, OK; 28.946 seconds |
+| Final rebuilt full suite | 211 tests, 1 skipped, OK; 28.816 seconds |
 | `compileall -q src scripts` | Success |
 | `scripts/check_python.py` | PASS |
 | Isolated install/build | `quattro-intelligence-core` 1.0.0 installed into repository `.venv`; no runtime Python dependencies |
@@ -33,6 +33,7 @@ The single skip is the opt-in retained desktop tooltip runtime check; the intell
 |---|---|
 | Independent startup; no Jev/OmniRoute | Installed CLI/MCP launch from a temporary cwd with empty PATH and private HOME; core distribution closure contains no execution dependencies |
 | Repository indexing | Actual configured checkout: 197 scanned, 145 updated/indexed, 52 excluded, 1,510 documents; lexical mode embedded zero |
+| Accurate Git citations | Installed real-Git fixture omitted commit links for uncommitted/ignored/dirty files; committing unchanged content refreshed its correct SHA with zero updated files/embeddings |
 | Exact technical/code retrieval | `persist_lesson` top symbol with path/line/hash citation; import/configuration, generic preamble and overlapping class/method regressions passed |
 | Natural-language semantics | Two actual Nomic conceptual queries ranked `durable.md` first; one had zero lexical candidates |
 | Hybrid fusion/deduplication | Semantic+lexical SQLite journal query ranked correct evidence first, unique IDs; duplicate-source/overlap regressions passed |
