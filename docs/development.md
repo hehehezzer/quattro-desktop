@@ -1,34 +1,18 @@
 # Development
 
-The project is Python 3.11+ with no runtime dependency outside the standard
-library. The public package uses `src/` layout and exposes the
-`quattro-agent` console script.
-
-## Local checks
+Python 3.11+, standard-library runtime, `src/quattro_core` package. Active commands: `quattro-intelligence`, `quattro-intelligence-mcp`. Package discovery is explicit; historical desktop/platform files are not intelligence runtime dependencies.
 
 ```bash
 python -m unittest discover -s tests -p 'test_*.py'
-python -m compileall -q src
+python -m compileall -q src scripts
 python scripts/check_python.py
 python scripts/check_public_artifacts.py
-git diff --check
 ```
 
-Use focused unittest modules while iterating, then run the full suite before a
-release. Tests use temporary directories and fake subprocesses; paid Codex,
-Pi, GitHub, OmniRoute, Hyprland, and desktop services are not required.
+Tests use temporary authorized source roots and SQLite databases. Paid APIs, agent frameworks, Jev/OmniRoute and a running desktop are unnecessary. The Windows CI subset exercises portable memory/MCP behavior; Linux source indexing uses POSIX safe-open semantics. Optional semantic quality must be checked against a real local model, not mocked vectors alone.
 
-## Adding a feature
+Exercise the actual installed CLI and an independent stdio client after significant changes. Verify restart persistence, namespaces, private visibility, source change/delete/rename, rollback, sensitive exclusions and compatible legacy imports. Keep original live databases untouched during development; use SQLite backups and temporary destinations.
 
-Keep request classification, tier routing, provider routing, execution, and
-projection as separate concerns. Add a regression test for lifecycle and
-failure behavior, document persisted-schema changes, and do not place prompts,
-responses, credentials, or arbitrary environments into display-safe state.
+`check_public_artifacts.py` scans the Git index, including newly staged files, and reads working content. Intentional deletions must be staged before that release guard; never stage ignored state, private notes or real database fixtures. The retained desktop tests protect unchanged historical assets, not a claim that the new core controls the desktop.
 
-## Release checks
-
-Review `CHANGELOG.md`, run the CI-equivalent checks, inspect the staged file
-list, run the public-artifact policy, and validate a fresh clone. Deploy only
-with `quattro-agent deployment deploy` from the exact clean commit; it records
-rollback inventory and removes retired mapped paths. Do not create or move a
-release tag until the release owner approves the exact commit.
+Update architecture/contracts/migration notes and changelog when behavior changes. Use reviewable local commits; no push, release tag, system installation or production activation is implicit. Future PostgreSQL or network transports must preserve existing access/transactional invariants and justify new dependencies.

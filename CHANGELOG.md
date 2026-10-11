@@ -1,15 +1,17 @@
 # Changelog
 
-## Unreleased
+## Unreleased — Intelligence Core 1.0.0
 
-- Add categorical operational preflight, scoped retrieval advice and repeated-failure
-  recovery telemetry for native adapters. Keep host permissions and model plans
-  authoritative; standalone Codex MCP advice remains explicit.
-- Document the separate controlled Qiro worker relay and its limited tool coverage.
+- Rebuild Quattro as an independent local-first knowledge, hybrid retrieval and persistent-memory service; remove agent execution/orchestration, model/provider/account routing, Jev/OmniRoute decisions, worker/session control and native client registration from the active product.
+- Preserve and move the working SQLite/FTS5 retrieval/benchmark implementation into `quattro_core`; add explicit source/namespace ownership, atomic incremental indexing, full-tail/import/configuration units, current provenance and deduplication of overlapping evidence.
+- Preserve historical records/vectors during version upgrades and explicit imports; quarantine unsafe namespace attribution rather than leaking global/other-project knowledge. Back up original Git history and six live databases before source retirement.
+- Add structured episodic/semantic/procedural/shared memory with references, verification, private/project visibility, optimistic revisions, immutable fact identity, supersession/invalidation/deletion and transactional audit history.
+- Add bounded independent stdio MCP and operator CLI for search/context, memory, source indexing/status, health/diagnostics and private backups/migrations. Default semantic status is honestly unavailable; optional local Nomic fusion remains operational without paid APIs.
+- Enforce configured write/verification permissions, safe source opens, credential/exclusion filtering and complete context budgets. Fix fact-key/dedup/escaped-credential bypasses and cross-project migration mapping with regressions.
+- Package only the intelligence core; install into an isolated virtual environment without global commands, native agent configuration, desktop/service deployment or future ecosystem installation.
+- Document architecture, database/tool contracts, migration/retirement, operating procedures, independent client integration and executed baseline/acceptance evidence. Existing installed legacy desktop/execution consumers remain untouched.
 
-All notable Quattro orchestration changes are documented here.
-
-## Unreleased
+## Historical execution architecture (pre-rebuild)
 
 - Leave externally granted native tasks with their owning execution boundary;
   generic reconciliation and terminal workers cannot claim or launch them.

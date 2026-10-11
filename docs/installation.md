@@ -1,84 +1,75 @@
-# Installation
+# Installation and operator CLI
 
-## Requirements
+## Requirements and isolated install
 
-Python 3.11+ and Git are required. Codex, Pi, OmniRoute, and desktop commands
-are optional until their corresponding features are used.
-No Python runtime dependency beyond the standard library is required.
-Linux `bubblewrap` is additionally required for the optional GitHub PR review
-workflow; the workflow refuses to run uncontained.
-
-## Install from a clone
-
-### Core only (Linux)
+Python 3.11+ with SQLite FTS5. Runtime uses only the standard library. Git is optional provenance support; no Codex, Pi, OMP, Jev, OmniRoute, Paperclip or Herdr is required. Build/install uses ordinary setuptools/pip tooling, not a cloud AI service.
 
 ```bash
-git clone https://github.com/OWNER/quattro-desktop.git
-cd quattro-desktop
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install --no-deps .
-quattro-agent --help
-quattro-agent config init
-quattro-agent config validate
+./install.sh
+# Equivalent, with a chosen isolated environment:
+python scripts/install_local.py --destination .venv
+.venv/bin/quattro-intelligence --help
 ```
 
-The Linux convenience wrapper performs the same Core package installation:
+Existing destinations must be isolated virtual environments. Symlinked destination/bin/package paths, global/system-site-package destinations and linked console targets are rejected. The installer does not register native integrations, global commands, desktop services or future agents. From source, `PYTHONPATH=src python -m quattro_core.cli ...` works without installation.
+
+## Setup and independent sources
 
 ```bash
-./install.sh --profile core
+Q="$PWD/.venv/bin/quattro-intelligence"
+C="$PWD/.quattro/intelligence.json"
+"$Q" --config "$C" config-init --database-dir "$PWD/.quattro/state" \
+  --project example --principal operator --writable --can-verify
+"$Q" --config "$C" register-source --project example --id code --root "$PWD" --kind repository
+# Register an independently located documentation/Obsidian root with its own ID.
+"$Q" --config "$C" register-source --project example --id notes --root /srv/notes/example --kind obsidian --exclude 'Private/**'
+"$Q" --config "$C" index code
+"$Q" --config "$C" index notes
 ```
 
-### Core only (Windows, experimental)
+Choose an existing notes directory; the service never creates or scans an unspecified vault. `config-init` refuses to overwrite an existing config. Omit writer/verification flags for reader clients. Use a separate allowed namespace per project; `--project` can be repeated at setup.
 
-Use Python packaging, not the Bash installer:
-
-```powershell
-py -m venv .venv
-.venv\Scripts\python -m pip install --no-deps .
-.venv\Scripts\quattro-agent config init
-.venv\Scripts\quattro-agent --help
-```
-
-### Optional Linux Desktop
+## Retrieval, maintenance and server
 
 ```bash
-./install.sh --profile desktop
+"$Q" --config "$C" query --project example 'ExactSymbol' --limit 5 --offset 0 --source-id code
+"$Q" --config "$C" context --project example 'How is durable memory stored?' --budget 4000
+"$Q" --config "$C" index-status --project example
+"$Q" --config "$C" index code             # incremental
+"$Q" --config "$C" reindex code           # forced
+"$Q" --config "$C" index code --reindex   # equivalent
+"$Q" --config "$C" health
+"$Q" --config "$C" diagnostics
+"$Q" --config "$C" memory stats --project example
+"$Q" --config "$C" serve
 ```
 
-Desktop deployment requires a clean source revision. It installs Core first,
-then activates the independent Desktop deployment manifest. It does not alter
-Core's SQLite databases, sessions, account homes, or memory data.
+Outputs are JSON. Health checks retrieval and memory integrity, configured source status and semantic availability. Diagnostics reports runtime/storage/config metadata, not documents, credentials or arbitrary process environments. A failed last indexing attempt makes health unhealthy while committed previous evidence remains usable.
 
-`config init` writes a 0600 credential-free starter configuration. It does not
-log in to Codex, create a memory vault, contact OmniRoute, or enable Pi.
-
-## Source checkout without installation
+## Memory operations
 
 ```bash
-PYTHONPATH=src ./src/quattro-agent --help
-PYTHONPATH=src ./src/quattro-agent config init
+"$Q" --config "$C" memory save --project example --category procedural \
+  --content 'Reindex after moving documentation.' --reference 'code:docs/installation.md' --tag indexing
+"$Q" --config "$C" memory recall --project example indexing --limit 10 --offset 0
+"$Q" --config "$C" memory recall --project example --historical
 ```
 
-## Configure external runtimes
+Use the returned stable ID with `memory update --project example ID --content TEXT --expected-revision N`, `memory invalidate --project example ID --reason TEXT`, or `memory delete --project example ID`. For structured updates, supply `--patch /absolute/update.json`; supported fields are documented in MCP/memory docs. Save supports `--visibility private`, `--fact-key`, `--supersedes`, `--verification`, `--confidence`, repeated references/tags and `--file`/`--stdin` instead of `--content`. Do not put sensitive content on a command line or in permanent memory.
 
-1. Authenticate Codex using the Codex CLI in each account's own home.
-2. Configure that home with the provider shape in
-   `examples/codex-config.toml`.
-3. Install or point `QUATTRO_MODEL_CATALOG` at the shared catalog containing
-   the four Quattro routes, the two account-pinned GPT-6 Astra routes, the six
-   account-qualified GPT-5.6 Sol/Terra/Luna routes, and the 18 verified
-   Antigravity text routes.
-4. Start OmniRoute separately and confirm its loopback Responses endpoint.
-5. Run `quattro-agent doctor --json`.
+An active fact's content change requires a new `memory save ... --fact-key SAME_KEY --supersedes OLD_ID`. Verification is not automatic. CLI record limits equal storage limits; local file/stdin intake is capped at 1 MiB before record validation.
 
-Never paste provider credentials into Quattro configuration and never copy
-Codex authentication files into this repository.
-
-## Verify a clean machine
+## Backups and compatible legacy import
 
 ```bash
-python scripts/check_public_artifacts.py
-python -m unittest discover -s tests -p 'test_*.py'
+"$Q" --config "$C" backup /srv/private-backups/quattro-snapshot
+# Import into a NEW configured database directory, never an existing live target:
+"$Q" --config /absolute/new-intelligence.json migrate /absolute/legacy-retrieval.sqlite3 \
+  --project example --source-id code
 ```
+
+The backup destination must be new/private; online SQLite backups include WAL data from both stores. Import copies originals, preserves IDs/vectors and quarantines unassigned records. It does not import task telemetry as factual memory. See [migration](MIGRATION.md) before operating on real data.
+
+## Platforms and service policy
+
+Linux startup, indexing, package installation and MCP were locally exercised. Portable memory/MCP CI is configured for Windows; Windows indexing and macOS runtime remain unverified. No HTTP service, background scheduler or systemd unit is installed. Future clients start the stdio server themselves; do not restart unrelated installed desktop or agent services as part of intelligence setup.
