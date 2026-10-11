@@ -3,16 +3,16 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "quattro-agent"
-version = "0.2.0"
-description = "A local-first, durable orchestration control plane for Codex and Pi"
+name = "quattro-intelligence-core"
+version = "1.0.0"
+description = "Local project knowledge retrieval and explicit memory"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Quattro contributors" }]
 dependencies = []
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
@@ -22,28 +22,14 @@ classifiers = [
 ]
 
 [project.scripts]
-quattro-agent = "quattro_agent.cli:main"
+quattro-intelligence = "quattro_core.cli:main"
 quattro-intelligence-mcp = "quattro_intelligence_mcp:main"
-quattro-intelligence = "quattro_agent.shared_intelligence:cli_main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-py-modules = [
-  "quattro_deployment",
-  "quattro_harness",
-  "quattro_image_mcp",
-  "quattro_intelligence_mcp",
-  "quattro_memory",
-  "quattro_pr_review",
-  "quattro_release",
-]
-
-[tool.setuptools.packages.find]
-where = ["src"]
-exclude = ["quattro_desktop*"]
-
-[tool.setuptools.package-data]
-quattro_agent = ["data/*.json", "data/*.ts"]
+packages = ["quattro_core"]
+py-modules = ["quattro_intelligence_mcp"]
+include-package-data = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

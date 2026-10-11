@@ -3,13 +3,13 @@
   "name": "Quattro public synthetic retrieval sample",
   "cases": [
     {
-      "id": "file-routing",
-      "query": "Find the file that defines routing tiers",
+      "id": "file-retrieval",
+      "query": "Find the file that defines repository indexing",
       "query_type": "exact_file_lookup",
       "repository": "",
       "expected_source_type": ["code"],
-      "expected_files": ["src/quattro_agent/routing.py"],
-      "expected_symbols": ["RoutingTier"],
+      "expected_files": ["src/quattro_core/retrieval.py"],
+      "expected_symbols": ["RepositoryIndexer"],
       "expected_memories": [],
       "retrieval_required": true,
       "semantic_required": false,

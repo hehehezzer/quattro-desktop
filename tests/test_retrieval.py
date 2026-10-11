@@ -11,14 +11,13 @@ from unittest import mock
 SRC = pathlib.Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SRC))
 
-from quattro_agent.retrieval import (
+from quattro_core.retrieval import (
     ContextAssembler, QueryRouter, RepositoryIndexer, RetrievalStore,
     allowed_origins_for_route,
     LocalNeuralEmbeddingBackend,
-    code_units, consolidate, consolidation_proposal, index_episodic_database,
-    repository_state, safe_to_index, verified_release_source_paths,
+    code_units, consolidate, consolidation_proposal,
 )
-from quattro_agent.benchmark import load_cases, run_benchmark
+from quattro_core.benchmark import load_cases, run_benchmark
 
 
 class RetrievalTests(unittest.TestCase):
@@ -39,10 +38,11 @@ class RetrievalTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
         subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", message], check=True)
 
-    def test_query_routing_prefers_authoritative_state_and_exact_symbol(self):
+    def test_query_routing_uses_lexical_state_and_exact_symbol(self):
         router = QueryRouter()
         state = router.route("What branch am I on?")
-        self.assertEqual(state.intent, "live_state"); self.assertFalse(state.use_semantic)
+        self.assertEqual(state.intent, "lexical")
+        self.assertTrue(state.use_lexical); self.assertFalse(state.use_semantic)
         symbol = router.route("Find UserService")
         self.assertEqual(symbol.intent, "symbol"); self.assertFalse(symbol.use_graph)
         historical = router.route("Why did deployment fail yesterday?")
@@ -66,11 +66,6 @@ class RetrievalTests(unittest.TestCase):
             ("repository",),
         )
 
-    def test_exact_live_state_is_not_semantic(self):
-        (self.repo / "README.md").write_text("hello", encoding="utf-8"); self.commit()
-        state = repository_state(self.repo)
-        self.assertEqual(state["branch"], "main"); self.assertEqual(len(state["commitSha"]), 40)
-
     def test_lexical_semantic_and_hybrid_ranking(self):
         exact = self.store.upsert_document(source_type="documentation", content="authentication middleware validates bearer tokens", repository=str(self.repo), branch="main")
         self.store.upsert_document(source_type="documentation", content="identity request guard verifies credentials", repository=str(self.repo), branch="main")
@@ -88,6 +83,30 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn(new, [row.id for row in current]); self.assertNotIn(old, [row.id for row in current]); self.assertNotIn(other, [row.id for row in current])
         history, _ = self.store.search("primary database", repository=str(self.repo), branch="main", source_types=("decision",), historical=True)
         self.assertIn(old, [row.id for row in history])
+
+    def test_repository_and_branch_filters_exclude_null_scope_in_every_search_mode(self):
+        content = "authentication middleware validates bearer tokens"
+        scoped = self.store.upsert_document(
+            source_type="documentation", content=content,
+            repository=str(self.repo), branch="main",
+        )
+        for repository, branch in (
+            (None, None), (None, "main"), (str(self.repo), None),
+            (str(self.repo), "feature"), ("/different/project", "main"),
+        ):
+            self.store.upsert_document(
+                source_type="documentation", content=content,
+                repository=repository, branch=branch,
+            )
+        for use_lexical, use_semantic in ((True, False), (False, True), (True, True)):
+            with self.subTest(lexical=use_lexical, semantic=use_semantic):
+                for _ in range(2):
+                    results, _ = self.store.search(
+                        "authentication middleware", repository=str(self.repo),
+                        branch="main", use_lexical=use_lexical,
+                        use_semantic=use_semantic,
+                    )
+                    self.assertEqual([row.id for row in results], [scoped])
 
     def test_incremental_index_symbol_graph_and_deletion(self):
         source = self.repo / "service.py"
@@ -110,7 +129,7 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(deleted.deleted, 1)
         self.assertFalse(self.store.connection.execute("SELECT 1 FROM documents WHERE path='service.py'").fetchone())
 
-    def test_project_memory_scope_and_global_shared_knowledge(self):
+    def test_project_memory_scope_excludes_null_global_knowledge(self):
         notes = self.root / "notes"; notes.mkdir()
         (notes / "DECISIONS.md").write_text("# Redis Decision\nUse Redis only for cache.", encoding="utf-8")
         shared = self.root / "shared"; shared.mkdir()
@@ -124,17 +143,17 @@ class RetrievalTests(unittest.TestCase):
             shared, global_scope=True, origin="institutional_memory",
             trusted_non_git=True,
         )
-        project_results, _ = self.store.search("Redis cache", repository=str(self.repo), branch="main", source_types=("decision",))
-        global_results, _ = self.store.search("retrieved untrusted", repository=str(self.repo), branch="main", source_types=("documentation",))
-        other_results, _ = self.store.search("Redis cache", repository="/different/project", branch="main", source_types=("decision",))
-        self.assertTrue(project_results); self.assertTrue(global_results); self.assertFalse(other_results)
+        project_results, _ = self.store.search("Redis cache", repository=str(self.repo), source_types=("decision",))
+        global_results, _ = self.store.search("retrieved untrusted", repository=str(self.repo), source_types=("documentation",))
+        other_results, _ = self.store.search("Redis cache", repository="/different/project", source_types=("decision",))
+        self.assertTrue(project_results); self.assertFalse(global_results); self.assertFalse(other_results)
         denied, _ = self.store.search(
-            "Redis cache", repository=str(self.repo), branch="main",
+            "Redis cache", repository=str(self.repo),
             source_types=("decision",), allowed_origins=("repository",),
         )
         self.assertFalse(denied)
 
-    def test_global_git_workflow_and_quattro_recovery_policy_are_retrievable(self):
+    def test_unscoped_policy_is_retrievable_only_without_repository_filter(self):
         shared = self.root / "shared-policy"
         shared.mkdir()
         (shared / "AGENT-WORKFLOWS.md").write_text(
@@ -164,8 +183,6 @@ class RetrievalTests(unittest.TestCase):
         ):
             results, _ = self.store.search(
                 query,
-                repository=str(self.repo),
-                branch="main",
                 source_types=("documentation",),
                 allowed_origins=("repository", "institutional_memory"),
                 limit=5,
@@ -196,26 +213,6 @@ class RetrievalTests(unittest.TestCase):
         inspected = self.store.inspect(consolidated)
         self.assertIn(one, inspected["metadata"]["provenanceIds"])
         self.assertTrue(self.store.forget(one)); self.assertFalse(self.store.forget(one))
-
-    def test_episodic_index_uses_display_safe_events_and_checkpoints(self):
-        database = self.root / "harness.sqlite3"
-        import sqlite3
-        connection = sqlite3.connect(database)
-        connection.executescript("""
-        CREATE TABLE tasks(task_id TEXT,project_path TEXT,display_title TEXT,state TEXT,terminal_code TEXT,terminal_summary TEXT,created_at TEXT,updated_at TEXT);
-        CREATE TABLE events(event_id TEXT,task_id TEXT,event_type TEXT,display_payload_json TEXT,created_at TEXT);
-        CREATE TABLE session_checkpoints(checkpoint_id TEXT,quattro_session_id TEXT,task_id TEXT,kind TEXT,content_json TEXT,created_at TEXT);
-        """)
-        connection.execute("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?)", ("t1",str(self.repo),"Deploy","failed","provider_error","Cooldown","2026-01-01T00:00:00+00:00","2026-01-01T00:01:00+00:00"))
-        connection.execute("INSERT INTO events VALUES(?,?,?,?,?)", ("e1","t1","task.failed",'{"reason":"cooldown"}',"2026-01-01T00:01:00+00:00"))
-        connection.execute("INSERT INTO session_checkpoints VALUES(?,?,?,?,?,?)", ("c1","s1","t1","semantic",'{"nextAction":"retry provider"}',"2026-01-01T00:00:30+00:00"))
-        connection.commit(); connection.close()
-        first = index_episodic_database(self.store, database)
-        self.assertEqual(first.updated, 3)
-        second = index_episodic_database(self.store, database)
-        self.assertEqual(second.unchanged, 3)
-        results, _ = self.store.search("cooldown", repository=str(self.repo), source_types=("error",), historical=True)
-        self.assertTrue(results); self.assertEqual(results[0].metadata["eventType"], "task.failed")
 
     def test_context_deduplication_budget_and_untrusted_boundary(self):
         self.store.upsert_document(source_type="documentation", content="same content " * 100, repository=str(self.repo), branch="main")
@@ -287,35 +284,6 @@ class RetrievalTests(unittest.TestCase):
         trusted = RepositoryIndexer(self.store).index(root, trusted_non_git=True)
         self.assertEqual(trusted.scanned, 1)
 
-    def test_verified_release_source_survives_prompt_style_reindex(self):
-        import quattro_agent.retrieval as retrieval_module
-        target = self.repo / "src/quattro_agent/retrieval.py"
-        target.parent.mkdir(parents=True)
-        target.write_bytes(pathlib.Path(retrieval_module.__file__).read_bytes())
-        adjacent = self.repo / "adjacent.txt"; adjacent.write_text("untracked", encoding="utf-8")
-        indexer = RepositoryIndexer(self.store)
-        trusted = verified_release_source_paths(self.repo)
-        self.assertEqual(trusted, (target.resolve(),))
-        indexer.index(self.repo, additional_trusted_paths=trusted)
-        indexer.index(
-            self.repo,
-            additional_trusted_paths=verified_release_source_paths(self.repo),
-        )
-        self.assertTrue(self.store.connection.execute(
-            "SELECT 1 FROM documents WHERE path='src/quattro_agent/retrieval.py'"
-        ).fetchone())
-        self.assertFalse(self.store.connection.execute(
-            "SELECT 1 FROM documents WHERE path='adjacent.txt'"
-        ).fetchone())
-        target.write_text("changed", encoding="utf-8")
-        indexer.index(
-            self.repo,
-            additional_trusted_paths=verified_release_source_paths(self.repo),
-        )
-        self.assertFalse(self.store.connection.execute(
-            "SELECT 1 FROM documents WHERE path='src/quattro_agent/retrieval.py'"
-        ).fetchone())
-
     def test_newly_ineligible_file_invalidates_stale_rows(self):
         path = self.repo / "config.json"; path.write_text('{"mode":"safe"}', encoding="utf-8")
         self.commit(); indexer = RepositoryIndexer(self.store); indexer.index(self.repo)
@@ -341,7 +309,7 @@ class RetrievalTests(unittest.TestCase):
     def test_incremental_index_has_aggregate_budget(self):
         path = self.repo / "large.py"; path.write_text("value = 1\n" * 100, encoding="utf-8")
         self.commit()
-        with mock.patch("quattro_agent.retrieval.MAX_TOTAL_FILE_BYTES", 10):
+        with mock.patch("quattro_core.retrieval.MAX_TOTAL_FILE_BYTES", 10):
             summary = RepositoryIndexer(self.store).index(self.repo)
         self.assertTrue(summary.budget_exhausted)
         self.assertEqual(summary.embedded, 0)
@@ -373,11 +341,11 @@ class RetrievalTests(unittest.TestCase):
         opener.open.return_value = Response(json.dumps({
             "data": [{"embedding": [float("nan")] * 768}]
         }).encode())
-        with mock.patch("quattro_agent.retrieval.urllib.request.build_opener", return_value=opener):
+        with mock.patch("quattro_core.retrieval.urllib.request.build_opener", return_value=opener):
             with self.assertRaisesRegex(RuntimeError, "wrong dimensions"):
                 backend.embed_query("query")
         opener.open.return_value = Response(b"x" * (4 * 1024 * 1024 + 1))
-        with mock.patch("quattro_agent.retrieval.urllib.request.build_opener", return_value=opener):
+        with mock.patch("quattro_core.retrieval.urllib.request.build_opener", return_value=opener):
             with self.assertRaisesRegex(RuntimeError, "too large"):
                 backend.embed_query("query")
 
@@ -390,11 +358,11 @@ class RetrievalTests(unittest.TestCase):
         dataset = self.root / "benchmark.json"
         dataset.write_text(json.dumps({"cases": [{
             "id": "symbol-1", "query": "Find QueryRouter",
-            "query_type": "exact_symbol", "repository": str(self.repo),
+            "query_type": "exact_symbol", "repository": str(self.repo), "branch": "main",
             "expected_source_type": ["code"], "expected_files": ["router.py"],
             "expected_symbols": ["QueryRouter"], "expected_memories": [],
             "retrieval_required": True, "semantic_required": False,
-            "graph_required": True, "expected_authority": "source",
+            "graph_required": False, "expected_authority": "source",
             "ground_truth_status": "established", "notes": "fixture",
         }]}), encoding="utf-8")
         result = run_benchmark(
@@ -406,7 +374,49 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(result["cases"][0]["resultIds"], [target])
         self.assertIn("p95LatencyMs", result["metrics"])
 
-    def test_index_v2_migration_preserves_only_explicit_memory(self):
+    def test_benchmark_partial_truth_does_not_inflate_rank_metrics(self):
+        self.store.upsert_document(
+            source_type="code", content="class QueryRouter: pass",
+            repository=str(self.repo), branch="main", path="router.py",
+            symbol="QueryRouter",
+        )
+        common = {
+            "query": "Find QueryRouter", "query_type": "exact_symbol",
+            "repository": str(self.repo), "branch": "main",
+            "expected_source_type": ["code"], "expected_symbols": ["QueryRouter"],
+            "retrieval_required": True, "semantic_required": False,
+            "graph_required": False,
+        }
+        result = run_benchmark(self.store, [
+            {**common, "id": "partial-hit", "ground_truth_status": "partial"},
+            {**common, "id": "established-miss", "expected_symbols": ["MissingSymbol"],
+             "ground_truth_status": "established"},
+        ], default_repository=self.repo)
+        self.assertEqual(result["strictGroundTruthCases"], 1)
+        self.assertEqual(result["metrics"]["recallAt1"], 0.0)
+        self.assertEqual(result["metrics"]["mrr"], 0.0)
+
+    def test_benchmark_current_state_query_uses_indexed_lexical_results(self):
+        target = self.store.upsert_document(
+            source_type="documentation", content="What branch am I on? Check git branch.",
+            repository=str(self.repo), branch="main", path="workflow.md",
+        )
+        result = run_benchmark(self.store, [{
+            "id": "branch-guide", "query": "What branch am I on?",
+            "query_type": "lexical_identifier", "repository": str(self.repo),
+            "branch": "main", "expected_source_type": ["documentation"],
+            "expected_files": ["workflow.md"], "retrieval_required": True,
+            "semantic_required": False, "graph_required": False,
+            "ground_truth_status": "established",
+        }], default_repository=self.repo)
+        case = result["cases"][0]
+        self.assertEqual(case["route"], "lexical")
+        self.assertTrue(case["routerCorrect"])
+        self.assertFalse(case["semanticUsed"])
+        self.assertEqual(case["resultIds"], [target])
+        self.assertEqual(result["metrics"]["recallAt1"], 1.0)
+
+    def test_index_v3_migration_preserves_explicit_and_derived_rows(self):
         explicit = self.store.upsert_document(
             source_type="memory", content="approved durable fact",
             repository=str(self.repo), metadata={"explicit": True},
@@ -417,13 +427,21 @@ class RetrievalTests(unittest.TestCase):
             repository=str(self.repo), origin="repository",
         )
         self.store.connection.execute(
-            "UPDATE retrieval_meta SET value='1' WHERE key='index_version'"
+            "UPDATE retrieval_meta SET value='2' WHERE key='index_version'"
         )
         self.store.connection.commit(); self.store.close()
         self.store = RetrievalStore(self.db)
         self.assertIsNotNone(self.store.inspect(explicit))
-        with self.assertRaises(KeyError):
-            self.store.inspect(derived)
+        self.assertIsNotNone(self.store.inspect(derived))
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT value FROM retrieval_meta WHERE key='index_version'"
+            ).fetchone()[0],
+            "3",
+        )
+        backups = list(self.db.parent.glob(self.db.name + ".v2.*.bak"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":

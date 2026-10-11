@@ -1,48 +1,55 @@
-name: CI
+name: Intelligence Core CI
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, 'release/**', 'refactor/**']
+    branches: [main, 'release/**', 'refactor/**', 'feat/**']
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  linux-core-and-desktop:
-    name: Linux full validation
+  standalone:
+    name: Standalone core and frozen desktop regressions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: pip
-      - name: Install Core package
-        run: python -m pip install --upgrade pip build && python -m pip install --no-deps .
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: CLI smoke test
-        run: quattro-agent --help && quattro-agent --version
-      - name: Existing and architecture tests
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build
+      - name: Standalone and desktop preservation tests
+        env:
+          PYTHONPATH: src
         run: python -m unittest discover -s tests -p 'test_*.py'
-      - name: Build distributions
-        run: python -m build
-      - name: Compile Python
-        run: python -m compileall -q src scripts
       - name: Python static hygiene
         run: python scripts/check_python.py
-      - name: Public artifact policy
-        run: python scripts/check_public_artifacts.py
-      - name: Public history policy
-        run: python scripts/check_public_history.py
-      - name: Diff and documentation hygiene
-        run: git diff --check && test -s README.md && test -s LICENSE && test -s SECURITY.md
+      - name: Public artifact and history policy
+        run: python scripts/check_public_artifacts.py && python scripts/check_public_history.py
+      - name: Source and documentation hygiene
+        run: python -m compileall -q src/quattro_core src/quattro_intelligence_mcp.py scripts/install_local.py && git diff --check && test -s README.md && test -s LICENSE && test -s SECURITY.md
+      - name: Build explicit package closure
+        run: python -m build
+      - name: Install and smoke isolated wheel
+        run: |
+          python -m venv "$RUNNER_TEMP/quattro-wheel"
+          "$RUNNER_TEMP/quattro-wheel/bin/python" -m pip --isolated install --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/quattro-wheel/bin/python" -c "import quattro_core, quattro_intelligence_mcp; from importlib.util import find_spec; assert find_spec('quattro_agent') is None; assert find_spec('quattro_desktop') is None"
+          "$RUNNER_TEMP/quattro-wheel/bin/quattro-intelligence" --help
+          "$RUNNER_TEMP/quattro-wheel/bin/quattro-intelligence-mcp" --help
+          "$RUNNER_TEMP/quattro-wheel/bin/quattro-intelligence" --config "$RUNNER_TEMP/smoke.json" config-init --database-dir "$RUNNER_TEMP/smoke-db" --project smoke
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"ci","version":"1"},"capabilities":{}}}' | "$RUNNER_TEMP/quattro-wheel/bin/quattro-intelligence-mcp" --config "$RUNNER_TEMP/smoke.json" | "$RUNNER_TEMP/quattro-wheel/bin/python" -c "import json,sys; response=json.load(sys.stdin); assert response['id'] == 1 and 'result' in response, response"
 
-  windows-core:
-    name: Windows Core (Python ${{ matrix.python-version }})
+  portable-core:
+    name: Windows core Python ${{ matrix.python-version }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -53,23 +60,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-      - name: Install Core package
-        run: python -m pip install --upgrade pip && python -m pip install --no-deps .
-      - name: Import and CLI startup
-        run: python -c "import quattro, quattro.core, quattro_agent; print('imports-ok')" && quattro-agent --help && quattro-agent --version
-      - name: Core architecture and portable feature tests
-        run: python -m unittest tests.test_core_desktop_boundary tests.test_windows_core tests.test_decision_plane
-      - name: Compile Core
-        run: python -m compileall -q src/quattro src/quattro_agent src/quattro_harness.py src/quattro_deployment.py src/quattro_release.py
+      - name: Install standalone package
+        run: python -m pip --isolated install --no-deps .
+      - name: Core regressions
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m unittest discover -s tests -p 'test_*core.py'
+          python -m unittest discover -s tests -p 'test_retrieval.py'
+          python -m unittest discover -s tests -p 'test_core_interfaces.py'
+      - name: Console and module startup
+        run: python -c "import quattro_core, quattro_intelligence_mcp"; quattro-intelligence --help; quattro-intelligence-mcp --help
 
   shellcheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ludeeus/action-shellcheck@2.0.0
-        with:
-          scandir: './src'
-          severity: warning
-      - name: Check installer
+      - name: Check isolated installer
         run: shellcheck install.sh
