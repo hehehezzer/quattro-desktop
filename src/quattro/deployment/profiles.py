@@ -96,6 +96,7 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
     "notification-store-helper": ("src/quattro-notification-store", ".local/bin/quattro-notification-store"),
     "monitor-helper": ("src/quattro-monitor", ".local/bin/quattro-monitor"),
     "desktop-helper": ("src/quattro_desktop_controls.py", ".local/bin/quattro_desktop_controls.py"),
+    "native-usage-helper": ("src/quattro_native_usage.py", ".local/bin/quattro_native_usage.py"),
     "spotify-art-helper": ("src/quattro_spotify_art.py", ".local/bin/quattro_spotify_art.py"),
     "lyrics-helper": ("src/quattro-lyrics", ".local/bin/quattro-lyrics"),
     "bluetooth-helper": ("src/quattro_bluetooth.py", ".local/bin/quattro_bluetooth.py"),
@@ -107,6 +108,7 @@ DESKTOP_DEPLOYMENT_MAPPINGS = {
         for name in (
             "services/qmldir", "services/DesktopMedia.qml", "services/DesktopWeather.qml",
             "services/LyricsController.qml", "services/PopupManager.qml",
+            "services/NativeUsage.qml",
             "services/MonitorMetrics.qml", "components/Monitoring.qml",
             "assets/fonts/Doto.ttf", "assets/fonts/OFL.txt", "assets/fonts/origin.json",
             "assets/fonts/ndot47/ndot-47-inspired-by-nothing.otf",

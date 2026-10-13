@@ -18,6 +18,7 @@ Scope {
     property string knowledgeMode: "retrieval"
     property string statusMessage: ""
     property var dashboard: ({"schemaVersion": 1, "agents": {}, "tasks": [], "sessions": [], "logicalSessions": [], "approvals": [], "project": {}, "retrieval": {}, "memory": {}})
+    readonly property var nativeUsage: NativeUsage.snapshot
     property var selectedTaskDetails: null
     property var selectedApproval: null
     property var knowledgeResults: []
@@ -132,6 +133,7 @@ Scope {
         refresh()
         refreshAccountState()
         refreshTitles()
+        NativeUsage.refresh()
         Qt.callLater(() => root.promptEditor ? root.promptEditor.forceActiveFocus() : keyScope.forceActiveFocus())
     }
     function close() { opened = false; paletteOpen = false; confirmOpen = false; page = "home"; statusMessage = "" }
@@ -269,24 +271,8 @@ Scope {
                     if (Array.isArray(parsed.accounts)) next.accounts = parsed.accounts
                     root.dashboard = next
                     if (changed) {
-                        if (!panelUsageProcess.running) panelUsageProcess.running = true
                         root.refresh()
                     }
-                } catch (error) {}
-            }
-        }
-    }
-    Process {
-        id: panelUsageProcess
-        command: [root.agentCommand, "usage", "status"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                try {
-                    const parsed = JSON.parse(text)
-                    const next = Object.assign({}, root.dashboard)
-                    next.usage = parsed
-                    if (parsed.accountId) next.activeAccount = parsed.accountId
-                    root.dashboard = next
                 } catch (error) {}
             }
         }
@@ -688,7 +674,7 @@ Scope {
                         }
                     }
                 }
-                SectionLabel { text: "CODEX ACCOUNT & LIMITS" }
+                SectionLabel { text: "CODEX ACCOUNTS & NATIVE OMP LIMITS" }
                 Card {
                     implicitHeight: accountLimitsColumn.implicitHeight + 22
                     ColumnLayout {
@@ -710,16 +696,16 @@ Scope {
                             }
                             Item { Layout.fillWidth: true }
                             ActionButton {
-                                label: actionProcess.running && root.actionKind === "usage" ? "Refreshing…" : "Refresh limits"
-                                enabled: !actionProcess.running && !!root.dashboard.activeAccount && root.object(root.dashboard.usage).accountId === root.dashboard.activeAccount
-                                onClicked: root.invoke(["usage", "refresh", "--account", root.dashboard.activeAccount], "usage")
+                                label: NativeUsage.loading ? "Refreshing…" : "Refresh native limits"
+                                enabled: !NativeUsage.loading
+                                onClicked: NativeUsage.refresh()
                             }
                         }
                         RowLayout {
                             Layout.fillWidth: true
                             Text {
-                                text: (root.object(root.dashboard.usage).alias || root.dashboard.activeAccount || "Codex")
-                                      + " · " + (root.object(root.dashboard.usage).plan || "plan unavailable")
+                                text: (root.nativeUsage.alias || "omp · Codex")
+                                      + " · " + (root.nativeUsage.plan || "plan unavailable")
                                 color: QuattroTheme.Theme.textStrong
                                 font.family: "JetBrainsMono Nerd Font"
                                 font.pixelSize: 9
@@ -727,29 +713,28 @@ Scope {
                                 Layout.fillWidth: true
                             }
                             Text {
-                                text: root.object(root.dashboard.usage).authenticationRequired ? "SIGN IN"
-                                    : root.object(root.dashboard.usage).status === "live" ? "LIVE"
-                                    : root.object(root.dashboard.usage).status === "stale" ? "SAVED" : "UNAVAILABLE"
-                                color: root.object(root.dashboard.usage).status === "live" ? QuattroTheme.Theme.success : QuattroTheme.Theme.warning
+                                text: root.nativeUsage.status === "live" ? "LIVE"
+                                    : root.nativeUsage.status === "stale" ? "SAVED" : "UNAVAILABLE"
+                                color: root.nativeUsage.status === "live" ? QuattroTheme.Theme.success : QuattroTheme.Theme.warning
                                 font.family: "JetBrainsMono Nerd Font"
                                 font.pixelSize: 7
                                 font.bold: true
                             }
                         }
                         UsageMeter {
-                            label: root.object(root.object(root.dashboard.usage).primary).label || "Primary"
-                            window: root.object(root.dashboard.usage).primary || null
+                            label: root.object(root.nativeUsage.primary).label || "Primary"
+                            window: root.nativeUsage.primary || null
                             visible: !!window
                         }
                         UsageMeter {
-                            label: root.object(root.object(root.dashboard.usage).secondary).label || "Secondary"
-                            window: root.object(root.dashboard.usage).secondary || null
+                            label: root.object(root.nativeUsage.secondary).label || "Secondary"
+                            window: root.nativeUsage.secondary || null
                             visible: !!window
                         }
                         Text {
                             visible: text.length > 0
                             text: {
-                                const usage = root.object(root.dashboard.usage)
+                                const usage = root.nativeUsage
                                 const message = usage.message || ""
                                 return message + (usage.stale && usage.lastSuccessfulRefresh
                                     ? " Last updated " + root.age(usage.lastSuccessfulRefresh) + " ago." : "")

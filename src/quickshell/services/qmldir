@@ -4,3 +4,4 @@ singleton DesktopWeather 1.0 DesktopWeather.qml
 singleton PopupManager 1.0 PopupManager.qml
 MonitorMetrics 1.0 MonitorMetrics.qml
 singleton NotificationHistory 1.0 NotificationHistory.qml
+singleton NativeUsage 1.0 NativeUsage.qml
