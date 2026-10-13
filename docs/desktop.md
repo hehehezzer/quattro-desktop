@@ -48,15 +48,42 @@ there is no separate extrapolation clock or global lyric offset. The clock still
 depends on Spotify reporting playback changes; unreported buffering or inaccurate
 source lyric timestamps cannot be corrected by a UI sampling interval.
 
-Usage displays distinguish live limits, saved limits, unavailable limits and a
-native account requiring sign-in. Refresh failures preserve the last successful
-snapshot and show a bounded recovery message, never a raw provider response.
-Missing/non-finite percentages are unavailable, not zero usage. Reauthenticate
-the selected account with native `codex login` using its configured isolated
-`CODEX_HOME`, then run `quattro-agent usage refresh --account ACCOUNT_ID`.
-The panel refreshes only the displayed account; the background timer can still
-refresh all enabled accounts. Refreshing limits does not sign an account in or
-change account selection.
+## Native omp usage limits
+
+The bar and Agents limit meter consume one shared `NativeUsage` singleton.
+`quattro_native_usage.py`, installed in `~/.local/bin`, collects supported native
+`omp usage --json --redact --no-extensions --provider openai-codex` reports.
+This avoids mistaking an obsolete isolated Codex login for the account used by
+omp. Legacy Codex account controls remain available, but do not select an omp
+credential or determine native usage attribution.
+
+Collection runs every two minutes with a 35-second timeout and no overlapping
+worker. Opening the Agents panel or selecting **Refresh native limits** uses
+the same singleton; per-monitor bars only update their reset countdowns.
+Only ordinary Codex primary/secondary windows, plan and refresh metadata reach
+QML. Native millisecond reset timestamps are converted to seconds. An absent
+five-hour window is omitted, never invented as zero usage. Multiple native
+Codex reports are treated as ambiguous, rather than choosing an arbitrary
+pooled account or labeling it as a legacy desktop account.
+
+The private, atomically replaced
+`~/.local/state/quattro/agents/usage/native-omp.json` preserves last-known-good
+limits. Failed refreshes, snapshots older than fifteen minutes and passed reset
+times display **SAVED**, not **LIVE**. Missing limits display **UNAVAILABLE**.
+Messages are fixed recovery categories; raw provider output, credentials and
+account identifiers are not copied into QML or the display cache.
+
+```bash
+qs ipc call usage status
+qs ipc call usage refresh
+```
+
+These commands collect/display limits, not session control. The helper never
+invokes login, logout, account switching, invalidation or process-group
+cancellation. Native SDK collection may refresh its own caches or OAuth state;
+`--provider` filters reported output and is not a network-isolation guarantee.
+Publish/deploy only the Desktop profile for this change; do not replace frozen
+Core, restart agent brokers, close terminals or modify ongoing omp/herdr sessions.
 
 ## Ghostty terminal integration
 

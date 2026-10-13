@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Restore Quickshell limit usage from native omp Codex reports instead of
+  obsolete isolated-account authentication state. Share one bounded collector
+  across monitor bars and the Agents meter, preserve private last-known-good
+  limits on failure, and omit unknown windows or ambiguous account attribution.
+  Include the helper and singleton in the Desktop deployment inventory.
 - Add categorical operational preflight, scoped retrieval advice and repeated-failure
   recovery telemetry for native adapters. Keep host permissions and model plans
   authoritative; standalone Codex MCP advice remains explicit.
