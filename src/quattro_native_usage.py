@@ -111,7 +111,7 @@ def main():
             [command, "usage", "--json", "--redact",
              "--no-extensions", "--provider", "openai-codex"],
             cwd=HOME, env={"HOME": str(HOME),
-                          "PATH": str(Path(command).parent) + os.pathsep + os.defpath,
+                          "PATH": search_path,
                           "LANG": "C.UTF-8"},
             capture_output=True, timeout=35, check=True,
         )

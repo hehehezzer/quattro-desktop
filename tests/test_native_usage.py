@@ -4,6 +4,7 @@ import copy
 import datetime as dt
 import io
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -188,6 +189,43 @@ class NativeUsageCacheTests(unittest.TestCase):
                     self.assertEqual(result["status"], status)
                     self.assertEqual(result["stale"], status == "stale")
                     self.assertEqual(result["fetchedAt"], NOW * 1000)
+
+
+@unittest.skipUnless(os.name == "posix", "Desktop source launchers require POSIX")
+class NativeUsageLauncherTests(unittest.TestCase):
+    def test_source_launcher_can_use_interpreter_in_separate_path_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            launcher_dir = home / ".local/bin"
+            interpreter_dir = home / ".bun/bin"
+            launcher_dir.mkdir(parents=True)
+            interpreter_dir.mkdir(parents=True)
+            launcher = launcher_dir / "omp"
+            launcher.write_text('#!/bin/sh\nexec bun "$@"\n', encoding="utf-8")
+            launcher.chmod(0o755)
+            interpreter = interpreter_dir / "bun"
+            interpreter.write_text(
+                "#!" + sys.executable + "\nprint(" + repr(json.dumps(
+                    payload([quota(fraction=0.64)])
+                )) + ")\n", encoding="utf-8",
+            )
+            interpreter.chmod(0o755)
+            output = io.StringIO()
+            with (
+                mock.patch.object(usage, "HOME", home),
+                mock.patch.object(usage, "CACHE", home / "native-omp.json"),
+                mock.patch.object(usage.time, "time", return_value=NOW),
+                mock.patch.dict(os.environ, {"PATH": str(interpreter_dir) + os.pathsep + os.defpath}),
+                redirect_stdout(output),
+            ):
+                usage.main()
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["status"], "live")
+            self.assertEqual(result["primary"]["usedPercent"], 64)
+            self.assertEqual(result["primary"]["resetAt"], NOW + 3600)
+            self.assertIsNone(result["secondary"])
+            self.assertEqual(json.loads((home / "native-omp.json").read_text())["primary"],
+                             result["primary"])
 
 
 if __name__ == "__main__":
