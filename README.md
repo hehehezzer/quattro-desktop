@@ -32,6 +32,7 @@ The last command serves JSON-lines MCP on stdin/stdout; it opens no network list
 - Episodic, semantic, procedural and shared memories with verification, references, confidence, tags, private/project visibility, revisions, supersession, invalidation and deletion.
 - Context with current source citations, relevant prior memories, explicit fact-conflict reporting, deduplication and a conservative budget covering the complete returned context object.
 - Recoverable index migrations and explicit legacy imports that preserve original records and vectors, quarantining records without safe namespace attribution.
+- Opt-in native omp/Codex task-context adapters, all nine on-demand core operations, explicit native write approval, Herdr transport attribution and content-free retrieval/delivery receipts. No model/account/permission takeover; Codex hook trust remains native.
 
 ## MCP tools
 
@@ -51,7 +52,7 @@ All tools enforce operator-configured namespace and write permissions. Indexing 
 | Install, CLI operations and diagnostics | [Operating guide](docs/installation.md) |
 | Source/access/backend settings | [Configuration](docs/configuration.md) |
 | Retrieval and context semantics | [Retrieval](docs/RETRIEVAL.md) |
-| Independent clients, no framework installation | [Future integration guide](docs/INTEGRATION.md) |
+| Native omp/Codex, Herdr attribution and independent clients | [Integration guide](docs/INTEGRATION.md) |
 | Executed checks and measured limits | [Test report](docs/TEST_REPORT.md) |
 | Trust boundaries and threats | [Security](docs/security.md) |
 

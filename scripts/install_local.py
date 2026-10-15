@@ -46,7 +46,7 @@ def validate_environment(destination: Path) -> Path:
         reject_symlink_components(path)
         if not path.resolve().is_relative_to(destination):
             raise ValueError(f"Virtual environment installation path escapes destination: {path}")
-    for name in ("quattro-intelligence", "quattro-intelligence-mcp"):
+    for name in ("quattro-intelligence", "quattro-intelligence-mcp", "quattro-intelligence-native"):
         for suffix in ("", ".exe", "-script.py"):
             reject_symlink_components(commands / (name + suffix))
     return python

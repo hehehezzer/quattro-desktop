@@ -4,6 +4,8 @@ Launch `quattro-intelligence-mcp --config /absolute/intelligence.json`, or `quat
 
 `initialize`, `ping`, `tools/list` and `tools/call` are supported. Send `notifications/initialized` after initialization. Notifications never execute mutations or return responses. Exact machine-readable input schemas are published by `tools/list`; additional unknown arguments are rejected.
 
+Initialization accepts the standard optional `clientInfo.title`. Standard request-parameter `_meta` objects (including progress tokens) are accepted and discarded before operation validation; metadata never supplies project/principal/write/verification authority. Tool arguments remain strict.
+
 ## Tool inputs
 
 All project/source/identity identifiers must also satisfy configuration validation. Optional fields use documented defaults. Pages: `limit` 1–50 (default 10), `offset` 0–100000 (default 0). Queries: up to 2,000 characters. `source_ids` accepts up to 64 registered IDs belonging to the requested project.
@@ -33,6 +35,8 @@ Save defaults: `semantic`, confidence 0.5, `unverified`, `project` visibility, e
 ```
 
 Successful calls return `result.isError: false`, `result.structuredContent` and an equivalent JSON text content item. Knowledge citations carry source ID/kind, namespace, path, line range, document/file hashes, freshness and optional commit SHA. Content is always marked `untrusted: true`; no returned string changes Quattro's authorization.
+
+When the operator sets `QUATTRO_NATIVE_HOST=omp` or `codex`, successful calls also return a content-free receipt in `result._meta["quattro.receipt"]` and a separate textual receipt. The core `structuredContent` is unchanged, so context budgets exclude the surrounding receipt/envelope. MCP connection IDs are synthetic, not native conversation IDs; returned results do not prove host delivery or model reliance.
 
 ## Errors and limits
 

@@ -413,6 +413,15 @@ class RetrievalStore:
         self.connection.execute("PRAGMA journal_mode=WAL")
         self.connection.execute("PRAGMA synchronous=FULL")
         self.connection.execute("PRAGMA foreign_keys=ON")
+        # Established readers must not acquire the indexer's long-lived writer lock.
+        # Schema creation/migration below still owns an immediate transaction.
+        complete = {"retrieval_meta", "documents", "documents_fts", "indexed_files",
+                    "graph_edges", "query_cache", "retrieval_runs"}
+        if ("documents" in tables and version == INDEX_VERSION
+                and complete.issubset(tables) and "embedding_model" in columns):
+            metadata = {row[0] for row in self.connection.execute("SELECT key FROM retrieval_meta")}
+            if {"index_version", "generation", "embedding_model", "embedding_dimensions"}.issubset(metadata):
+                return
         self.connection.executescript("""
         BEGIN IMMEDIATE;
         CREATE TABLE IF NOT EXISTS retrieval_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);

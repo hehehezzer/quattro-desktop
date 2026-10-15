@@ -24,6 +24,7 @@ classifiers = [
 [project.scripts]
 quattro-intelligence = "quattro_core.cli:main"
 quattro-intelligence-mcp = "quattro_intelligence_mcp:main"
+quattro-intelligence-native = "quattro_core.native:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

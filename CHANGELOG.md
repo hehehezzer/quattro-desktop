@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — Native intelligence clients
+
+- Add opt-in retrieval-only native omp and Codex adapters: automatic bounded project/shared context, nine on-demand core operations, explicit native mutation approval, and Herdr pane attribution without historical orchestration/model pins.
+- Add content-free native session/turn receipts with semantic availability, source coverage, returned results and independently observed delivery. Keep native diagnostic probes separate; never infer model reliance from availability or delivery.
+- Add explicit operator source/client configuration and adapter installation, local Nomic embedding user-service configuration, and a native receipt CLI. Preserve existing databases and native account/model/permission state; never bypass Codex hook trust.
+- Fix actual native MCP interoperability with standard `clientInfo.title` and request `_meta`; metadata cannot grant namespace/write/verification authority. Keep receipt metadata outside structured context budgets.
+- Let established retrieval readers query committed evidence while atomic source replacement holds the writer lock. Keep potentially long indexing outside native prompt hooks; missing/stale coverage is explicit and indexing remains a native-approved operation.
+
 ## Unreleased — Intelligence Core 1.0.0
 
 - Rebuild Quattro as an independent local-first knowledge, hybrid retrieval and persistent-memory service; remove agent execution/orchestration, model/provider/account routing, Jev/OmniRoute decisions, worker/session control and native client registration from the active product.

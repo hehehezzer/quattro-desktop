@@ -70,6 +70,18 @@ An active fact's content change requires a new `memory save ... --fact-key SAME_
 
 The backup destination must be new/private; online SQLite backups include WAL data from both stores. Import copies originals, preserves IDs/vectors and quarantines unassigned records. It does not import task telemetry as factual memory. See [migration](MIGRATION.md) before operating on real data.
 
+## Optional native clients and receipts
+
+After explicitly approving native setup, use `scripts/configure_native.py` with an existing base config and an explicit source-registration manifest; `--install-clients` additionally deploys the omp extension and Codex MCP/task hook. This is separate from the default isolated installer. See [native integration](INTEGRATION.md) for source authorization, publisher identities, learned embeddings, hook trust, Herdr attribution and the requirement to start/reload native sessions.
+
+```bash
+quattro-intelligence-native --host omp status --session SESSION_ID
+quattro-intelligence-native --host codex status --session SESSION_ID
+```
+
+Inside native omp, `/quattro` shows that session's receipts. Automatic task context never performs an index mutation: use an explicitly approved `quattro_index_source`/MCP `index_source`, or the operator `index SOURCE_ID` command, for missing/stale registered sources. An indexed source and a registered source are not the same claim.
+
+
 ## Platforms and service policy
 
-Linux startup, indexing, package installation and MCP were locally exercised. Portable memory/MCP CI is configured for Windows; Windows indexing and macOS runtime remain unverified. No HTTP service, background scheduler or systemd unit is installed. Future clients start the stdio server themselves; do not restart unrelated installed desktop or agent services as part of intelligence setup.
+Linux startup, indexing, package installation and MCP were locally exercised. Portable memory/MCP CI is configured for Windows; Windows indexing and macOS runtime remain unverified. The default installer installs no HTTP service, background scheduler or systemd unit. The separately authorized optional local embedding user unit is described in the native integration guide. Clients start stdio servers themselves; do not restart unrelated installed desktop or agent services as part of intelligence setup.

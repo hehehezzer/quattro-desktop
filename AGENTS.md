@@ -1,6 +1,6 @@
 # Development instructions: Quattro Intelligence Core
 
-Quattro is a standalone persistent-memory and hybrid-retrieval service, **not** an execution orchestrator. Runtime code lives in `src/quattro_core/`; `quattro-intelligence` and `quattro-intelligence-mcp` are the active interfaces.
+Quattro is a standalone persistent-memory and hybrid-retrieval service, **not** an execution orchestrator. Runtime code lives in `src/quattro_core/`; `quattro-intelligence`, `quattro-intelligence-mcp` and the optional `quattro-intelligence-native` boundary are the active interfaces. Native adapters must preserve host model/account/permission/delegation controls and may not bypass hook trust.
 
 ## Invariants
 

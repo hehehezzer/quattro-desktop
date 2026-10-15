@@ -33,10 +33,14 @@ flowchart LR
 | `mcp.py` | Bounded JSON-lines MCP transport and input schemas; safe errors; no caller-controlled authorization or filesystem roots |
 | `cli.py` | Local operator setup, source registration, server launch, queries, health, diagnostics, memory and backups/imports |
 | `benchmark.py` | Retained deterministic retrieval-quality benchmark utility, not an execution benchmark |
+| `native.py` | Optional native-client context/tool boundary, registered-cwd scope selection and receipt commands; no agent/model/permission control |
+| `receipts.py` | Content-free retrieval/delivery records, explicit native/Herdr attribution and diagnostic separation |
 
 ## Storage and ownership
 
 Each configured `database_dir` contains `retrieval.sqlite3` and `memory.sqlite3`. Both use WAL, full synchronization and bounded lock waits. Storage directories must be operator-owned/private on POSIX; database files are created mode 0600 **before** SQLite can create journals. Symlink/hardlink database targets fail closed. No live historical database is selected implicitly.
+
+Native integrations additionally use private `native-receipts.sqlite3`, separate from factual memory and preserved historical telemetry. Its records contain operation/session/turn, source coverage and availability, never source/query/conversation text. Context output submission, host-observed message presence and model reliance are distinct states; model reliance is not inferred. See [integration](INTEGRATION.md).
 
 Knowledge adds `knowledge_sources`, `knowledge_files` and `knowledge_documents` ownership tables to the preserved retrieval schema. `legacy_quarantine` records originals without safe attribution. Repository evidence and agent-authored memory remain separate stores and result types.
 
@@ -45,6 +49,8 @@ File updates and removals are one source transaction, including FTS, vectors, fi
 ## Concurrency and portability
 
 Independent clients open independent SQLite connections. Memory deduplication, fact checks, revision checks, supersession and audit writes occur inside `BEGIN IMMEDIATE`. SQLite serializes writers; WAL permits readers. Each connection is used synchronously by its owning process, not shared across arbitrary threads.
+
+Opening an established, complete retrieval schema avoids an immediate writer transaction; a reader can use the prior committed snapshot while another process atomically replaces a source. Schema initialization/migration still takes its own writer transaction.
 
 The source indexer uses POSIX descriptor-relative, no-follow file opens to enforce filesystem containment. Linux is locally verified. Portable memory/MCP tests are configured in Windows CI; Windows indexing and macOS runtime remain unverified.
 
