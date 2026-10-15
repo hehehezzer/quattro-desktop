@@ -78,6 +78,8 @@ The installer discovers existing default omp and named-profile agent directories
 
 `adapters/codex/context_hook.py` uses the supported `UserPromptSubmit` event with `hookSpecificOutput.additionalContext`. Native MCP exposes all nine core tools under the configured `quattro_intelligence` server. Read operations are approved; indexing and memory mutations prompt. The server is required, so a broken connection is not silently treated as integrated.
 
+Automatic omp context remains bounded at20seconds, below the30-second host event deadline. Ordinary explicit omp tools allow120seconds; approved `index_source` allows1800seconds because a cold local-neural index can exceed two minutes. Codex's required MCP server uses an1800-second tool deadline to permit the same explicit indexing workload. This does not extend prompt-hook work, start automatic indexing or bypass mutation approval; native cancellation remains available.
+
 **Codex hook trust is an independent native gate.** Review the exact Quattro and Herdr hook commands through `/hooks` in each intended Codex home. New/changed untrusted hooks are skipped. The installer never writes trusted hashes or uses a hook-trust/sandbox bypass. The hook can prove output submission, not later host acceptance or model reliance; its receipt remains unverified unless a separate observation proves model-visible delivery. Existing sessions must reload native plugins/hooks where supported or start a new session; their pre-existing tool inventories are not retroactively changed.
 
 ## Learned semantic retrieval and freshness

@@ -35,7 +35,8 @@ export default function quattroIntelligence(pi: ExtensionAPI) {
   function identity(ctx: ExtensionContext) {
     return { cwd: ctx.cwd, session_id: ctx.sessionManager.getSessionId(), transport, diagnostic };
   }
-  async function request(action: string, input: unknown, signal?: AbortSignal): Promise<NativeResponse> {
+  async function request(action: string, input: unknown, signal?: AbortSignal,
+    timeoutMs = action === "call" ? 120_000 : 20_000): Promise<NativeResponse> {
     const runtime = runtimeSchema.parse(JSON.parse(readFileSync(join(root, "native-runtime.json"), "utf8")));
     const config = join(runtime.config_dir, "clients/omp.json");
     if (signal?.aborted) throw new Error("Quattro request cancelled");
@@ -48,7 +49,7 @@ export default function quattroIntelligence(pi: ExtensionAPI) {
     let size = 0;
     let failed = false;
     const abort = () => { failed = true; child.kill("SIGTERM"); };
-    const timeout = setTimeout(abort, action === "call" ? 120_000 : 20_000);
+    const timeout = setTimeout(abort, timeoutMs);
     signal?.addEventListener("abort", abort, { once: true });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
@@ -123,7 +124,8 @@ export default function quattroIntelligence(pi: ExtensionAPI) {
     pi.registerTool({ name: `quattro_${name}`, label: `Quattro ${name}`, description, parameters,
       approval: write ? { tier: "write", policy: "prompt" } : "read", loadMode: "essential",
       async execute(_id, args, signal, _update, ctx) {
-        const result = await request("call", { ...identity(ctx), name, arguments: args }, signal);
+        const result = await request("call", { ...identity(ctx), name, arguments: args }, signal,
+          name === "index_source" ? 1_800_000 : 120_000);
         if (result.receipt?.id && result.status === "ready") pending.set(result.receipt.id, ctx.sessionManager.getSessionId());
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }],
           details: { receipt: result.receipt }, isError: result.status !== "ready" };

@@ -44,7 +44,7 @@ def codex_configuration(original, executable, config):
         if not discard:
             lines.append(line)
     output = "".join(lines).rstrip()+"\n\n[mcp_servers.quattro_intelligence]\n"
-    output += f"command = {json.dumps(str(executable))}\nargs = [\"--config\", {json.dumps(str(config))}]\nrequired = true\ntool_timeout_sec = 200\n"
+    output += f"command = {json.dumps(str(executable))}\nargs = [\"--config\", {json.dumps(str(config))}]\nrequired = true\ntool_timeout_sec = 1800\n"
     output += '\n[mcp_servers.quattro_intelligence.env]\nQUATTRO_NATIVE_HOST = "codex"\n'
     for name in (*READ_TOOLS,*WRITE_TOOLS):
         mode = "approve" if name in READ_TOOLS else "prompt"

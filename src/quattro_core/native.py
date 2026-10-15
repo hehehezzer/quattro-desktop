@@ -43,10 +43,14 @@ def source_status(runtime, projects):
 
 def summary(receipt):
     semantics = receipt.get("semantic", {})
-    mode = "semantic+lexical" if semantics.get("available") else "lexical fallback"
+    mode = "semantic not assessed"
+    if "available" in semantics:
+        mode = "semantic+lexical" if semantics["available"] else "lexical fallback"
     scope = receipt.get("project") or "shared-only (cwd unregistered)"
     sources = receipt.get("sources", [])
-    coverage = "index refresh required" if any(source["last_failure"] or source.get("refresh_needed") for source in sources) else "indexed sources"
+    coverage = "coverage not assessed"
+    if sources:
+        coverage = "index refresh required" if any(source["last_failure"] or source.get("refresh_needed") for source in sources) else "indexed sources"
     return f"Quattro {receipt['id']}: {receipt['status']}; {mode}; scope {scope}; {coverage}; {receipt.get('result_count',0)} evidence/memories; context delivery unverified."
 
 
