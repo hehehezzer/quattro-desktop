@@ -27,7 +27,8 @@ def main():
     projects = list(base.projects)
     for entry in manifest:
         source = Source(entry["id"],entry["project"],Path(entry["root"]),entry.get("kind","repository"),
-                        tuple(entry.get("exclusions",[])),entry.get("authority",0.8))
+                        tuple(entry.get("exclusions",[])),entry.get("authority",0.8),
+                        entry.get("intent","undecided"),entry.get("exclusion_reason"))
         if source.id in {s.id for s in sources}:
             raise ValueError("duplicate source identifier")
         sources.append(source)

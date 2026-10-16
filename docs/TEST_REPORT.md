@@ -2,6 +2,60 @@
 
 Baseline verification date: 2026-10-11 UTC. Linux x86_64; Python 3.14.7, SQLite 3.53.4. The baseline did not install native agents or activate a production deployment. The separately authorized local native integration below supersedes its client-deployment limitation.
 
+## Production reliability release — 2026-10-16
+
+**PARTIAL acceptance, locally installed and exercised.** The three previously approved sources are reconciled; thirty other registrations require explicit scope decisions, not automatic ingestion. Publication of the accumulated unpublished rebuild history remains outside this rollout. No embedding model, vector backend, orchestration, native account, model selection or approval policy was replaced.
+
+### Implementation and coverage
+
+- `knowledge.py`, `config.py` and `retrieval.py`: durable intent/status/attempt/success/failure metadata, full content fingerprints, Git/secret/symlink boundaries, atomic incremental publication, bounded retry and explicit dry-run/retry/reconciliation controls. Changed/deleted/unauthorized evidence is suppressed before delivery, including failed replacement attempts.
+- `native.py`, `mcp.py`, `receipts.py` and both adapters: content-free correlated lifecycle receipts with resolved project/source scope, isolated Python imports, explicit failure stages and distinct submitted/confirmed boundaries. Client acceptance and semantic correctness are not inferred from successful retrieval.
+- `doctor.py`, `recovery.py`, `feedback.py` and CLI: genuinely read-only diagnosis, authorized source/result inspection, actual score contributions, principal/source-scoped diagnostic feedback, online three-store snapshots and new-directory-only recovery.
+- All 33 registrations audited. Historical baseline: three successful stored snapshots, thirty never-indexed registrations, 320 files / 3,155 documents. Their initial live freshness was not established; later pre-refresh inventory is not a pristine before-change freshness baseline.
+- Final deep reconciliation: **33 registered, 3 intended, 3 indexed/current, 30 pending scope decisions, 0 stale, 0 failed, 0 excluded**. The intended set is `code`, `shared-notes`, `quattro-notes`; other registrations were not treated as authorization. Evaluation artifacts are excluded from live code indexing.
+- First approved refresh updated 25 code files, reconciled five removed/ineligible records and generated 682 vectors; project notes required zero updates/embeddings, shared notes one update / eleven vectors. Subsequent documentation/memory changes are incrementally reconciled after this report.
+- Detailed source inventory and source-specific remediation remain private at `.quattro/reliability/source-audit-final.json`; no unrelated project roots or excerpts are published.
+
+### Retrieval measurements
+
+Reproducible reports: `benchmarks/reliability{,-baseline,-final}.json`. Same frozen authorized source corpus, retained vectors, memory fixtures, model, K=5 and 6,000-byte context budget; 60 source-grounded cases plus four sanitized memory-eligibility negatives. Split fixed before measurement; not independently blinded.
+
+| Hybrid metric | Baseline | Final | Change |
+|---|---:|---:|---:|
+| Recall@5 | 90.38% | 90.38% | 0 pp |
+| MRR | 0.8333 | 0.8333 | 0 |
+| nDCG | 0.8521 | 0.8521 | 0 |
+| Irrelevant knowledge-context ratio | 40.91% | 22.16% | -18.75 pp |
+| Search p50 | 216.83 ms | 252.76 ms | +35.93 ms |
+| Search p95 | 226.87 ms | 272.75 ms | +45.88 ms |
+| No-evidence accuracy | 0/12 | 12/12 | +100 pp |
+
+Final keyword / semantic / hybrid Recall@5: **87.50% / 88.46% / 90.38%**; search p50: **14.84 / 248.29 / 252.76 ms**; p95: **30.15 / 262.68 / 272.75 ms**. Every final strategy passed fixed isolation, freshness, memory-eligibility, availability, held-out recall and no-evidence gates. Baseline automatic context included one disputed canary per strategy; final context included none.
+
+The measured reliability tradeoff is additional current-file authorization/fingerprint checking, not a new ranking model. Irrelevance grades knowledge units only; memory semantic relevance and exact token counts are not measured. The twelve negatives test identifiers/scope/lifecycle, not general semantic abstention. These results do not certify other projects or every natural-language question.
+
+### Actual clients and recovery
+
+- Native OMP and Codex each completed two automatic-context turns without tool calls, returned their newly injected random receipt identifiers and cited supplied sources. OMP's host context-message boundary was confirmed automatically. Codex stdout submission remained distinct until the exact receipt was independently observed in model output; that specific receipt was then confirmed at `codex_model_input_observed`. Runtime evidence is retained privately in `.quattro/reliability/native-delivery-proof.json`.
+- Broad automatic context did not include the exact memory database filename; both clients abstained rather than inventing it. A subsequent real OMP `quattro_search_knowledge` call and real Codex MCP `search_knowledge` call retrieved current `docs/memory.md:1–3`; both answers correctly identified `memory.sqlite3` as explicit persistent memory and included the returned receipt. Codex repeated its read query once; no retry/routing change was introduced.
+- Source citations and context/model-input presence were observed; this is not a universal claim that model claims are correct. Receipts keep `client_accepted` / `answer_cited` as not observed where no automatic observer exists. Direct MCP responses are not mislabeled as automatic injection.
+- Actual pre-rollout online backup and isolated CLI restore included retrieval vectors/metadata, source mappings, memory history and native receipts. All three integrity checks passed; source links/checksums/schema versions were checked before recovery completion. The final recovery marker records `2026-10-16T07:06:13.529+00:00`. Live production files were never overwritten for recovery testing.
+- Recovered CLI keyword retrieval returned current cited evidence with actual BM25/ranking explanations; memory history retained one event. Isolated feedback record/export retained principal and revision and did not change ranking or verification.
+- Installed human-readable deep doctor returned truthful **degraded / exit 1**: all three intended sources current, databases/embeddings healthy, thirty scope decisions pending. Configuration presence, observed requests, delivery and citation observation are separate fields.
+- Doctor also preserves the latest scoped confirmed-delivery observation within its last 100 host receipts separately from a newer unconfirmed request. An older delivery is not promoted to current success or semantic end-to-end verification; the behavioral regression passed.
+
+### Validation, security and rollout
+
+- Baseline: **222 tests, one skip**, OK. Final: **260 tests, one opt-in retained desktop skip**, OK in **30.249 s**; compilation and `scripts/check_python.py` passed. One validation command initially named a nonexistent hygiene script; corrected to the existing repository command. A relative restore path was rejected; the explicit absolute-path restore passed.
+- Permanent regressions cover new/modified/moved/deleted/repeated/concurrent/interrupted indexing, failed embedding batches, wrong dimensions, bounded retries, last-known-good rollback, Git/secret/symlink boundaries, incomplete scope, actual explanation/feedback, memory authority/conflict/supersession/isolation/history, recovery tampering/scope/orphans and read-only/degraded diagnostics. Real process interruption and real hostile-cwd adapter imports are exercised.
+- Six independent implementation assignments were attempted; every generic worker was rejected by its provider's weekly quota before editing. Coordinator implemented the work. The available read-only security specialist identified seven defects; each was repaired with behavioral regressions and its assigned-scope re-review passed. This is not a broad security certification.
+- Built and installed the verified dependency-free final core wheel into the existing validated private venv; SHA-256 `5af280490e482e02c593a29d68610dcaea364a95cc1ac3cd5294fb25ec3d8fea`. Existing three OMP extension copies updated atomically; Codex hook/MCP registration, account credentials, native approvals and embedding service were preserved.
+- Reversible package/launcher/Quattro-config/extension copies are recorded in `.quattro/reliability/rollout-backup/manifest.json`; `release-manifest.json` records their 38 file checksums, launcher restore modes and the verified thirteen-module installed-wheel closure. Persistent data is in `pre-rollout-backup`. Rollback requires quiescing Quattro invocations, restoring only those mapped artifacts/configs with executable launcher modes, or restoring data into a new verified directory and explicitly repointing configs. Never replace a live database as a recovery test.
+- Coordinator/native model selection was preserved; observed OMP model was `gpt-6.1-sol`, Codex configuration remained `gpt-6.1-sol` / medium / default service tier. Worker effort selection is not exposed and remains unverified; no Fast override was requested.
+
+Remaining release dependencies: resolve the thirty source-intent decisions before claiming organization-wide coverage; authorize publication of the existing unpublished rebuild history; broaden independently labeled project/semantic-answer evaluation before claiming universal retrieval quality. Other signed-out native profiles were not authenticated or certified.
+
+
 ## Native intelligence integration — 2026-10-15
 
 - Final full suite: 222 tests, one opt-in retained desktop skip, OK in 29.212 seconds using the system interpreter with available desktop dependencies. Compilation and Python hygiene passed. Nine native-boundary regressions cover registered/shared isolation, longest-root/symlink behavior, read-only prompt context versus explicit indexing, session-bound delivery, content-free receipts, concurrent committed readers, real native MCP metadata and denied metadata-based verification authority. Two installation regressions reproduce private temporary-file exposure and wrong-store selection with a nondefault configuration, then pass after correction.

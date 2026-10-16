@@ -1,0 +1,1199 @@
+{
+  "version": 1,
+  "scope": "Quattro code/docs/adapters only; no authorization for other registered projects inferred",
+  "label_revision": "bc96ae442326566be0e944034422430f1e4ebf7b",
+  "limitations": "60 source-grounded cases plus four sanitized memory-state canaries. File/symbol binary labels; semantic answer correctness and projects outside the two previously approved namespaces are not evaluated. Heldout split fixed before measurement; no score thresholds tuned.",
+  "cases": [
+    {
+      "id": "core-01",
+      "query": "index_source",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/knowledge.py"
+      ],
+      "expected_symbol": "index_source",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/knowledge.py": "f57e65d2c4cae89224a6fc365d1b77c12e0c45abf29b69b8499f6dca3b80503c"
+      }
+    },
+    {
+      "id": "core-02",
+      "query": "search_knowledge",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/knowledge.py"
+      ],
+      "expected_symbol": "search_knowledge",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/knowledge.py": "f57e65d2c4cae89224a6fc365d1b77c12e0c45abf29b69b8499f6dca3b80503c"
+      }
+    },
+    {
+      "id": "core-03",
+      "query": "get_project_context",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/knowledge.py"
+      ],
+      "expected_symbol": "get_project_context",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/knowledge.py": "f57e65d2c4cae89224a6fc365d1b77c12e0c45abf29b69b8499f6dca3b80503c"
+      }
+    },
+    {
+      "id": "core-04",
+      "query": "get_index_status",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/knowledge.py"
+      ],
+      "expected_symbol": "get_index_status",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/knowledge.py": "f57e65d2c4cae89224a6fc365d1b77c12e0c45abf29b69b8499f6dca3b80503c"
+      }
+    },
+    {
+      "id": "core-05",
+      "query": "_read_file",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/knowledge.py"
+      ],
+      "expected_symbol": "_read_file",
+      "answerable": true,
+      "query_type": "security",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/knowledge.py": "f57e65d2c4cae89224a6fc365d1b77c12e0c45abf29b69b8499f6dca3b80503c"
+      }
+    },
+    {
+      "id": "core-06",
+      "query": "_safe_root",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/knowledge.py"
+      ],
+      "expected_symbol": "_safe_root",
+      "answerable": true,
+      "query_type": "security",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/knowledge.py": "f57e65d2c4cae89224a6fc365d1b77c12e0c45abf29b69b8499f6dca3b80503c"
+      }
+    },
+    {
+      "id": "core-07",
+      "query": "migrate_legacy_database",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/knowledge.py"
+      ],
+      "expected_symbol": "migrate_legacy_database",
+      "answerable": true,
+      "query_type": "history",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/knowledge.py": "f57e65d2c4cae89224a6fc365d1b77c12e0c45abf29b69b8499f6dca3b80503c"
+      }
+    },
+    {
+      "id": "core-08",
+      "query": "register_source",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/config.py"
+      ],
+      "expected_symbol": "register_source",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/config.py": "9da705b78d1987739ebcf7c939c256fbb7a953035d53507e57297552d78f1fe5"
+      }
+    },
+    {
+      "id": "core-09",
+      "query": "safe_path",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/config.py"
+      ],
+      "expected_symbol": "safe_path",
+      "answerable": true,
+      "query_type": "security",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/config.py": "9da705b78d1987739ebcf7c939c256fbb7a953035d53507e57297552d78f1fe5"
+      }
+    },
+    {
+      "id": "core-10",
+      "query": "identifier",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/config.py"
+      ],
+      "expected_symbol": "identifier",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/config.py": "9da705b78d1987739ebcf7c939c256fbb7a953035d53507e57297552d78f1fe5"
+      }
+    },
+    {
+      "id": "core-11",
+      "query": "private_database",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/retrieval.py"
+      ],
+      "expected_symbol": "private_database",
+      "answerable": true,
+      "query_type": "security",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/retrieval.py": "32e7efd576c7efd0863181a50fe1dfb8aa96986e2676c304af85e1cef3544da0"
+      }
+    },
+    {
+      "id": "core-12",
+      "query": "repository_state",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/retrieval.py"
+      ],
+      "expected_symbol": "repository_state",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/retrieval.py": "32e7efd576c7efd0863181a50fe1dfb8aa96986e2676c304af85e1cef3544da0"
+      }
+    },
+    {
+      "id": "core-13",
+      "query": "split_unit",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/retrieval.py"
+      ],
+      "expected_symbol": "split_unit",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/retrieval.py": "32e7efd576c7efd0863181a50fe1dfb8aa96986e2676c304af85e1cef3544da0"
+      }
+    },
+    {
+      "id": "core-14",
+      "query": "redact",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/retrieval.py"
+      ],
+      "expected_symbol": "redact",
+      "answerable": true,
+      "query_type": "security",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/retrieval.py": "32e7efd576c7efd0863181a50fe1dfb8aa96986e2676c304af85e1cef3544da0"
+      }
+    },
+    {
+      "id": "core-15",
+      "query": "safe_to_index",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/retrieval.py"
+      ],
+      "expected_symbol": "safe_to_index",
+      "answerable": true,
+      "query_type": "security",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/retrieval.py": "32e7efd576c7efd0863181a50fe1dfb8aa96986e2676c304af85e1cef3544da0"
+      }
+    },
+    {
+      "id": "core-16",
+      "query": "code_units",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/retrieval.py"
+      ],
+      "expected_symbol": "code_units",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/retrieval.py": "32e7efd576c7efd0863181a50fe1dfb8aa96986e2676c304af85e1cef3544da0"
+      }
+    },
+    {
+      "id": "core-17",
+      "query": "document_units",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/retrieval.py"
+      ],
+      "expected_symbol": "document_units",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/retrieval.py": "32e7efd576c7efd0863181a50fe1dfb8aa96986e2676c304af85e1cef3544da0"
+      }
+    },
+    {
+      "id": "core-18",
+      "query": "cosine",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/retrieval.py"
+      ],
+      "expected_symbol": "cosine",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/retrieval.py": "32e7efd576c7efd0863181a50fe1dfb8aa96986e2676c304af85e1cef3544da0"
+      }
+    },
+    {
+      "id": "core-19",
+      "query": "project_for",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/native.py"
+      ],
+      "expected_symbol": "project_for",
+      "answerable": true,
+      "query_type": "integration",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/native.py": "83ef7c267fc79328e6ad09dc4f0939991d4c82ececf06e80bf6c2eac86395566"
+      }
+    },
+    {
+      "id": "core-20",
+      "query": "source_status",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/native.py"
+      ],
+      "expected_symbol": "source_status",
+      "answerable": true,
+      "query_type": "integration",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/native.py": "83ef7c267fc79328e6ad09dc4f0939991d4c82ececf06e80bf6c2eac86395566"
+      }
+    },
+    {
+      "id": "core-21",
+      "query": "strict_json",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/mcp.py"
+      ],
+      "expected_symbol": "strict_json",
+      "answerable": true,
+      "query_type": "security",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/mcp.py": "27529242ec4ab5a0ec44728f3c1d365cf58495b03f635807527a32530417a0c2"
+      }
+    },
+    {
+      "id": "core-22",
+      "query": "rpc_error",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/mcp.py"
+      ],
+      "expected_symbol": "rpc_error",
+      "answerable": true,
+      "query_type": "error",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/mcp.py": "27529242ec4ab5a0ec44728f3c1d365cf58495b03f635807527a32530417a0c2"
+      }
+    },
+    {
+      "id": "core-23",
+      "query": "tool_error",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/mcp.py"
+      ],
+      "expected_symbol": "tool_error",
+      "answerable": true,
+      "query_type": "error",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/mcp.py": "27529242ec4ab5a0ec44728f3c1d365cf58495b03f635807527a32530417a0c2"
+      }
+    },
+    {
+      "id": "core-24",
+      "query": "digest",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/memory.py"
+      ],
+      "expected_symbol": "digest",
+      "answerable": true,
+      "query_type": "memory",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/memory.py": "56812ccc8b0ed08b30c4072612b1d7f743bcd4390a03319ccf9f578658d51b6f"
+      }
+    },
+    {
+      "id": "core-25",
+      "query": "clean_json",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/memory.py"
+      ],
+      "expected_symbol": "clean_json",
+      "answerable": true,
+      "query_type": "memory",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/memory.py": "56812ccc8b0ed08b30c4072612b1d7f743bcd4390a03319ccf9f578658d51b6f"
+      }
+    },
+    {
+      "id": "core-26",
+      "query": "run_benchmark",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/benchmark.py"
+      ],
+      "expected_symbol": "run_benchmark",
+      "answerable": true,
+      "query_type": "measurement",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/benchmark.py": "7cbbc9e7f28f240114d9edd394327c40a369d2e8f0772101d40c3a667ca51233"
+      }
+    },
+    {
+      "id": "core-27",
+      "query": "quattroIntelligence",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "adapters/omp/quattro-intelligence.ts"
+      ],
+      "expected_symbol": "quattroIntelligence",
+      "answerable": true,
+      "query_type": "integration",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "adapters/omp/quattro-intelligence.ts": "0c7ac790b684e569eb658c60acfaa4a078884423b9b36caf3adb400ff737d5ae"
+      }
+    },
+    {
+      "id": "core-28",
+      "query": "Persistent memory database specification",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "docs/memory.md"
+      ],
+      "expected_symbol": null,
+      "answerable": true,
+      "query_type": "architecture",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "docs/memory.md": "b5134ddd5027cd75a509c1edee0d8943fbd9927771f55a98ebef49c73251e132"
+      }
+    },
+    {
+      "id": "core-29",
+      "query": "Migration and retirement report",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "docs/MIGRATION.md"
+      ],
+      "expected_symbol": null,
+      "answerable": true,
+      "query_type": "history",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "docs/MIGRATION.md": "40e71b804da62a8c6e9726a35e5d204f4b4cbe48b9cf18c843ec2a855f7ce007"
+      }
+    },
+    {
+      "id": "core-30",
+      "query": "Operator migration procedure",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "docs/MIGRATION.md"
+      ],
+      "expected_symbol": null,
+      "answerable": true,
+      "query_type": "history",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "docs/MIGRATION.md": "40e71b804da62a8c6e9726a35e5d204f4b4cbe48b9cf18c843ec2a855f7ce007"
+      }
+    },
+    {
+      "id": "core-31",
+      "query": "Native integration",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "docs/INTEGRATION.md"
+      ],
+      "expected_symbol": null,
+      "answerable": true,
+      "query_type": "integration",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "docs/INTEGRATION.md": "f3af72b4cfb215de0df5e5c0f282d949bac0c1cf6625b61d6e05e7c08dc91f2f"
+      }
+    },
+    {
+      "id": "core-32",
+      "query": "Independent intelligence",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "README.md"
+      ],
+      "expected_symbol": null,
+      "answerable": true,
+      "query_type": "architecture",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "README.md": "8167874d830339cb8f2e2ed204994090f13372b09c8e3e36a03d9865bf43402f"
+      }
+    },
+    {
+      "id": "core-33",
+      "query": "LocalNeuralEmbeddingBackend",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/retrieval.py"
+      ],
+      "expected_symbol": "LocalNeuralEmbeddingBackend",
+      "answerable": true,
+      "query_type": "architecture",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/retrieval.py": "32e7efd576c7efd0863181a50fe1dfb8aa96986e2676c304af85e1cef3544da0"
+      }
+    },
+    {
+      "id": "core-34",
+      "query": "MemoryStore",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/memory.py"
+      ],
+      "expected_symbol": "MemoryStore",
+      "answerable": true,
+      "query_type": "architecture",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/memory.py": "56812ccc8b0ed08b30c4072612b1d7f743bcd4390a03319ccf9f578658d51b6f"
+      }
+    },
+    {
+      "id": "core-35",
+      "query": "McpRuntime",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/mcp.py"
+      ],
+      "expected_symbol": "McpRuntime",
+      "answerable": true,
+      "query_type": "architecture",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/mcp.py": "27529242ec4ab5a0ec44728f3c1d365cf58495b03f635807527a32530417a0c2"
+      }
+    },
+    {
+      "id": "core-36",
+      "query": "classify_markdown",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/retrieval.py"
+      ],
+      "expected_symbol": "classify_markdown",
+      "answerable": true,
+      "query_type": "code_location",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "project-scoped public source",
+      "ground_truth": {
+        "src/quattro_core/retrieval.py": "32e7efd576c7efd0863181a50fe1dfb8aa96986e2676c304af85e1cef3544da0"
+      }
+    },
+    {
+      "id": "negative-1",
+      "query": "unicornQuantumPayrollBanana",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [],
+      "answerable": false,
+      "query_type": "unsupported",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "no supporting authorized evidence",
+      "ground_truth": {}
+    },
+    {
+      "id": "negative-2",
+      "query": "zzyzxNonexistentFunction",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [],
+      "answerable": false,
+      "query_type": "unsupported",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "no supporting authorized evidence",
+      "ground_truth": {}
+    },
+    {
+      "id": "negative-3",
+      "query": "unpublishedMarsCensus2099",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [],
+      "answerable": false,
+      "query_type": "unsupported",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "no supporting authorized evidence",
+      "ground_truth": {}
+    },
+    {
+      "id": "negative-4",
+      "query": "ForbiddenOtherProjectCanary",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [],
+      "answerable": false,
+      "query_type": "unsupported",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "no supporting authorized evidence",
+      "ground_truth": {}
+    },
+    {
+      "id": "negative-5",
+      "query": "zzUnsupportedFactCanary",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [],
+      "answerable": false,
+      "query_type": "unsupported",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "no supporting authorized evidence",
+      "ground_truth": {}
+    },
+    {
+      "id": "negative-6",
+      "query": "NobodyWroteThisIdentifier",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [],
+      "answerable": false,
+      "query_type": "unsupported",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "no supporting authorized evidence",
+      "ground_truth": {}
+    },
+    {
+      "id": "natural-01",
+      "query": "Why does Quattro avoid agent execution and model routing?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "README.md",
+        "docs/architecture.md"
+      ],
+      "answerable": true,
+      "query_type": "architecture",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "README.md": "8167874d830339cb8f2e2ed204994090f13372b09c8e3e36a03d9865bf43402f",
+        "docs/architecture.md": "844f92d1527f9d9aea44d2121be54ba24eaa7b976691236d24dd7a5d85fe5092"
+      }
+    },
+    {
+      "id": "natural-02",
+      "query": "How are verified memories created and explicitly superseded?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "docs/memory.md",
+        "src/quattro_core/memory.py"
+      ],
+      "answerable": true,
+      "query_type": "cross_document",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "docs/memory.md": "b5134ddd5027cd75a509c1edee0d8943fbd9927771f55a98ebef49c73251e132",
+        "src/quattro_core/memory.py": "56812ccc8b0ed08b30c4072612b1d7f743bcd4390a03319ccf9f578658d51b6f"
+      }
+    },
+    {
+      "id": "natural-03",
+      "query": "How does indexing preserve committed knowledge when embeddings fail?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/knowledge.py"
+      ],
+      "answerable": true,
+      "query_type": "failure_recovery",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "src/quattro_core/knowledge.py": "f57e65d2c4cae89224a6fc365d1b77c12e0c45abf29b69b8499f6dca3b80503c"
+      }
+    },
+    {
+      "id": "natural-04",
+      "query": "Why are unassigned legacy records quarantined instead of relabeled?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "docs/MIGRATION.md"
+      ],
+      "answerable": true,
+      "query_type": "historical_decision",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "docs/MIGRATION.md": "40e71b804da62a8c6e9726a35e5d204f4b4cbe48b9cf18c843ec2a855f7ce007"
+      }
+    },
+    {
+      "id": "natural-05",
+      "query": "How can an operator migrate legacy vectors without deleting originals?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "docs/MIGRATION.md"
+      ],
+      "answerable": true,
+      "query_type": "historical_debugging",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "docs/MIGRATION.md": "40e71b804da62a8c6e9726a35e5d204f4b4cbe48b9cf18c843ec2a855f7ce007"
+      }
+    },
+    {
+      "id": "natural-06",
+      "query": "Why was the cold indexing deadline extended to 1800 seconds?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "docs/INTEGRATION.md"
+      ],
+      "answerable": true,
+      "query_type": "recent_change",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "docs/INTEGRATION.md": "f3af72b4cfb215de0df5e5c0f282d949bac0c1cf6625b61d6e05e7c08dc91f2f"
+      }
+    },
+    {
+      "id": "natural-07",
+      "query": "How do native clients preserve models accounts and permission policy?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "docs/INTEGRATION.md"
+      ],
+      "answerable": true,
+      "query_type": "architecture",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "docs/INTEGRATION.md": "f3af72b4cfb215de0df5e5c0f282d949bac0c1cf6625b61d6e05e7c08dc91f2f"
+      }
+    },
+    {
+      "id": "natural-08",
+      "query": "Where does Codex receive UserPromptSubmit additionalContext?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "adapters/codex/context_hook.py",
+        "docs/INTEGRATION.md"
+      ],
+      "answerable": true,
+      "query_type": "cross_document",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "adapters/codex/context_hook.py": "0ac17bca94b2918ac42dca49ed361556d237726e0a3dbe1e2a3713e99157bc30",
+        "docs/INTEGRATION.md": "f3af72b4cfb215de0df5e5c0f282d949bac0c1cf6625b61d6e05e7c08dc91f2f"
+      }
+    },
+    {
+      "id": "natural-09",
+      "query": "How does omp distinguish prepared context from host-visible delivery?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "adapters/omp/quattro-intelligence.ts",
+        "docs/INTEGRATION.md"
+      ],
+      "answerable": true,
+      "query_type": "cross_document",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "adapters/omp/quattro-intelligence.ts": "0c7ac790b684e569eb658c60acfaa4a078884423b9b36caf3adb400ff737d5ae",
+        "docs/INTEGRATION.md": "f3af72b4cfb215de0df5e5c0f282d949bac0c1cf6625b61d6e05e7c08dc91f2f"
+      }
+    },
+    {
+      "id": "natural-10",
+      "query": "Which receipts prove model reliance?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "docs/INTEGRATION.md"
+      ],
+      "answerable": true,
+      "query_type": "negative_claim_evidence",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "docs/INTEGRATION.md": "f3af72b4cfb215de0df5e5c0f282d949bac0c1cf6625b61d6e05e7c08dc91f2f"
+      }
+    },
+    {
+      "id": "natural-11",
+      "query": "What protects source reads against directory symlink swaps?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/knowledge.py"
+      ],
+      "answerable": true,
+      "query_type": "security",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "src/quattro_core/knowledge.py": "f57e65d2c4cae89224a6fc365d1b77c12e0c45abf29b69b8499f6dca3b80503c"
+      }
+    },
+    {
+      "id": "natural-12",
+      "query": "How do source revisions avoid false committed citations in dirty worktrees?",
+      "project": "quattro",
+      "source_ids": [
+        "code"
+      ],
+      "expected_files": [
+        "src/quattro_core/knowledge.py"
+      ],
+      "answerable": true,
+      "query_type": "recent_change",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "authorized project only",
+      "ground_truth": {
+        "src/quattro_core/knowledge.py": "f57e65d2c4cae89224a6fc365d1b77c12e0c45abf29b69b8499f6dca3b80503c"
+      }
+    },
+    {
+      "id": "shared-1",
+      "query": "Why must a subprocess creator thread remain alive?",
+      "project": "shared",
+      "source_ids": [
+        "shared-notes"
+      ],
+      "expected_files": [
+        "AGENT-WORKFLOWS.md"
+      ],
+      "answerable": true,
+      "query_type": "shared_workflow",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "explicitly shared source only",
+      "ground_truth": {
+        "AGENT-WORKFLOWS.md": "816a7c66226547cf146b4c6c4d4e0ec55e6bd12e68d6498cbacfea91153658e2"
+      }
+    },
+    {
+      "id": "shared-2",
+      "query": "Why is an event notification not an executable tool boundary?",
+      "project": "shared",
+      "source_ids": [
+        "shared-notes"
+      ],
+      "expected_files": [
+        "AGENT-WORKFLOWS.md"
+      ],
+      "answerable": true,
+      "query_type": "shared_workflow",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "explicitly shared source only",
+      "ground_truth": {
+        "AGENT-WORKFLOWS.md": "816a7c66226547cf146b4c6c4d4e0ec55e6bd12e68d6498cbacfea91153658e2"
+      }
+    },
+    {
+      "id": "shared-3",
+      "query": "Where should credentials be excluded from shared memory?",
+      "project": "shared",
+      "source_ids": [
+        "shared-notes"
+      ],
+      "expected_files": [
+        "SECURITY.md"
+      ],
+      "answerable": true,
+      "query_type": "shared_workflow",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "explicitly shared source only",
+      "ground_truth": {
+        "SECURITY.md": "26ff56b0b94ea9482ba5b59e69c234ba3aad50726a3602dfd990db0640d371b0"
+      }
+    },
+    {
+      "id": "shared-4",
+      "query": "What must an independent worker review prove before integration?",
+      "project": "shared",
+      "source_ids": [
+        "shared-notes"
+      ],
+      "expected_files": [
+        "AGENT-WORKFLOWS.md"
+      ],
+      "answerable": true,
+      "query_type": "shared_workflow",
+      "split": "development",
+      "freshness": "current",
+      "sensitivity": "explicitly shared source only",
+      "ground_truth": {
+        "AGENT-WORKFLOWS.md": "816a7c66226547cf146b4c6c4d4e0ec55e6bd12e68d6498cbacfea91153658e2"
+      }
+    },
+    {
+      "id": "out-of-scope-1",
+      "query": "get_project_context",
+      "project": "shared",
+      "source_ids": [
+        "shared-notes"
+      ],
+      "expected_files": [],
+      "answerable": false,
+      "query_type": "wrong_scope",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "code corpus is not authorized in shared-only scope",
+      "ground_truth": {}
+    },
+    {
+      "id": "out-of-scope-2",
+      "query": "migrate_legacy_database",
+      "project": "shared",
+      "source_ids": [
+        "shared-notes"
+      ],
+      "expected_files": [],
+      "answerable": false,
+      "query_type": "wrong_scope",
+      "split": "heldout",
+      "freshness": "current",
+      "sensitivity": "code corpus is not authorized in shared-only scope",
+      "ground_truth": {}
+    }
+    ,{
+      "id": "memory-superseded", "query": "SupersededMemoryCanary",
+      "project": "quattro", "source_ids": ["code"], "expected_files": [],
+      "answerable": false, "query_type": "memory_eligibility", "split": "heldout",
+      "freshness": "current", "sensitivity": "synthetic historical marker; no private source text",
+      "ground_truth": {"memory_state": "superseded"},
+      "ineligible_memory_ids": ["mem_81f9fe59330c43cab8ac1ef32355c7a3"]
+    },
+    {
+      "id": "memory-invalid", "query": "InvalidatedMemoryCanary",
+      "project": "quattro", "source_ids": ["code"], "expected_files": [],
+      "answerable": false, "query_type": "memory_eligibility", "split": "heldout",
+      "freshness": "current", "sensitivity": "synthetic withdrawn marker; no private source text",
+      "ground_truth": {"memory_state": "invalid"},
+      "ineligible_memory_ids": ["mem_b48aac8629394fe48a84f69d2fb64c40"]
+    },
+    {
+      "id": "memory-private", "query": "PrivateMemoryCanary",
+      "project": "quattro", "source_ids": ["code"], "expected_files": [],
+      "answerable": false, "query_type": "memory_eligibility", "split": "heldout",
+      "freshness": "current", "sensitivity": "synthetic other-principal private marker; no real private data",
+      "ground_truth": {"memory_visibility": "private", "memory_author": "evaluation-private"},
+      "ineligible_memory_ids": ["mem_0840d7b7dfa94334a2411bec9693cdd7"]
+    },
+    {
+      "id": "memory-disputed", "query": "DisputedMemoryCanary",
+      "project": "quattro", "source_ids": ["code"], "expected_files": [],
+      "answerable": false, "query_type": "memory_eligibility", "split": "heldout",
+      "freshness": "current", "sensitivity": "synthetic disputed marker; not authoritative evidence",
+      "ground_truth": {"memory_verification": "disputed"},
+      "ineligible_memory_ids": ["mem_9c454cc6cfbe4e7bad638c0dec930101"]
+    }
+  ],
+  "corpus_exclusions": [
+    {
+      "source_id": "shared-notes",
+      "path": "JEV-RECEIPTS-AND-READINESS.md",
+      "reason": "Unlabeled historical routing note already diverged from its stored revision at capture; excluded identically from both isolated fixtures."
+    }
+  ]
+}

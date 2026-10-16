@@ -2,7 +2,7 @@
 
 Pass `--config` before the CLI subcommand, or to `quattro-intelligence-mcp`. The default is `~/.config/quattro/intelligence.json`; absence is an error, not a permissive fallback. Legacy `ai.json`, provider environment variables and global agent settings are not consumed.
 
-Configuration is strict version-1 JSON. Unknown fields fail. Paths are absolute, without traversal or symbolic-link components. Source roots must exist. Identifiers use `[A-Za-z0-9][A-Za-z0-9_.-]{0,79}`.
+Configuration is strict version-1 JSON. Unknown fields fail. Paths are absolute, without traversal or symbolic-link components. Missing source directories are retained for diagnosis, not silently counted as indexed; indexing requires an accessible directory. Identifiers use `[A-Za-z0-9][A-Za-z0-9_.-]{0,79}`.
 
 ```json
 {
@@ -15,8 +15,8 @@ Configuration is strict version-1 JSON. Unknown fields fail. Paths are absolute,
   "embedding": "lexical",
   "fusion": {"rrf_k": 60, "lexical_weight": 1.0, "semantic_weight": 1.0},
   "sources": [
-    {"id": "code", "project": "example", "root": "/srv/projects/example", "kind": "repository", "authority": 0.9, "exclusions": ["vendor/**"]},
-    {"id": "notes", "project": "example", "root": "/srv/notes/example", "kind": "obsidian", "authority": 0.5, "exclusions": ["Private/**"]}
+    {"id": "code", "project": "example", "root": "/srv/projects/example", "kind": "repository", "intent": "intended", "authority": 0.9, "exclusions": ["vendor/**", "benchmarks/**"]},
+    {"id": "notes", "project": "example", "root": "/srv/notes/example", "kind": "obsidian", "intent": "undecided", "authority": 0.5, "exclusions": ["Private/**"]}
   ]
 }
 ```
@@ -35,12 +35,27 @@ These example paths must be replaced with authorized existing roots. Prefer `con
 | Source `kind` | `repository`, `documentation` or `obsidian`; provenance and conflict-authority tie breaking |
 | Source `authority` | Finite 0–1; default 0.8; source-quality multiplier, not a verification grant |
 | Source `exclusions` | Up to 100 relative glob patterns, at most 200 characters each |
+| Source `intent` | `intended`, `undecided` (default), or `excluded`; registration alone does not approve bulk indexing |
+| Source `exclusion_reason` | Required nonblank bounded reason when excluded; exclusions do not count as indexing failures |
 
-A project can have multiple independent roots; notes need not live inside the repository. A source ID cannot silently change its project/root after indexing. Register a new ID for a new root. Removing a source from the configuration immediately removes query access; existing stored knowledge is not silently deleted.
+A project can have multiple independent roots; notes need not live inside the repository. Source IDs cannot change projects. An operator-authorized root change is labeled stale and inaccessible to retrieval until an explicit index reconciles that same-project source atomically. Removing/excluding a source immediately removes query access without deleting historical storage.
 
 ## Source coverage
 
-Configured roots are walked for supported text, Markdown, JSON/YAML/TOML/INI and code extensions, including untracked files unless excluded. This is **not** a Git-ignore-only tracked-file index. Built-in exclusions reject symlinks, credential-shaped names/content, `.env*`, private keys, `.git`, `.venv`, dependency/build/cache directories, `.secrets`, `.quattro` and backups. Add exclusions for project-specific generated or sensitive material. Do not register a home directory or entire shared vault merely for convenience.
+Configured roots are walked for supported text, Markdown, structured files and code. Git repositories honor tracked/untracked ignore policy; ignored files are not indexed. Built-in exclusions reject symlinks, credential-shaped names/content, `.env*`, private keys, `.git`, `.venv`, dependency/build/cache directories, `.secrets`, `.quattro` and backups. Add exclusions for generated benchmark reports, uploads and project-specific private material. Do not register a home directory or entire shared vault for convenience. Git is required to enforce repository ignore policy, but plain non-Git document roots can operate without it.
+
+### Source states
+
+| State | Meaning |
+|---|---|
+| `pending` | Registered, no committed successful snapshot; scope may still need a decision |
+| `indexed` | A full source snapshot committed under the current ingestion policy; freshness is separately `not_tested` until a deep check |
+| `stale` | A previous successful snapshot exists but contents/root/policy changed or the root is unavailable |
+| `failed` | The latest attempt/check did not commit successfully, including an explicitly uncommitted/in-progress-or-interrupted marker; reason/retryability and last success remain visible |
+| `excluded` | Operator deliberately denies this source, with a reason; never selected for retrieval or batch indexing |
+
+`sources --deep` compares eligible content hashes, not mtimes. `indexed_at`/`last_success` and `last_attempt` are distinct. Interrupted attempts remain recoverable and retry is idempotent. An explicit indexing attempt establishes prior approval for an otherwise undecided source even if that attempt fails; a dry-run does not. Default `index-selected` includes only intended or previously approved sources and is a dry-run; `--source-id` and `--apply` are explicit operator choices. Registrations without approval remain `requires_scope_decision`, not assumed eligible ingestion.
+
 
 ## Identity and operating-system authorization
 

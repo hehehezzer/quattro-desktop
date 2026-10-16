@@ -72,7 +72,7 @@ class KnowledgeCoreTests(unittest.TestCase):
         with mock.patch.object(self.service.store.embedding_backend, "embed_document", side_effect=AssertionError("unchanged must not embed")):
             self.assertEqual(self.service.index_source("a")["unchanged"], 1)
         path.write_text("# indexing\nnew unique phrase")
-        self.assertEqual(self.service.search_knowledge("alpha", "old")["results"][0]["citation"]["provenance"], "outdated")
+        self.assertEqual(self.service.search_knowledge("alpha", "old")["results"], [])
         self.service.index_source("a")
         self.assertEqual(self.service.search_knowledge("alpha", "old")["total"], 0)
         path.rename(self.a / "after.md")
@@ -91,7 +91,8 @@ class KnowledgeCoreTests(unittest.TestCase):
         with mock.patch.object(self.service.store.embedding_backend, "embed_document", side_effect=RuntimeError("embedding offline")):
             with self.assertRaises(RuntimeError):
                 self.service.index_source("a")
-        self.assertEqual(self.service.search_knowledge("alpha", "old")["total"], 1)
+        self.assertIn("old evidence", self.service.connection.execute("SELECT content FROM documents").fetchone()[0])
+        self.assertEqual(self.service.search_knowledge("alpha", "old")["results"], [])
         self.assertEqual(self.service.search_knowledge("alpha", "replacement")["total"], 0)
         self.assertIsNotNone(self.service.get_index_status("alpha")["sources"][0]["last_failure"])
         self.service.index_source("a")
@@ -298,7 +299,7 @@ class KnowledgeCoreTests(unittest.TestCase):
         result = self.service.index_source("a")
         self.assertEqual((result["updated"], result["embedded"]), (0, 0))
         self.assertEqual(self.service.search_knowledge("alpha", "newly_published_symbol")["results"][0]["citation"]["commit_sha"], commit)
-        self.assertIsNone(self.service.search_knowledge("alpha", "intentionally_unversioned_symbol")["results"][0]["citation"]["commit_sha"])
+        self.assertEqual(self.service.search_knowledge("alpha", "intentionally_unversioned_symbol")["results"], [])
         self.write(self.a, "new.py", "def newly_published_symbol():\n    return 2\n")
         self.service.index_source("a")
         self.assertIsNone(self.service.search_knowledge("alpha", "newly_published_symbol")["results"][0]["citation"]["commit_sha"])

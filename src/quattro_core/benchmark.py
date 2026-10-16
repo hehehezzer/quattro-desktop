@@ -295,3 +295,169 @@ def run_benchmark(
         "failureCategories": dict(sorted(failure_categories.items())),
         "cases": per_case,
     }
+
+
+def evaluate_core(service, cases, *, limit=5, budget=6000):
+    """Evaluate the public scoped service, with identical filters and byte budgets."""
+    import math
+    reports = {}
+    scopes = {(case["project"], source_id) for case in cases for source_id in case["source_ids"]}
+    corpus = []
+    for project, source_id in sorted(scopes):
+        service._sources(project, [source_id])
+        corpus.extend(tuple(row) for row in service.connection.execute(
+            "SELECT project,source_id,path,content_hash FROM knowledge_files WHERE project=? AND source_id=? ORDER BY path", (project,source_id)))
+    memory_corpus = []
+    for project in sorted({case["project"] for case in cases}):
+        memory_corpus.extend(tuple(row) for row in service.memory.connection.execute(
+            "SELECT project,id,content_hash,state,verification,revision,superseded_by,visibility,author FROM memories "
+            "WHERE project=? AND (visibility='project' OR author=?) ORDER BY id", (project,service.config.principal)))
+    for strategy in ("keyword", "semantic", "hybrid"):
+        rows = []
+        for case in cases:
+            started = time.monotonic()
+            phase = "retrieval"
+            retrieval_ms = None
+            context_started = None
+            try:
+                arguments = dict(project=case["project"], query=case["query"],
+                                 source_ids=case["source_ids"], limit=limit, strategy=strategy)
+                found = service.search_knowledge(**arguments)
+                retrieval_ms = (time.monotonic() - started) * 1000
+                context_started = time.monotonic()
+                phase = "context"
+                context = service.get_project_context(**arguments, budget=budget)
+                context_ms = (time.monotonic() - context_started) * 1000
+                results = found["results"]
+                expected = set(case["expected_files"])
+                hits = [r["citation"]["path"] in expected and
+                        (not case.get("expected_symbol") or r.get("symbol") == case["expected_symbol"])
+                        for r in results]
+                ranks = [i + 1 for i, hit in enumerate(hits) if hit]
+                covered = {r["citation"]["path"] for r, hit in zip(results, hits) if hit}
+                credited = set()
+                dcg = 0.0
+                for index, (result, hit) in enumerate(zip(results, hits)):
+                    path = result["citation"]["path"]
+                    if hit and path not in credited:
+                        dcg += 1 / math.log2(index + 2)
+                        credited.add(path)
+                ideal = sum(1 / math.log2(i + 2) for i in range(min(len(expected), limit)))
+                rows.append({
+                    "id": case["id"], "split": case["split"], "answerable": case["answerable"],
+                    "available": strategy != "semantic" or found["semantic"]["available"],
+                    "recall_at_5": len(covered) / len(expected) if expected else None,
+                    "precision_at_5": sum(hits) / limit,
+                    "mrr": 1 / ranks[0] if ranks else 0.0,
+                    "ndcg": dcg / ideal if ideal else None,
+                    "irrelevant_context_ratio": sum(k["citation"]["path"] not in expected or
+                        bool(case.get("expected_symbol") and k.get("symbol") != case["expected_symbol"])
+                        for k in context["knowledge"]) / max(1, len(context["knowledge"])),
+                    "stale_results": sum(r["citation"]["provenance"] != "current" for r in results),
+                    "stale_context":sum(k["citation"]["provenance"] != "current" for k in context["knowledge"]),
+                    "boundary_violations": sum(r["citation"]["project"] != case["project"] or
+                                               r["citation"]["source_id"] not in case["source_ids"] for r in results),
+                    "no_evidence_correct": not results and not context["knowledge"] and not context["memories"] if not case["answerable"] else None,
+                    "context_memory_units":len(context["memories"]),
+                    "ineligible_memory_units":sum(m["id"] in case.get("ineligible_memory_ids",[]) for m in context["memories"]),
+                    "context_bytes": len(json.dumps(context, ensure_ascii=False, sort_keys=True).encode()),
+                    "context_tokens": None, "failure": False,
+                    "context_request_latency_ms":context_ms,
+                    "results": [{"id": r["id"], "path": r["citation"]["path"],
+                                 "source_id": r["citation"]["source_id"],
+                                 "file_hash": r["citation"]["file_hash"]} for r in results],
+                })
+            except Exception as error:
+                rows.append({"id": case["id"], "split": case["split"], "failure": True,
+                             "error_type": type(error).__name__, "failure_stage":phase, "available": False})
+            rows[-1]["total_latency_ms"] = (time.monotonic() - started) * 1000
+            rows[-1]["latency_ms"] = retrieval_ms if retrieval_ms is not None else rows[-1]["total_latency_ms"]
+        valid = [r for r in rows if not r["failure"]]
+        positives = [r for r in valid if r["answerable"]]
+        negatives = [r for r in valid if not r["answerable"]]
+        def mean(field, subset=valid):
+            values = [r[field] for r in subset if r.get(field) is not None]
+            return statistics.fmean(values) if values else None
+        latencies = sorted(r["latency_ms"] for r in rows)
+        reports[strategy] = {"metrics": {
+            "recall_at_5": mean("recall_at_5", positives), "precision_at_5": mean("precision_at_5", positives),
+            "mrr": mean("mrr", positives), "ndcg": mean("ndcg", positives),
+            "relevant_evidence_coverage": mean("recall_at_5", positives),
+            "irrelevant_context_ratio": mean("irrelevant_context_ratio"),
+            "stale_results": sum(r["stale_results"] for r in valid),
+            "boundary_violations": sum(r["boundary_violations"] for r in valid),
+            "stale_context":sum(r["stale_context"] for r in valid),
+            "ineligible_memory_units":sum(r["ineligible_memory_units"] for r in valid),
+            "context_memory_units":sum(r["context_memory_units"] for r in valid),
+            "no_evidence_accuracy": mean("no_evidence_correct", negatives),
+            "p50_latency_ms": statistics.median(latencies),
+            "p95_latency_ms": latencies[max(0, math.ceil(len(latencies) * .95) - 1)],
+            "mean_context_request_latency_ms":mean("context_request_latency_ms"),
+            "mean_total_case_latency_ms":mean("total_latency_ms", rows),
+            "mean_context_bytes": mean("context_bytes"), "context_tokens": None,
+            "failure_rate": sum(r["failure"] for r in rows) / len(rows),
+            "retrieval_failure_rate":sum(r["failure"] and r["failure_stage"] == "retrieval" for r in rows) / len(rows),
+            "context_failure_rate":sum(r["failure"] and r["failure_stage"] == "context" for r in rows) / len(rows),
+            "unavailable_cases": sum(not r["available"] for r in rows),
+        }, "cases": rows}
+    return {"schema_version": 1, "case_count": len(cases), "limit": limit, "budget_bytes": budget,
+            "dataset_sha256": hashlib.sha256(json.dumps(cases, sort_keys=True).encode()).hexdigest(),
+            "corpus_sha256":hashlib.sha256(json.dumps(corpus,sort_keys=True).encode()).hexdigest(),
+            "memory_corpus_sha256":hashlib.sha256(json.dumps(memory_corpus,sort_keys=True).encode()).hexdigest(),
+            "embedding_model": service.store.embedding_backend.model_id,
+            "gates": {"boundary_violations": 0, "stale_context": 0, "failure_rate": 0,
+                      "heldout_recall_regression_tolerance": 0,
+                      "no_evidence_accuracy_required": 1.0},
+            "notes": "File/symbol labels; binary source relevance. Irrelevant context ratio grades knowledge units only; memory counts and eligibility are separate. No-evidence checks both knowledge and memories. p50/p95 measure search_knowledge alone; context latency includes its own retrieval. Tokens unavailable without client tokenizer.",
+            "strategies": reports}
+
+
+def compare_core(baseline, final):
+    for key in ("dataset_sha256","corpus_sha256","memory_corpus_sha256","limit","budget_bytes","embedding_model"):
+        if baseline.get(key) != final.get(key):
+            raise ValueError("benchmark provenance/budgets differ: " + key)
+    checks = {}
+    for strategy, report in final["strategies"].items():
+        before = baseline["strategies"][strategy]
+        metrics = report["metrics"]
+        def heldout_recall(value):
+            rows = [r["recall_at_5"] for r in value["cases"] if not r["failure"] and r["split"] == "heldout" and r["answerable"]]
+            return statistics.fmean(rows) if rows else 0
+        checks[strategy] = {
+            "isolation":metrics["boundary_violations"] == 0,
+            "freshness":metrics["stale_context"] == 0,
+            "memory_eligibility":metrics["ineligible_memory_units"] == 0,
+            "availability":metrics["failure_rate"] == 0 and metrics["unavailable_cases"] == 0,
+            "heldout_recall":heldout_recall(report) >= heldout_recall(before),
+            "no_evidence":metrics["no_evidence_accuracy"] == 1,
+            "heldout_recall_baseline":heldout_recall(before),"heldout_recall_final":heldout_recall(report),
+        }
+    passed = all(all(row[k] for k in ("isolation","freshness","memory_eligibility","availability","heldout_recall","no_evidence")) for row in checks.values())
+    return {"passed":passed,"checks":checks,"scope":"frozen authorized evaluation corpus only; not semantic answer certification"}
+
+
+def main(argv=None):
+    import argparse
+    from contextlib import closing
+    from .config import Config
+    from .knowledge import KnowledgeService
+    parser = argparse.ArgumentParser(description="Compare scoped core retrieval on a labeled, authorized corpus")
+    parser.add_argument("--config", type=pathlib.Path, required=True)
+    parser.add_argument("--dataset", type=pathlib.Path, required=True)
+    parser.add_argument("--output", type=pathlib.Path, required=True)
+    parser.add_argument("--baseline", type=pathlib.Path, help="Enforce fixed safety/no-regression gates against a comparable baseline")
+    args = parser.parse_args(argv)
+    cases = json.loads(args.dataset.read_text())["cases"]
+    if len(cases) < 1:
+        raise ValueError("empty evaluation")
+    with closing(KnowledgeService(Config.load(args.config.absolute()), read_only=True)) as service:
+        report = evaluate_core(service, cases)
+    if args.baseline:
+        report["comparison"] = compare_core(json.loads(args.baseline.read_text()), report)
+    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    print(json.dumps({k: v["metrics"] for k, v in report["strategies"].items()}, indent=2))
+    return 0 if not args.baseline or report["comparison"]["passed"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

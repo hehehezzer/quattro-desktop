@@ -58,7 +58,7 @@ def validate(record: dict[str, Any]) -> None:
         raise ValueError("invalid memory confidence")
     for field in ("references", "tags"):
         values = record[field]
-        if not isinstance(values, list) or len(values) > 50 or any(not isinstance(v, str) or len(v) > 1000 for v in values):
+        if not isinstance(values, list) or len(values) > 50 or any(not isinstance(v, str) or not v.strip() or len(v) > 1000 for v in values):
             raise ValueError("invalid memory references or tags")
     if record["verification"] == "verified" and not record["references"]:
         raise ValueError("verified memory requires source references")
@@ -74,8 +74,16 @@ def digest(content: str) -> str:
 
 
 class MemoryStore:
-    def __init__(self, path: pathlib.Path) -> None:
+    def __init__(self, path: pathlib.Path, *, read_only: bool = False) -> None:
         self.path = safe_path(path)
+        if read_only:
+            self.connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=5)
+            self.connection.row_factory = sqlite3.Row
+            self.connection.execute("PRAGMA query_only=ON")
+            if self.connection.execute("PRAGMA user_version").fetchone()[0] != 1:
+                self.connection.close()
+                raise ValueError("read-only memory requires the current schema")
+            return
         private_database(self.path)
         self.connection = sqlite3.connect(path, timeout=10)
         self.connection.row_factory = sqlite3.Row
@@ -146,6 +154,11 @@ class MemoryStore:
 
     def get(self, project: str, id: str, principal: str = "local") -> dict[str, Any]:
         return self._get(project, id, principal)
+
+    def history(self, project: str, id: str, principal: str = "local") -> dict[str, Any]:
+        self._get(project, id, principal)
+        rows = self.connection.execute("SELECT sequence,operation,actor,occurred_at,snapshot_json FROM memory_events WHERE memory_id=? AND project=? ORDER BY sequence", (id, project))
+        return {"id":id,"history":[{**dict(row),"snapshot_json":json.loads(row["snapshot_json"])} for row in rows]}
 
     def _event(self, record: dict[str, Any], operation: str, actor: str) -> None:
         self.connection.execute("INSERT INTO memory_events(memory_id,project,operation,actor,occurred_at,snapshot_json) VALUES(?,?,?,?,?,?)",

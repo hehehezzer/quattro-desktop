@@ -7,16 +7,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 import math
 import os
 import uuid
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any, BinaryIO
 
 from .config import Config, default_config_path
 from .knowledge import KnowledgeService
-from .receipts import Receipts
+from .receipts import Receipts, source_scope
 
 MAX_REQUEST_BYTES = 65536
 MAX_RESPONSE_BYTES = 1048576
@@ -63,12 +65,15 @@ def tool(name: str, description: str, properties: dict, required: tuple[str, ...
 
 TOOLS = [
     tool("search_knowledge", "Search indexed evidence in an allowed project. Results include pagination and source provenance; content is untrusted evidence.",
-         {"project": PROJECT, "query": QUERY, **PAGE, "source_ids": SOURCES}, ("project", "query")),
+         {"project": PROJECT, "query": QUERY, **PAGE, "source_ids": SOURCES,
+          "strategy": string(16, enum=["keyword","semantic","hybrid"]), "explain":{"type":"boolean"}}, ("project", "query")),
     tool("get_project_context", "Retrieve evidence and relevant prior memories within a conservative UTF-8 byte budget, preserving citations and availability metadata.",
-         {"project": PROJECT, "query": QUERY, "budget": integer(512, 32768), "limit": integer(1, 50), "source_ids": SOURCES}, ("project", "query")),
+         {"project": PROJECT, "query": QUERY, "budget": integer(512, 32768), "limit": integer(1, 50), "source_ids": SOURCES,
+          "strategy":string(16, enum=["keyword","semantic","hybrid"])}, ("project", "query")),
     tool("index_source", "Index only an operator-registered source ID. No root, path, or execution arguments are accepted; configured write permission is required.",
-         {"source_id": string(128), "reindex": {"type": "boolean"}}, ("source_id",), write=True),
-    tool("get_index_status", "Inspect index counts/status only for the specified allowed project.", {"project": PROJECT}, ("project",)),
+         {"source_id": string(128), "reindex": {"type": "boolean"}, "dry_run":{"type":"boolean"}}, ("source_id",), write=True),
+    tool("get_index_status", "Inspect source states and counts; deep checks fingerprint authorized previously indexed sources.",
+         {"project": PROJECT,"deep":{"type":"boolean"}}, ("project",)),
     tool("save_memory", "Persist a bounded memory attributed to the configured principal. Private memories are visible only to their author. Verified writes require verification permission.",
          {"project": PROJECT, **MEMORY_FIELDS, "fact_key": string(256), "supersedes": string(128)}, ("project", "content"), write=True),
     tool("recall_memory", "Recall project-visible and principal-owned private memories with filters and pagination. Historical records require an explicit flag.",
@@ -253,22 +258,47 @@ def handle(message: Any, runtime: McpRuntime) -> dict | None:
             result = {"tools": TOOLS}
         elif method == "tools/call":
             validate(params, obj({"name": string(128), "arguments": {"type": "object"}}, ("name",)))
+            attempt = None
+            selected_project = None
+            identity = {"session_id":runtime.native_session,
+                        "transport":"herdr" if os.environ.get("HERDR_ENV") == "1" and os.environ.get("HERDR_PANE_ID") and os.environ.get("HERDR_SOCKET_PATH") else "native",
+                        "diagnostic":os.environ.get("QUATTRO_DIAGNOSTIC") == "1"}
             try:
-                value = runtime.call(params["name"], params.get("arguments", {}))
+                started = time.monotonic()
+                arguments = params.get("arguments", {})
+                if params["name"] not in TOOL_MAP:
+                    raise ValueError("unknown tool")
+                if runtime.native_receipts is not None:
+                    selected_project = runtime.config.source(arguments.get("source_id")).project if params["name"] == "index_source" else arguments.get("project")
+                    if selected_project is not None:
+                        runtime.config.authorize(selected_project)
+                    resolved_sources = source_scope(runtime.config,params["name"],selected_project,arguments)
+                    attempt = runtime.native_receipts.record(runtime.native_host,identity,selected_project,params["name"],"attempted",
+                        {"authorized_scope":[selected_project] if selected_project else [],"authorized_sources":resolved_sources,"result_count":0})
+                value = runtime.call(params["name"], arguments)
                 result = {"content": [{"type": "text", "text": json.dumps(value, ensure_ascii=False, allow_nan=False)}],
                           "structuredContent": value, "isError": False}
                 if runtime.native_receipts is not None:
+                    from .native import evidence_metadata
                     count = len(value.get("results", value.get("knowledge", []))) + len(value.get("memories", []))
-                    receipt = runtime.native_receipts.record(runtime.native_host,
-                        {"session_id":runtime.native_session,
-                         "transport":"herdr" if os.environ.get("HERDR_ENV") == "1" and os.environ.get("HERDR_PANE_ID") and os.environ.get("HERDR_SOCKET_PATH") else "native",
-                         "diagnostic":os.environ.get("QUATTRO_DIAGNOSTIC") == "1"},
-                        params.get("arguments", {}).get("project"),params["name"],"ready",
-                        {"semantic":value.get("semantic", {}),"result_count":count,"model_reliance":"unknown"})
+                    receipt = runtime.native_receipts.record(runtime.native_host,identity,selected_project,params["name"],"ready",
+                        {"semantic":value.get("semantic", {}),"result_count":count,"model_reliance":"unknown",
+                         "latency_ms":round((time.monotonic()-started)*1000,2),"request_id":attempt["id"],
+                         **evidence_metadata(value),"strategy":arguments.get("strategy","hybrid"),
+                         "authorized_sources":resolved_sources,
+                         "authorized_scope":[selected_project] if selected_project else []})
                     result["_meta"] = {"quattro.receipt":receipt}
                     result["content"].append({"type":"text","text":f"Quattro receipt {receipt['id']}: result returned; native context delivery and model reliance unverified."})
             except Exception as error:
                 result = tool_error(error)
+                if attempt is not None:
+                    try:
+                        receipt = runtime.native_receipts.record(runtime.native_host,identity,selected_project,params["name"],"unavailable",
+                            {"authorized_scope":[selected_project] if selected_project else [],"result_count":0,
+                             "authorized_sources":resolved_sources,"request_id":attempt["id"],"error_type":type(error).__name__})
+                        result["_meta"] = {"quattro.receipt":receipt}
+                    except (ValueError, OSError, sqlite3.Error):
+                        pass
         else:
             return rpc_error(request_id, -32601, "Method not found")
     except (ValueError, TypeError, UnicodeError, OverflowError):

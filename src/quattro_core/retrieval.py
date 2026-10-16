@@ -200,10 +200,15 @@ class LocalNeuralEmbeddingBackend:
         if len(raw) > 4 * 1024 * 1024:
             raise RuntimeError("local neural embedding response is too large")
         body = json.loads(raw)
+        observed_model = body.get("model")
+        if observed_model is not None and observed_model != self.model_id:
+            raise RuntimeError("local neural embedding response has the wrong model")
         values = body.get("data", [{}])[0].get("embedding")
         if (not isinstance(values, list) or len(values) != self.dimensions
                 or not all(math.isfinite(float(value)) for value in values)):
             raise RuntimeError("local neural embedding response has the wrong dimensions")
+        self.observed_model = observed_model
+        self.observed_dimensions = len(values)
         return struct.pack(f"<{self.dimensions}f", *(float(value) for value in values))
 
     def embed_document(self, text: str) -> bytes:
@@ -347,10 +352,24 @@ def private_database(path: pathlib.Path) -> None:
 
 
 class RetrievalStore:
-    def __init__(self, path: pathlib.Path, *, embedding_backend: EmbeddingBackend | None = None) -> None:
+    def __init__(self, path: pathlib.Path, *, embedding_backend: EmbeddingBackend | None = None, read_only: bool = False) -> None:
         self.path = path
         self._transaction_depth = 0
         self.embedding_backend = embedding_backend or FeatureHashEmbeddingBackend()
+        if read_only:
+            from .config import safe_path
+            safe_path(path)
+            self.connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=5)
+            self.connection.row_factory = sqlite3.Row
+            self.connection.execute("PRAGMA query_only=ON")
+            try:
+                version = self.connection.execute("SELECT value FROM retrieval_meta WHERE key='index_version'").fetchone()
+                if version is None or int(version[0]) != INDEX_VERSION:
+                    raise ValueError("read-only storage requires the current schema")
+            except BaseException:
+                self.connection.close()
+                raise
+            return
         private_database(path)
         self.connection = sqlite3.connect(path, timeout=5.0)
         self.connection.row_factory = sqlite3.Row

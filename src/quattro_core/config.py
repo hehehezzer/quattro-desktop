@@ -40,11 +40,13 @@ class Source:
     kind: str = "repository"
     exclusions: tuple[str, ...] = ()
     authority: float = 0.8
+    intent: str = "undecided"
+    exclusion_reason: str | None = None
 
     def __post_init__(self) -> None:
         identifier(self.id)
         identifier(self.project)
-        safe_path(self.root, directory=True)
+        safe_path(self.root)
         if self.kind not in {"repository", "documentation", "obsidian"}:
             raise ValueError("unsupported source kind")
         if (not isinstance(self.exclusions, tuple) or len(self.exclusions) > 100
@@ -52,6 +54,13 @@ class Source:
             raise ValueError("invalid source exclusions")
         if type(self.authority) not in {int, float} or not math.isfinite(self.authority) or not 0 <= self.authority <= 1:
             raise ValueError("invalid source authority")
+        if self.intent not in {"intended", "undecided", "excluded"}:
+            raise ValueError("invalid source intent")
+        if self.exclusion_reason is not None and (not isinstance(self.exclusion_reason, str) or
+                not self.exclusion_reason.strip() or len(self.exclusion_reason) > 200):
+            raise ValueError("invalid source exclusion reason")
+        if self.intent == "excluded" and not self.exclusion_reason:
+            raise ValueError("excluded sources require a reason")
 
 
 @dataclass(frozen=True)
@@ -123,14 +132,15 @@ class Config:
             raise ValueError("projects and sources must be arrays")
         sources = []
         for raw in data.get("sources", []):
-            if not isinstance(raw, dict) or set(raw) - {"id", "project", "root", "kind", "exclusions", "authority"}:
+            if not isinstance(raw, dict) or set(raw) - {"id", "project", "root", "kind", "exclusions", "authority", "intent", "exclusion_reason"}:
                 raise ValueError("invalid source configuration")
             exclusions = raw.get("exclusions", [])
             if not isinstance(exclusions, list):
                 raise ValueError("exclusions must be an array")
             sources.append(Source(identifier(raw.get("id")), identifier(raw.get("project")),
-                                  safe_path(raw.get("root"), directory=True), raw.get("kind", "repository"),
-                                  tuple(exclusions), raw.get("authority", 0.8)))
+                                  safe_path(raw.get("root")), raw.get("kind", "repository"),
+                                  tuple(exclusions), raw.get("authority", 0.8),
+                                  raw.get("intent", "undecided"), raw.get("exclusion_reason")))
         fusion = data.get("fusion", {})
         if not isinstance(fusion, dict) or set(fusion) - {"rrf_k", "lexical_weight", "semantic_weight"}:
             raise ValueError("invalid fusion configuration")
@@ -144,7 +154,8 @@ class Config:
                 "embedding": self.embedding,
                 "fusion": {"rrf_k": self.rrf_k, "lexical_weight": self.lexical_weight, "semantic_weight": self.semantic_weight},
                 "sources": [{"id": s.id, "project": s.project, "root": str(s.root), "kind": s.kind,
-                             "exclusions": list(s.exclusions), "authority": s.authority} for s in self.sources]}
+                             "exclusions": list(s.exclusions), "authority": s.authority,
+                             "intent": s.intent, "exclusion_reason": s.exclusion_reason} for s in self.sources]}
 
     def save(self, path: pathlib.Path) -> None:
         path = safe_path(path)
@@ -173,6 +184,7 @@ def register_source(path: pathlib.Path, source: Source) -> Config:
         raise ValueError("source ID already registered")
     updated = Config.from_dict({**config.projection(), "sources": [*config.projection()["sources"],
         {"id": source.id, "project": source.project, "root": str(source.root), "kind": source.kind,
-         "exclusions": list(source.exclusions), "authority": source.authority}]})
+         "exclusions": list(source.exclusions), "authority": source.authority,
+         "intent":source.intent, "exclusion_reason":source.exclusion_reason}]})
     updated.save(path)
     return updated

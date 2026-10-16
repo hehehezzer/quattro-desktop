@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Production reliability and retrieval
+
+- Distinguish registered, intended, pending, indexed, stale, failed and excluded source coverage. Preserve missing-root configurations for diagnosis, explicit scope decisions, structured failures and separate attempt/success timestamps.
+- Enforce Git ignore policy and current source eligibility at retrieval; suppress deleted, changed, newly excluded and wrong-root evidence before delivery. Reconcile approved source moves atomically, detect mid-index changes, retain committed snapshots after interruption and bound transient retries.
+- Add source inventory/deep freshness, sequential dry-run batch/retry controls, authorized source inspection and read-only doctor diagnostics with actionable storage, vector, lexical, coverage and client observations.
+- Expose keyword/semantic/hybrid strategies and actual score contributions; require literal supporting evidence for exact identifier citations. Add diagnostic relevance feedback without changing ranking or memory authority.
+- Persist content-free attempt/result/failure receipts with resolved project/source scope, evidence revisions and context bytes; separate Codex stdout submission from host acceptance and model use. Isolate adapter Python imports from untrusted workspaces.
+- Add consistent private snapshots, manifest/schema/checksum checks and isolated restore, preserving vectors, source mappings, memory history and receipts. Enforce full-store source/project/private-memory export boundaries.
+- Add a 64-case authorized, versioned evaluation corpus, baseline/final machine reports and fixed isolation/freshness/memory-eligibility/availability/held-out recall/no-evidence gates. Retain Nomic, llama.cpp and existing SQLite/memory architecture.
+
 ## Unreleased — Native intelligence clients
 
 - Add opt-in retrieval-only native omp and Codex adapters: automatic bounded project/shared context, nine on-demand core operations, explicit native mutation approval, and Herdr pane attribution without historical orchestration/model pins.

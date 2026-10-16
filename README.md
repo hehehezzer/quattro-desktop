@@ -13,7 +13,7 @@ From this checkout:
 .venv/bin/quattro-intelligence --config "$PWD/.quattro/intelligence.json" config-init \
   --database-dir "$PWD/.quattro/state" --project quattro --principal operator --writable --can-verify
 .venv/bin/quattro-intelligence --config "$PWD/.quattro/intelligence.json" register-source \
-  --project quattro --id code --root "$PWD" --kind repository --exclude '.quattro/**'
+  --project quattro --id code --root "$PWD" --kind repository --intent intended --exclude '.quattro/**' --exclude 'benchmarks/**'
 .venv/bin/quattro-intelligence --config "$PWD/.quattro/intelligence.json" index code
 .venv/bin/quattro-intelligence --config "$PWD/.quattro/intelligence.json" query --project quattro QueryRouter
 .venv/bin/quattro-intelligence --config "$PWD/.quattro/intelligence.json" health
@@ -33,6 +33,9 @@ The last command serves JSON-lines MCP on stdin/stdout; it opens no network list
 - Context with current source citations, relevant prior memories, explicit fact-conflict reporting, deduplication and a conservative budget covering the complete returned context object.
 - Recoverable index migrations and explicit legacy imports that preserve original records and vectors, quarantining records without safe namespace attribution.
 - Opt-in native omp/Codex task-context adapters, all nine on-demand core operations, explicit native write approval, Herdr transport attribution and content-free retrieval/delivery receipts. No model/account/permission takeover; Codex hook trust remains native.
+- Source inventory with explicit scope decisions, five indexing states, content-based deep freshness checks, dry-run reconciliation and bounded retries. Deleted/stale evidence is suppressed before reindexing.
+- Read-only `doctor`, actual ranking explanations, diagnostic-only relevance feedback, source/memory-history inspection, and checksummed restore-to-new-directory recovery.
+- Reproducible scoped keyword/semantic/hybrid evaluation with labeled cases, frozen-corpus provenance and safety/no-regression gates.
 
 ## MCP tools
 

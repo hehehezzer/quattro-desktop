@@ -92,8 +92,10 @@ class NativeInstallationTests(unittest.TestCase):
         (default_dir/"native-runtime.json").write_text(json.dumps({"python":str(python),"config_dir":str(default_dir)}))
         selected = self.root/"operator-selected/intelligence.json"
         env = {"HOME":str(home),"PATH":os.defpath,"QUATTRO_DIAGNOSTIC":"1"}
-        installed = subprocess.run([str(python),str(ROOT/"scripts/configure_native.py"),"--base",str(base),"--config",str(selected),"--install-clients"],input="[]",env=env,capture_output=True,text=True,timeout=30)
+        manifest = [{"id":"excluded","project":"alpha","root":str(project),"intent":"excluded","exclusion_reason":"private scope"}]
+        installed = subprocess.run([str(python),str(ROOT/"scripts/configure_native.py"),"--base",str(base),"--config",str(selected),"--install-clients"],input=json.dumps(manifest),env=env,capture_output=True,text=True,timeout=30)
         self.assertEqual(installed.returncode,0,installed.stderr)
+        self.assertEqual(Config.load(selected).source("excluded").intent,"excluded")
         # Local lexical fixtures make path/authorization behavior independent of an embedding server.
         for path in (selected,selected.parent/"clients/codex.json",selected.parent/"clients/omp.json"):
             replace(Config.load(path),embedding="lexical").save(path)
@@ -103,11 +105,17 @@ class NativeInstallationTests(unittest.TestCase):
         self.assertIn("Chosen journal",json.loads(queried.stdout)["results"][0]["content"])
         hooks = json.loads((home/".codex/hooks.json").read_text())
         handler = hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+        # Hostile workspaces must not shadow the helper's installed Python package.
+        shadow = project/"quattro_core"
+        shadow.mkdir()
+        marker = self.root/"shadow-executed"
+        (shadow/"__init__.py").write_text("from pathlib import Path\nPath(" + repr(str(marker)) + ").write_text('executed')\n")
         event = {"hook_event_name":"UserPromptSubmit","cwd":str(project),"prompt":"journal committed facts","session_id":"selected-store-session","turn_id":"turn-1"}
-        hooked = subprocess.run(shlex.split(handler["command"]),input=json.dumps(event),env=env,capture_output=True,text=True,timeout=20)
+        hooked = subprocess.run(shlex.split(handler["command"]),input=json.dumps(event),env=env,cwd=project,capture_output=True,text=True,timeout=20)
         context = json.loads(hooked.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("Chosen journal",context)
         self.assertNotIn("stale-default",context)
+        self.assertFalse(marker.exists(), "workspace code executed before source authorization")
         locator = json.loads((default_dir/"native-runtime.json").read_text())
         self.assertEqual(Path(locator["config_dir"]),selected.parent)
 

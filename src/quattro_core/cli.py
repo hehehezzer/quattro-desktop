@@ -51,6 +51,33 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("serve", help="Serve bounded JSON-lines MCP on stdin/stdout")
     commands.add_parser("health", help="Report core storage and semantic availability")
     commands.add_parser("diagnostics", help="Report safe runtime diagnostics, without credentials or content")
+    doctor = commands.add_parser("doctor", help="Read-only actionable health, coverage and observed client delivery")
+    doctor.add_argument("--project")
+    doctor.add_argument("--json", action="store_true")
+    doctor.add_argument("--deep", action="store_true", help="Fingerprint previously indexed sources")
+    doctor.add_argument("--details", action="store_true")
+    doctor.add_argument("--backup-check", type=Path, help="Read-only validation of an explicit backup directory")
+    doctor.add_argument("--recovery-check", type=Path, help="Read-only validation of an explicit isolated recovery")
+    inventory = commands.add_parser("sources", help="Audit registered source scope and committed indexing state")
+    inventory.add_argument("--project")
+    inventory.add_argument("--deep", action="store_true")
+    selected = commands.add_parser("index-selected", help="Sequential authorized refresh; defaults to dry-run and previously approved sources")
+    selected.add_argument("--project")
+    selected.add_argument("--source-id", action="append")
+    selected.add_argument("--retry-failed", action="store_true")
+    selected.add_argument("--apply", action="store_true", help="Explicitly publish changes after scope review")
+    inspect = commands.add_parser("inspect-source", help="Inspect an authorized source or eligible current text file")
+    inspect.add_argument("source")
+    inspect.add_argument("--path")
+    receipts = commands.add_parser("receipts", help="Content-free observed retrieval/delivery stages")
+    receipts.add_argument("--host", choices=("omp","codex"), required=True)
+    receipts.add_argument("--session")
+    feedback = commands.add_parser("feedback", help="Record a diagnostic relevance annotation, never ranking authority")
+    _project(feedback)
+    feedback.add_argument("result_id")
+    feedback.add_argument("label", choices=("relevant","irrelevant","outdated","wrong_project"))
+    feedback_export = commands.add_parser("feedback-export", help="Export this principal's project relevance feedback")
+    _project(feedback_export)
     register = commands.add_parser("register-source", help="Register an operator-controlled source; never accepted over MCP")
     _project(register)
     register.add_argument("--id", required=True)
@@ -58,8 +85,11 @@ def parser() -> argparse.ArgumentParser:
     register.add_argument("--kind", choices=("repository", "documentation", "obsidian"), default="repository")
     register.add_argument("--exclude", action="append", default=[])
     index = commands.add_parser("index", help="Index or reindex one registered source")
+    register.add_argument("--intent", choices=("intended","undecided","excluded"), default="undecided")
+    register.add_argument("--exclusion-reason")
     index.add_argument("source")
     index.add_argument("--reindex", action="store_true", help="Force rebuilding the registered source index")
+    index.add_argument("--dry-run", action="store_true")
     reindex = commands.add_parser("reindex", help="Force rebuilding one registered source index")
     reindex.add_argument("source")
     for name in ("query", "context"):
@@ -68,14 +98,20 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("query")
         command.add_argument("--limit", type=int, default=10)
         command.add_argument("--source-id", action="append", help="Restrict evidence to registered sources; repeat as needed")
+        command.add_argument("--strategy", choices=("keyword","semantic","hybrid"), default="hybrid")
         if name == "query":
             command.add_argument("--offset", type=int, default=0)
+            command.add_argument("--explain", action="store_true")
         else:
             command.add_argument("--budget", type=int, default=2000, help="Conservative UTF-8 byte budget (512–32768)")
     status = commands.add_parser("index-status", help="Index status for allowed projects only")
     status.add_argument("--project")
+    status.add_argument("--deep", action="store_true")
     backup = commands.add_parser("backup", help="Create consistent local SQLite backups of both databases; original databases remain unchanged")
     backup.add_argument("destination", type=Path, help="New directory for operator-owned backup files")
+    restore = commands.add_parser("restore", help="Verify a backup and restore only into a new isolated directory")
+    restore.add_argument("source", type=Path)
+    restore.add_argument("destination", type=Path)
     migrate = commands.add_parser("migrate", help="Copy compatible legacy retrieval database; unassigned rows are quarantined, originals untouched")
     migrate.add_argument("source", type=Path)
     migrate.add_argument("--project", help="Explicitly map legacy rows to this allowed project")
@@ -84,6 +120,9 @@ def parser() -> argparse.ArgumentParser:
     memories = memory.add_subparsers(dest="memory_command", required=True)
     stats = memories.add_parser("stats", help="Memory counts restricted to configured projects and principal")
     stats.add_argument("--project")
+    history = memories.add_parser("history", help="Inspect accessible memory revisions and lifecycle provenance")
+    _project(history)
+    history.add_argument("id")
     save = memories.add_parser("save", help="Save memory attributed to configured principal; secrets are rejected")
     _project(save)
     _content(save)
@@ -154,25 +193,8 @@ def _read_content(args: argparse.Namespace) -> str | None:
 
 
 def _backup(config: Config, destination: Path) -> dict:
-    destination = _local_path(destination)
-    destination.mkdir(mode=0o700, parents=True, exist_ok=False)
-    copied = []
-    for name in ("memory.sqlite3", "retrieval.sqlite3"):
-        source = _local_path(config.database_dir / name, exists=True)
-        target = destination / name
-        # Mode=ro avoids creating a missing source; SQLite backup includes WAL.
-        original = sqlite3.connect(source.as_uri() + "?mode=ro", uri=True)
-        try:
-            target.touch(mode=0o600, exist_ok=False)
-            replica = sqlite3.connect(target)
-            try:
-                original.backup(replica)
-            finally:
-                replica.close()
-        finally:
-            original.close()
-        copied.append(name)
-    return {"backed_up": copied}
+    from .recovery import backup
+    return backup(config, _local_path(destination))
 
 
 def execute(args: argparse.Namespace) -> Any:
@@ -188,11 +210,23 @@ def execute(args: argparse.Namespace) -> Any:
         config.save(path)
         return {"configured": True, "projects": list(config.projects), "writable": config.writable, "can_verify": config.can_verify}
     config = Config.load(path)
+    if args.command == "doctor":
+        from .doctor import diagnose
+        return diagnose(config, path, args.project, args.deep, args.backup_check, args.recovery_check)
+    if args.command == "restore":
+        from .recovery import restore
+        return restore(config, args.source, args.destination)
+    if args.command == "receipts":
+        from .receipts import Receipts
+        from contextlib import closing
+        with closing(Receipts(config)) as receipts:
+            return receipts.recent(args.host, {"session_id":args.session} if args.session else {})
     if args.command == "serve":
         return serve(config)
     if args.command == "register-source":
         config.authorize(args.project)
-        register_source(path, Source(args.id, args.project, args.root.absolute(), args.kind, tuple(args.exclude)))
+        register_source(path, Source(args.id, args.project, args.root.absolute(), args.kind, tuple(args.exclude),
+                                    intent=args.intent, exclusion_reason=args.exclusion_reason))
         return {"registered": args.id, "project": args.project}
     if args.command == "backup":
         return _backup(config, args.destination)
@@ -210,6 +244,18 @@ def execute(args: argparse.Namespace) -> Any:
                                        source_root=config.source(args.source_id).root if args.source_id else None)
     runtime = McpRuntime(config)
     try:
+        if args.command == "sources":
+            return runtime.service.get_index_status(args.project, deep=args.deep)
+        if args.command == "index-selected":
+            return runtime.service.index_selected(args.project, args.source_id, args.retry_failed, dry_run=not args.apply)
+        if args.command == "inspect-source":
+            return runtime.service.inspect_source(args.source, args.path)
+        if args.command == "feedback":
+            from .feedback import record
+            return record(runtime.service, args.project, args.result_id, args.label)
+        if args.command == "feedback-export":
+            from .feedback import export
+            return export(runtime.service, args.project)
         if args.command in ("health", "diagnostics"):
             health = runtime.service.health()
             if args.command == "diagnostics":
@@ -218,18 +264,24 @@ def execute(args: argparse.Namespace) -> Any:
                         "writable": config.writable, "can_verify": config.can_verify, "health": health}
             return health
         if args.command in ("index", "reindex"):
-            return runtime.call("index_source", {"source_id": args.source, "reindex": args.command == "reindex" or args.reindex})
+            return runtime.call("index_source", {"source_id": args.source, "reindex": args.command == "reindex" or args.reindex,
+                                                "dry_run":getattr(args,"dry_run",False)})
         if args.command in ("query", "context"):
-            values = {"project": args.project, "query": args.query, "limit": args.limit}
+            values = {"project": args.project, "query": args.query, "limit": args.limit, "strategy":args.strategy}
+            if args.command == "query":
+                values["explain"] = args.explain
             if args.source_id is not None:
                 values["source_ids"] = args.source_id
             values["offset" if args.command == "query" else "budget"] = args.offset if args.command == "query" else args.budget
             return runtime.call("search_knowledge" if args.command == "query" else "get_project_context", values)
         if args.command == "index-status":
             if args.project:
-                return runtime.call("get_index_status", {"project": args.project})
-            return {"projects": {project: runtime.call("get_index_status", {"project": project}) for project in config.projects}}
+                return runtime.call("get_index_status", {"project": args.project, "deep":args.deep})
+            return {"projects": {project: runtime.call("get_index_status", {"project": project,"deep":args.deep}) for project in config.projects}}
         command = args.memory_command
+        if command == "history":
+            config.authorize(args.project)
+            return runtime.service.memory.history(args.project, args.id, principal=config.principal)
         if command == "stats":
             projects = [args.project] if args.project else config.projects
             for project in projects:
@@ -294,7 +346,13 @@ def main(argv: list[str] | None = None) -> int:
         result = execute(args)
         if args.command == "serve":
             return result
-        print(json.dumps(result, ensure_ascii=False, allow_nan=False, sort_keys=True))
+        if args.command == "doctor" and not args.json:
+            from .doctor import render
+            print(render(result, args.details))
+        else:
+            print(json.dumps(result, ensure_ascii=False, allow_nan=False, sort_keys=True))
+        if args.command == "doctor":
+            return {"healthy":0,"degraded":1,"unavailable":2}[result["status"]]
         return 0
     except PermissionError:
         print("Operation not permitted by intelligence configuration", file=sys.stderr)

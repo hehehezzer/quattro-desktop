@@ -11,6 +11,9 @@ import sqlite3
 import re
 import stat
 import uuid
+import subprocess
+import time
+import urllib.error
 from dataclasses import asdict
 from contextlib import closing
 from typing import Any
@@ -23,6 +26,10 @@ from .retrieval import (
     classify_markdown, language_for, safe_to_index, repository_state, cosine, split_unit, redact, private_database,
     TOKEN_RE, QUERY_STOPWORDS, utc_now,
 )
+
+# Bump when credential/ingestion rules change. Only successful full-source
+# validation records this proof; legacy/unvalidated snapshots fail closed below.
+INGESTION_POLICY_VERSION = 1
 
 
 class LexicalBackend:
@@ -101,14 +108,93 @@ def _walk_error(error: OSError) -> None:
     raise error
 
 
+def _git_allowed(root):
+    """Apply repository ignore rules, without evaluating hooks or fsmonitor."""
+    try:
+        result = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(root),
+                                 "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."],
+                                capture_output=True, timeout=10, check=False)
+    except FileNotFoundError:
+        if (root / ".gitignore").is_file() or any((parent / ".git").is_file() or
+                (parent / ".git" / "HEAD").is_file() for parent in (root, *root.parents)):
+            raise ValueError("Git is required to enforce repository ignore policy")
+        return None  # Explicit non-Git document roots do not require a Git install.
+    if result.returncode != 0:
+        if (root / ".git").exists():
+            raise ValueError("repository ignore policy unavailable")
+        return None
+    if len(result.stdout) > 4 * 1024 * 1024:
+        raise ValueError("repository file inventory exceeds limit")
+    return set(result.stdout.decode("utf-8").split("\0")) - {""}
+
+
+def _source_snapshot(source):
+    _safe_root(source.root)
+    allowed = _git_allowed(source.root)
+    files = {}
+    scanned = excluded = total = 0
+    for directory, dirs, names in os.walk(source.root, followlinks=False, onerror=_walk_error):
+        parent = pathlib.Path(directory)
+        dirs[:] = sorted(d for d in dirs if d.lower() not in DENIED_PARTS
+                         and not (parent / d).is_symlink()
+                         and not _excluded((parent / d).relative_to(source.root), source.exclusions))
+        for name in sorted(names):
+            scanned += 1
+            if scanned > MAX_INDEX_FILES:
+                raise ValueError("source exceeds indexing file limit")
+            path = parent / name
+            relative = path.relative_to(source.root)
+            if (not safe_to_index(path) or _excluded(relative, source.exclusions) or
+                    allowed is not None and relative.as_posix() not in allowed):
+                excluded += 1
+                continue
+            try:
+                content, info = _read_file(source.root, relative)
+            except (UnicodeDecodeError, ValueError):
+                excluded += 1
+                continue
+            if not safe_to_index(path, content):
+                excluded += 1
+                continue
+            total += info.st_size
+            if total > MAX_TOTAL_FILE_BYTES:
+                raise ValueError("source exceeds indexing byte limit")
+            files[relative.as_posix()] = hashlib.sha256(content.encode()).hexdigest()
+    return files, {"scanned": scanned, "excluded": excluded}
+
+
+def _fingerprint(files):
+    return hashlib.sha256(json.dumps(files, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _failure(error):
+    retryable = isinstance(error, (urllib.error.URLError, TimeoutError, ConnectionError))
+    if isinstance(error, sqlite3.OperationalError):
+        retryable = getattr(error, "sqlite_errorcode", None) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+    reasons = {FileNotFoundError: "source is missing", PermissionError: "source is inaccessible or unauthorized"}
+    if isinstance(error, urllib.error.URLError):
+        return {"code":"embedding_unavailable","reason":"local embedding endpoint unavailable","retryable":True}
+    if str(error) == "local neural embedding response has the wrong dimensions":
+        return {"code":"embedding_dimensions","reason":"embedding response dimensions incompatible with configured vectors","retryable":False}
+    return {"code": type(error).__name__, "reason": reasons.get(type(error), "indexing failed; committed index preserved"),
+            "retryable": retryable}
+
+
 class KnowledgeService:
-    def __init__(self, config):
+    def __init__(self, config, *, read_only=False):
         self.config = config
-        config.database_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not read_only:
+            config.database_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         backend = LocalNeuralEmbeddingBackend() if config.embedding == "local-neural" else LexicalBackend()
-        self.store = RetrievalStore(config.database_dir / "retrieval.sqlite3", embedding_backend=backend)
-        self.memory = MemoryStore(config.database_dir / "memory.sqlite3")
+        self.store = RetrievalStore(config.database_dir / "retrieval.sqlite3", embedding_backend=backend, read_only=read_only)
+        try:
+            self.memory = MemoryStore(config.database_dir / "memory.sqlite3", read_only=read_only)
+        except BaseException:
+            self.store.close()
+            raise
         self.connection = self.store.connection
+        if read_only:
+            return
         self.connection.executescript("""
         CREATE TABLE IF NOT EXISTS knowledge_sources(
           source_id TEXT PRIMARY KEY, project TEXT NOT NULL, root TEXT NOT NULL,
@@ -138,10 +224,6 @@ class KnowledgeService:
             if any(s not in allowed for s in source_ids):
                 raise PermissionError("source is not authorized for project")
             sources = [s for s in sources if s.id in source_ids]
-        for source in sources:
-            previous = self.connection.execute("SELECT project,root FROM knowledge_sources WHERE source_id=?", (source.id,)).fetchone()
-            if previous and tuple(previous) != (source.project, str(source.root)):
-                raise PermissionError("source assignment differs from indexed provenance")
         return sources
 
     def _remove_file(self, project, source_id, path):
@@ -151,143 +233,172 @@ class KnowledgeService:
             self.store.forget(identifier)
         self.connection.execute("DELETE FROM knowledge_files WHERE project=? AND source_id=? AND path=?", (project, source_id, path))
 
-    def index_source(self, source_id, reindex=False):
+    def index_source(self, source_id, reindex=False, dry_run=False):
         source = self.config.source(source_id)
-        if type(reindex) is not bool:
-            raise ValueError("reindex must be a boolean")
-        self.config.authorize(source.project, write=True)
-        root = source.root
-        _safe_root(root)
-        attempt = utc_now()
-        summary = dict(scanned=0, unchanged=0, updated=0, deleted=0, excluded=0, embedded=0)
+        if type(reindex) is not bool or type(dry_run) is not bool:
+            raise ValueError("index flags must be booleans")
+        self.config.authorize(source.project, write=not dry_run)
+        if source.intent == "excluded":
+            raise PermissionError("source is explicitly excluded")
+        for retry in range(3):
+            try:
+                return self._index_source(source, reindex, dry_run)
+            except Exception as error:
+                if dry_run or not _failure(error)["retryable"] or retry == 2:
+                    raise
+                time.sleep(0.1 * (2 ** retry))
+
+    def _index_source(self, source, reindex, dry_run):
+        root, attempt = source.root, utc_now()
         try:
+            if not dry_run:
+                # A crash before publication leaves an explicit recoverable attempt,
+                # never a falsely successful replacement.
+                with self.connection:
+                    self.connection.execute("""INSERT INTO knowledge_sources(source_id,project,root,last_attempt,last_failure)
+                        VALUES(?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET
+                        last_attempt=excluded.last_attempt,last_failure=excluded.last_failure""",
+                        (source.id, source.project, str(root), attempt,
+                         json.dumps({"code":"in_progress_or_interrupted","reason":"index attempt has not committed","retryable":True})))
+            files, summary = _source_snapshot(source)
+            summary.update(unchanged=0, updated=0, deleted=0, embedded=0,
+                           fingerprint=_fingerprint(files), policy_version=INGESTION_POLICY_VERSION)
+            if dry_run:
+                old = dict(self.connection.execute("SELECT path,content_hash FROM knowledge_files WHERE project=? AND source_id=?", (source.project, source.id)))
+                summary.update(unchanged=sum(old.get(p) == h for p, h in files.items()),
+                               updated=sum(reindex or old.get(p) != h for p, h in files.items()),
+                               deleted=len(old.keys() - files.keys()))
+                return {"source_id":source.id,"project":source.project,"dry_run":True,**summary}
             with self.store.transaction():
-                old_source = self.connection.execute("SELECT project,root FROM knowledge_sources WHERE source_id=?", (source.id,)).fetchone()
-                if old_source and tuple(old_source) != (source.project, str(root)):
-                    raise ValueError("source identity is already assigned to a different project or root")
-                current = set()
-                total_bytes = total_units = 0
+                old_source = self.connection.execute("SELECT project FROM knowledge_sources WHERE source_id=?", (source.id,)).fetchone()
+                if old_source and old_source[0] != source.project:
+                    raise PermissionError("source identity belongs to another project")
                 state = repository_state(root, include_tracked=True)
                 tracked = set(state.get("trackedPaths", ()))
-                for directory, dirs, files in os.walk(root, followlinks=False, onerror=_walk_error):
-                    directory_path = pathlib.Path(directory)
-                    dirs[:] = sorted(d for d in dirs if d.lower() not in DENIED_PARTS and not (directory_path / d).is_symlink())
-                    for filename in sorted(files):
-                        summary["scanned"] += 1
-                        if summary["scanned"] > MAX_INDEX_FILES:
-                            raise ValueError("source exceeds indexing file limit")
-                        path = directory_path / filename
-                        relative = path.relative_to(root)
-                        name = relative.as_posix()
-                        if not safe_to_index(path) or _excluded(relative, source.exclusions):
-                            summary["excluded"] += 1
-                            continue
-                        try:
-                            content, info = _read_file(root, relative)
-                        except (UnicodeDecodeError, ValueError):
-                            summary["excluded"] += 1
-                            continue
-                        if not safe_to_index(path, content):
-                            summary["excluded"] += 1
-                            continue
-                        total_bytes += info.st_size
-                        if total_bytes > MAX_TOTAL_FILE_BYTES:
-                            raise ValueError("source exceeds indexing byte limit")
-                        current.add(name)
-                        digest = hashlib.sha256(content.encode()).hexdigest()
-                        commit_sha = state["commitSha"] if state["dirty"] is False and name in tracked else None
-                        old = self.connection.execute("SELECT content_hash FROM knowledge_files WHERE project=? AND source_id=? AND path=?", (source.project, source.id, name)).fetchone()
-                        if old and old[0] == digest and not reindex:
-                            summary["unchanged"] += 1
-                            changed_provenance = False
-                            rows = self.connection.execute("""SELECT d.id,d.commit_sha,d.metadata_json FROM documents d
-                                JOIN knowledge_documents k ON k.document_id=d.id
-                                WHERE k.project=? AND k.source_id=? AND d.path=?""", (source.project,source.id,name))
-                            for row in rows:
-                                metadata = json.loads(row["metadata_json"])
-                                if row["commit_sha"] != commit_sha or metadata.get("workingTreeDirty") != state["dirty"]:
-                                    metadata["workingTreeDirty"] = state["dirty"]
-                                    self.connection.execute("UPDATE documents SET commit_sha=?,metadata_json=? WHERE id=?",
-                                                            (commit_sha,json.dumps(metadata),row["id"]))
-                                    changed_provenance = True
-                            if changed_provenance:
-                                self.store._bump()
-                            continue
-                        retained = {row["id"]:(row["content_hash"],row["embedding"],row["embedding_model"]) for row in self.connection.execute("""SELECT d.* FROM documents d JOIN knowledge_documents k ON k.document_id=d.id WHERE k.project=? AND k.source_id=? AND d.path=?""", (source.project,source.id,name))} if self.config.embedding == "lexical" else {}
-                        self._remove_file(source.project, source.id, name)
-                        units, edges = (document_units(path, content) if path.suffix.lower() in {".md", ".txt", ".rst"} else code_units(path, content))
-                        if self.config.embedding == "local-neural":
-                            units = [part for unit in units for part in split_unit(unit, 2800)]
-                        if len(units) > MAX_UNITS_PER_FILE or total_units + len(units) > MAX_TOTAL_UNITS:
-                            raise ValueError("source exceeds indexing unit limit")
-                        symbols = {}
-                        for index, unit in enumerate(units):
-                            identifier = "source_" + hashlib.sha256(f"{source.project}\0{source.id}\0{name}\0{index}".encode()).hexdigest()
-                            identifier = self.store.upsert_document(identifier=identifier,
-                                source_type=classify_markdown(name) if path.suffix.lower() in {".md", ".txt", ".rst"} else "code",
-                                content=unit["content"], repository=source.project, branch=source.id,
-                                commit_sha=commit_sha, path=name, symbol=unit.get("symbol"),
-                                symbol_type=unit.get("symbol_type"), language=language_for(path),
-                                start_line=unit.get("start_line"), end_line=unit.get("end_line"),
-                                importance=source.authority, metadata={"source_id":source.id,"namespace":source.project,
-                                "root":str(root),"file_hash":digest,"workingTreeDirty":state["dirty"],
-                                "claims":_claims(unit["content"])})
-                            previous = retained.get(identifier)
-                            if previous and previous[0] == hashlib.sha256(unit["content"].encode()).hexdigest():
-                                self.connection.execute("UPDATE documents SET embedding=?,embedding_model=? WHERE id=?", (previous[1],previous[2],identifier))
-                            self.connection.execute("INSERT INTO knowledge_documents VALUES(?,?,?,?)", (identifier, source.project, source.id, digest))
-                            if unit.get("symbol"):
-                                symbols[unit["symbol"]] = identifier
-                            summary["embedded"] += int(self.store.embedding_backend.dimensions > 0)
-                        for symbol, relation, target in edges:
-                            identifier = symbols.get(symbol) or next(iter(symbols.values()), None)
-                            if identifier:
-                                self.connection.execute("INSERT OR REPLACE INTO graph_edges VALUES(?,?,?,?,?,?)", (source.project, source.id, identifier, relation, target, "{}"))
-                        self.connection.execute("INSERT OR REPLACE INTO knowledge_files VALUES(?,?,?,?,?)", (source.project, source.id, name, digest, utc_now()))
-                        total_units += len(units)
-                        summary["updated"] += 1
-                stale = [r[0] for r in self.connection.execute("SELECT path FROM knowledge_files WHERE project=? AND source_id=?", (source.project, source.id)) if r[0] not in current]
+                for name, digest in files.items():
+                    path = root / name
+                    content, _ = _read_file(root, pathlib.Path(name))
+                    if hashlib.sha256(content.encode()).hexdigest() != digest:
+                        raise RuntimeError("source changed during indexing; retry")
+                    commit_sha = state["commitSha"] if state["dirty"] is False and name in tracked else None
+                    old = self.connection.execute("SELECT content_hash FROM knowledge_files WHERE project=? AND source_id=? AND path=?", (source.project, source.id, name)).fetchone()
+                    if old and old[0] == digest and not reindex:
+                        summary["unchanged"] += 1
+                        rows = self.connection.execute("""SELECT d.id,d.metadata_json FROM documents d
+                            JOIN knowledge_documents k ON k.document_id=d.id
+                            WHERE k.project=? AND k.source_id=? AND d.path=?""", (source.project,source.id,name))
+                        for row in rows:
+                            metadata = json.loads(row["metadata_json"])
+                            metadata.update(workingTreeDirty=state["dirty"], root=str(root))
+                            self.connection.execute("UPDATE documents SET commit_sha=?,metadata_json=? WHERE id=?",
+                                                    (commit_sha,json.dumps(metadata),row["id"]))
+                        continue
+                    retained = {r["id"]:(r["content_hash"],r["embedding"],r["embedding_model"]) for r in self.connection.execute(
+                        """SELECT d.* FROM documents d JOIN knowledge_documents k ON k.document_id=d.id
+                        WHERE k.project=? AND k.source_id=? AND d.path=?""", (source.project,source.id,name))} if self.config.embedding == "lexical" else {}
+                    self._remove_file(source.project, source.id, name)
+                    units, edges = (document_units(path, content) if path.suffix.lower() in {".md", ".txt", ".rst"} else code_units(path, content))
+                    if self.config.embedding == "local-neural":
+                        units = [part for unit in units for part in split_unit(unit, 2800)]
+                    if len(units) > MAX_UNITS_PER_FILE:
+                        raise ValueError("source exceeds per-file unit limit")
+                    symbols = {}
+                    for index, unit in enumerate(units):
+                        identifier = "source_" + hashlib.sha256(f"{source.project}\0{source.id}\0{name}\0{index}".encode()).hexdigest()
+                        identifier = self.store.upsert_document(identifier=identifier,
+                            source_type=classify_markdown(name) if path.suffix.lower() in {".md", ".txt", ".rst"} else "code",
+                            content=unit["content"], repository=source.project, branch=source.id,
+                            commit_sha=commit_sha, path=name, symbol=unit.get("symbol"), symbol_type=unit.get("symbol_type"),
+                            language=language_for(path), start_line=unit.get("start_line"), end_line=unit.get("end_line"),
+                            importance=source.authority, metadata={"source_id":source.id,"namespace":source.project,
+                            "root":str(root),"file_hash":digest,"workingTreeDirty":state["dirty"],"claims":_claims(unit["content"])})
+                        previous = retained.get(identifier)
+                        if previous and previous[0] == hashlib.sha256(unit["content"].encode()).hexdigest():
+                            self.connection.execute("UPDATE documents SET embedding=?,embedding_model=? WHERE id=?", (previous[1],previous[2],identifier))
+                        self.connection.execute("INSERT INTO knowledge_documents VALUES(?,?,?,?)", (identifier, source.project, source.id, digest))
+                        if unit.get("symbol"):
+                            symbols[unit["symbol"]] = identifier
+                        summary["embedded"] += int(self.store.embedding_backend.dimensions > 0)
+                    for symbol, relation, target in edges:
+                        identifier = symbols.get(symbol) or next(iter(symbols.values()), None)
+                        if identifier:
+                            self.connection.execute("INSERT OR REPLACE INTO graph_edges VALUES(?,?,?,?,?,?)", (source.project, source.id, identifier, relation, target, "{}"))
+                    self.connection.execute("INSERT OR REPLACE INTO knowledge_files VALUES(?,?,?,?,?)", (source.project, source.id, name, digest, utc_now()))
+                    summary["updated"] += 1
+                stale = [r[0] for r in self.connection.execute("SELECT path FROM knowledge_files WHERE project=? AND source_id=?", (source.project, source.id)) if r[0] not in files]
                 for name in stale:
                     self._remove_file(source.project, source.id, name)
                 summary["deleted"] = len(stale)
-                self.connection.execute("INSERT OR REPLACE INTO knowledge_sources VALUES(?,?,?,?,?,?,?)", (source.id, source.project, str(root), utc_now(), attempt, None, json.dumps(summary)))
+                if self.connection.execute("SELECT count(*) FROM knowledge_documents WHERE project=? AND source_id=?", (source.project,source.id)).fetchone()[0] > MAX_TOTAL_UNITS:
+                    raise ValueError("source exceeds indexing unit limit")
+                if _source_snapshot(source)[0] != files:
+                    raise RuntimeError("source changed during indexing; retry")
+                self.connection.execute("INSERT OR REPLACE INTO knowledge_sources VALUES(?,?,?,?,?,?,?)",
+                                        (source.id, source.project, str(root), utc_now(), attempt, None, json.dumps(summary)))
+                self.store._bump()
             return {"source_id":source.id,"project":source.project,**summary}
-        except Exception:
-            self.connection.execute("""INSERT INTO knowledge_sources(source_id,project,root,last_attempt,last_failure) VALUES(?,?,?,?,?)
-                ON CONFLICT(source_id) DO UPDATE SET last_attempt=excluded.last_attempt,last_failure=excluded.last_failure""", (source.id, source.project, str(root), attempt, "indexing failed; previous index preserved"))
-            self.connection.commit()
+        except BaseException as error:
+            if not dry_run:
+                try:
+                    with self.connection:
+                        self.connection.execute("""UPDATE knowledge_sources SET last_failure=?
+                            WHERE source_id=? AND last_attempt=?""", (json.dumps(_failure(error)), source.id, attempt))
+                except sqlite3.Error:
+                    pass  # Preserve the original error; never claim publication.
             raise
 
-    def search_knowledge(self, project, query, limit=10, offset=0, source_ids=None):
+    def search_knowledge(self, project, query, limit=10, offset=0, source_ids=None, strategy="hybrid", explain=False):
+        if strategy not in {"keyword", "semantic", "hybrid"}:
+            raise ValueError("unsupported retrieval strategy")
         sources = self._sources(project, source_ids)
+        status = self.get_index_status(project)
+        scoped_status = [s for s in status["sources"] if source_ids is None or s["source_id"] in source_ids]
+        warnings = []
+        if any(s["status"] in {"pending", "failed", "stale"} for s in scoped_status):
+            warnings.append("incomplete_scope: inspect index-status before concluding no evidence exists")
+        if any(s["status"] == "excluded" for s in scoped_status):
+            warnings.append("excluded_sources: operator policy excludes part of requested scope")
+        sources = [s for s in sources if s.intent != "excluded" and any(
+            t["source_id"] == s.id and t["freshness"] not in {"root_changed", "unavailable"} for t in scoped_status)]
         if not isinstance(query, str) or not query.strip() or len(query.encode()) > 32768:
             raise ValueError("query must be nonempty and bounded")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100 or isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise ValueError("invalid pagination")
+        # Code identifiers are exact evidence requests, not approximate concepts.
+        # A cosine neighbor without the identifier cannot support a code citation.
+        identifier_query = bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", query.strip()) and
+                                ("_" in query or "." in query or re.search(r"[a-z][A-Z]", query)))
+        identifier_match = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(query.strip()) +
+                                      r"(?![A-Za-z0-9_])", re.I) if identifier_query else None
         semantic = {"available":False,"backend":self.store.embedding_backend.model_id,"reason":"semantic embeddings are disabled; lexical search only"}
+        if strategy == "keyword":
+            semantic["reason"] = "not requested: keyword strategy"
         if not sources:
-            return {"results":[],"total":0,"limit":limit,"offset":offset,"semantic":semantic}
+            return {"results":[],"total":0,"limit":limit,"offset":offset,"semantic":semantic,"warnings":warnings}
         ids = [s.id for s in sources]
         scope = "k.project=? AND k.source_id IN (" + ",".join("?" for _ in ids) + ") AND d.valid_until IS NULL AND d.superseded_by IS NULL"
         params = [project, *ids]
         candidates = {}
         terms = list(dict.fromkeys(word for word in TOKEN_RE.findall(query) if word.casefold() not in QUERY_STOPWORDS))[:32]
-        if terms:
+        if terms and strategy != "semantic":
             match = " OR ".join('"' + word.replace('"','""') + '"' for word in terms)
             rows = self.connection.execute(f"""SELECT d.*,k.source_id,k.file_hash,bm25(documents_fts) AS rank FROM documents_fts
                 JOIN documents d ON d.id=documents_fts.id JOIN knowledge_documents k ON k.document_id=d.id
                 WHERE documents_fts MATCH ? AND {scope} ORDER BY rank""", [match,*params]).fetchall()
             for rank, row in enumerate(rows, 1):
-                candidates[row["id"]] = {"row":row,"score":self.config.lexical_weight / (self.config.rrf_k + rank),"lexical":True,"semantic":0.0}
+                score = self.config.lexical_weight / (self.config.rrf_k + rank)
+                candidates[row["id"]] = {"row":row,"score":score,"lexical":True,"semantic":0.0,
+                                        "bm25":row["rank"],"keyword_rrf":score}
         all_rows = self.connection.execute(f"SELECT d.*,k.source_id,k.file_hash FROM documents d JOIN knowledge_documents k ON k.document_id=d.id WHERE {scope}", params).fetchall()
         normalized = query.strip().strip('"').lower()
-        for row in all_rows:
+        for row in all_rows if strategy != "semantic" else ():
             exact = (row["symbol"] or "").lower() == normalized or (row["path"] or "").lower() == normalized
             phrase = bool(terms) and normalized in row["content"].lower()
             if exact or phrase:
                 item = candidates.setdefault(row["id"], {"row":row,"score":0.0,"lexical":True,"semantic":0.0})
                 item["score"] += 1.0 if exact else 0.1
-        if self.config.embedding == "local-neural":
+                item["exact_boost"] = 1.0 if exact else 0.1
+        if self.config.embedding == "local-neural" and strategy != "keyword":
             try:
                 vector = self.store.embedding_backend.embed_query(query)
                 compatible = [r for r in all_rows if r["embedding_model"] == self.store.embedding_backend.model_id and len(r["embedding"]) == len(vector)]
@@ -298,6 +409,7 @@ class KnowledgeService:
                     item = candidates.setdefault(row["id"], {"row":row,"score":0.0,"lexical":False,"semantic":0.0})
                     item["score"] += self.config.semantic_weight / (self.config.rrf_k + rank)
                     item["semantic"] = similarity
+                    item["semantic_rrf"] = self.config.semantic_weight / (self.config.rrf_k + rank)
                 semantic = {"available":bool(compatible),"backend":self.store.embedding_backend.model_id,"reason":None if compatible else "no compatible neural vectors indexed"}
             except Exception:
                 semantic["reason"] = "local neural query failed; lexical fallback used"
@@ -308,11 +420,20 @@ class KnowledgeService:
         source_map = {s.id: s for s in sources}
         current_time = dt.datetime.now(dt.timezone.utc)
         provenances = {}
+        policies = {}
+        for source in sources:
+            try:
+                _safe_root(source.root)
+                policies[source.id] = _git_allowed(source.root)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                policies[source.id] = set()
+                warnings.append("source_policy_unavailable: inspect doctor")
         for item in candidates.values():
             row = item["row"]
             age = max(0, (current_time - dt.datetime.fromisoformat(row["updated_at"])).total_seconds())
             quality = source_map[row["source_id"]].authority * row["confidence"]
-            item["score"] *= 0.5 + quality + 0.1 / (1 + age / (86400 * 180))
+            item["quality_multiplier"] = 0.5 + quality + 0.1 / (1 + age / (86400 * 180))
+            item["score"] *= item["quality_multiplier"]
             location = (row["source_id"], row["path"], row["file_hash"])
             if location not in provenances:
                 provenance = "missing"
@@ -321,14 +442,27 @@ class KnowledgeService:
                     if relative.is_absolute() or ".." in relative.parts or not relative.name:
                         raise ValueError("invalid indexed provenance")
                     content, _ = _read_file(roots[row["source_id"]], relative)
+                    source = source_map[row["source_id"]]
+                    allowed = policies[source.id]
+                    if (not safe_to_index(source.root / relative) or _excluded(relative, source.exclusions)
+                            or allowed is not None and relative.as_posix() not in allowed):
+                        raise ValueError("source evidence is no longer eligible")
                     provenance = "current" if hashlib.sha256(content.encode()).hexdigest() == row["file_hash"] else "outdated"
+                    policy = next(s.get("policy_version") for s in scoped_status if s["source_id"] == source.id)
+                    if provenance == "current" and policy != INGESTION_POLICY_VERSION and not safe_to_index(source.root / relative, content):
+                        provenance = "excluded"
                 except (OSError, ValueError, UnicodeDecodeError):
                     pass
                 provenances[location] = provenance
             item["provenance"] = provenances[location]
-            item["score"] *= {"current": 1.0, "outdated": 0.5, "missing": 0.25}[item["provenance"]]
+            item["score"] *= {"current": 1.0, "outdated": 0.5, "missing": 0.25, "excluded":0.0}[item["provenance"]]
         for item in sorted(candidates.values(), key=lambda x:(-x["score"],x["row"]["id"])):
             row = item["row"]
+            if identifier_match and not identifier_match.search(
+                    " ".join((row["content"], row["symbol"] or "", row["path"] or ""))):
+                continue
+            if item["provenance"] != "current":
+                continue  # Retain last-known-good storage, never deliver deleted/stale evidence.
             key = row["content_hash"]
             if key in seen:
                 continue
@@ -343,16 +477,37 @@ class KnowledgeService:
             metadata = json.loads(row["metadata_json"])
             citation = {"path":row["path"],"start_line":row["start_line"],"end_line":row["end_line"],"content_hash":row["content_hash"],"file_hash":row["file_hash"],"source_id":row["source_id"],"source_kind":source_map[row["source_id"]].kind,"namespace":project,"project":project,"provenance":provenance,"commit_sha":None if metadata.get("workingTreeDirty") else row["commit_sha"]}
             output.append({"id":row["id"],"content":row["content"],"symbol":row["symbol"],"source_type":row["source_type"],"score":item["score"],"semantic_score":item["semantic"],"citation":citation,"claims":metadata.get("claims", {}),"authority":source_map[row["source_id"]].authority,"updated_at":row["updated_at"],"untrusted":True})
-        return {"results":output[offset:offset+limit],"total":len(output),"limit":limit,"offset":offset,"semantic":semantic}
+            if explain:
+                output[-1]["explanation"] = {
+                    "rank":len(output), "bm25":item.get("bm25"), "keyword_rrf":item.get("keyword_rrf",0.0),
+                    "semantic_similarity":item["semantic"] if item["semantic"] else None,
+                    "semantic_rrf":item.get("semantic_rrf",0.0), "exact_or_phrase_boost":item.get("exact_boost",0.0),
+                    "quality_multiplier":item["quality_multiplier"],"final_score":item["score"],
+                    "indexed_at":next(s["indexed_at"] for s in scoped_status if s["source_id"] == row["source_id"]),
+                    "freshness":provenance,"memory_verification":None,"supersession":"active",
+                    "selected_for_context":None,"delivered":None,
+                }
+        if any(item["provenance"] != "current" for item in candidates.values()):
+            warnings.append("stale_evidence_suppressed: refresh changed or missing sources")
+        if strategy != "keyword" and not semantic["available"]:
+            warnings.append("semantic_unavailable: " + semantic["reason"])
+        if not output and any(s["freshness"] == "not_tested" for s in scoped_status):
+            warnings.append("coverage_freshness_unverified: inspect sources --deep before inferring absence")
+        return {"results":output[offset:offset+limit],"total":len(output),"limit":limit,"offset":offset,
+                "semantic":semantic,"warnings":list(dict.fromkeys(warnings))[:4]}
 
-    def get_project_context(self, project, query, budget=2000, limit=10, source_ids=None):
+    def get_project_context(self, project, query, budget=2000, limit=10, source_ids=None, strategy="hybrid"):
         if isinstance(budget,bool) or not isinstance(budget,int) or budget < 512 or budget > 32768:
             raise ValueError("context budget must be between 512 and 32768 UTF-8 bytes")
-        found = self.search_knowledge(project, query, limit=limit, source_ids=source_ids)
+        found = self.search_knowledge(project, query, limit=limit, source_ids=source_ids, strategy=strategy)
         top_score = max((entry["score"] for entry in found["results"]), default=0)
         context_results = [entry for entry in found["results"] if entry["score"] >= top_score * 0.72]
-        memories = self.memory.recall(project, query=query, limit=limit, principal=self.config.principal)["results"]
+        memories = [m for m in self.memory.recall(project, query=query, limit=limit, principal=self.config.principal)["results"] if m["verification"] != "disputed"]
         result = {"project":project,"knowledge":[],"memories":[],"conflicts":[],"outdated":[],"semantic":found["semantic"],"untrusted":True,"budget":{"limit":budget,"estimated_used":0,"unit":"utf8-byte-upper-bound"}}
+        result["warnings"] = found["warnings"]
+        if _bytes(result) + 16 > budget:
+            result["warnings"] = ["degraded: inspect doctor"] if found["warnings"] else []
+            result["semantic"] = {**found["semantic"], "reason":"unavailable; inspect doctor" if not found["semantic"]["available"] else None}
 
         def append_evidence(key, evidence, byte_cap=budget):
             candidate = dict(evidence, truncated=False)
@@ -451,16 +606,100 @@ class KnowledgeService:
             raise ValueError("context metadata exceeds requested budget")
         return result
 
-    def get_index_status(self, project=None):
+    def inspect_source(self, source_id, path=None):
+        source = self.config.source(source_id)
+        if source.intent == "excluded":
+            raise PermissionError("source is excluded")
+        status = next(s for s in self.get_index_status(source.project, deep=True)["sources"] if s["source_id"] == source_id)
+        if path is None:
+            return status
+        relative = pathlib.Path(path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise PermissionError("source path escapes authorized root")
+        files, _ = _source_snapshot(source)
+        if relative.as_posix() not in files:
+            raise PermissionError("source file is not eligible for inspection")
+        content, _ = _read_file(source.root, relative)
+        if hashlib.sha256(content.encode()).hexdigest() != files[relative.as_posix()]:
+            raise ValueError("source changed during inspection")
+        return {"source":status,"path":relative.as_posix(),"content":content[:24000],
+                "revision":files[relative.as_posix()],"truncated":len(content)>24000,"untrusted":True}
+
+    def get_index_status(self, project=None, deep=False):
         projects = [project] if project is not None else list(self.config.projects)
-        for value in projects:
-            self.config.authorize(value)
         output = []
         for value in projects:
             for source in self._sources(value):
-                row = self.connection.execute("SELECT * FROM knowledge_sources WHERE source_id=? AND project=?", (source.id,value)).fetchone()
-                output.append({"source_id":source.id,"project":value,"indexed_at":row["indexed_at"] if row else None,"last_attempt":row["last_attempt"] if row else None,"last_failure":row["last_failure"] if row else None,"files":self.connection.execute("SELECT count(*) FROM knowledge_files WHERE project=? AND source_id=?", (value,source.id)).fetchone()[0],"documents":self.connection.execute("SELECT count(*) FROM knowledge_documents WHERE project=? AND source_id=?", (value,source.id)).fetchone()[0]})
-        return {"sources":output,"files":sum(s["files"] for s in output),"documents":sum(s["documents"] for s in output)}
+                row = self.connection.execute("SELECT * FROM knowledge_sources WHERE source_id=?", (source.id,)).fetchone()
+                summary = json.loads(row["summary_json"]) if row else {}
+                success = row["indexed_at"] if row else None
+                failure = row["last_failure"] if row else None
+                if failure:
+                    try:
+                        failure = json.loads(failure)
+                    except (ValueError, TypeError):
+                        failure = {"code":"legacy_failure","reason":"previous indexing failed","retryable":True}
+                exists = source.root.is_dir() and not any(p.is_symlink() for p in (source.root, *source.root.parents))
+                intended = source.intent == "intended" or source.intent != "excluded" and bool(success or row and row["last_attempt"])
+                state = "indexed" if success else "pending"
+                freshness = "not_tested" if success else "never_indexed"
+                reason = None
+                if success and summary.get("policy_version") != INGESTION_POLICY_VERSION:
+                    state, reason = "stale", "source indexing policy requires validation refresh"
+                if failure:
+                    state, reason = "failed", failure["reason"]
+                if not exists:
+                    state, freshness, reason = "stale" if success else "failed", "unavailable", "source root is missing or inaccessible"
+                if row and (row["project"] != source.project or row["root"] != str(source.root)):
+                    state, freshness, reason = "stale", "root_changed", "configured source assignment changed; explicit reindex required"
+                indexed = dict(self.connection.execute("SELECT path,content_hash FROM knowledge_files WHERE project=? AND source_id=?", (value,source.id)))
+                fingerprint = summary.get("fingerprint")
+                if deep and success and exists and freshness not in {"root_changed", "unavailable"}:
+                    try:
+                        current, _ = _source_snapshot(source)
+                        freshness = "current" if current == indexed else "stale"
+                        if freshness == "stale" and not failure:
+                            state, reason = "stale", "source content or indexing eligibility changed"
+                        fingerprint = _fingerprint(indexed)
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        state, freshness, reason = "failed", "unavailable", "source freshness check failed"
+                if source.intent == "excluded":
+                    state, intended, reason = "excluded", False, source.exclusion_reason
+                classification = ("intentionally_excluded" if state == "excluded" else
+                                  "intended_but_inaccessible" if intended and not exists else
+                                  "intended_and_eligible" if intended else
+                                  "missing_or_invalid" if not exists else "requires_scope_decision")
+                output.append({"source_id":source.id,"project":value,"root":str(source.root),"kind":source.kind,
+                    "exists":exists,"intended":intended,"classification":classification,"status":state,
+                    "policy_version":summary.get("policy_version"),
+                    "reason":reason,"freshness":freshness,"fingerprint":fingerprint,
+                    "indexed_at":success,"last_success":success,"last_attempt":row["last_attempt"] if row else None,
+                    "last_failure":failure,"files":len(indexed),
+                    "documents":self.connection.execute("SELECT count(*) FROM knowledge_documents WHERE project=? AND source_id=?", (value,source.id)).fetchone()[0],
+                    "remediation":None if state == "indexed" else
+                    "Review scope before explicit index" if not intended and state == "pending" else
+                    "Fix source access/configuration, then run index SOURCE" if state != "excluded" else "Excluded by operator policy"})
+        counts = {name:sum(s["status"] == name for s in output) for name in ("indexed","pending","stale","failed","excluded")}
+        counts.update(registered=len(output), intended=sum(s["intended"] for s in output))
+        return {"sources":output,"counts":counts,"files":sum(s["files"] for s in output),"documents":sum(s["documents"] for s in output)}
+
+    def index_selected(self, project=None, source_ids=None, retry_failed=False, dry_run=True):
+        status = self.get_index_status(project, deep=True)
+        if source_ids is not None:
+            projects = [project] if project else self.config.projects
+            allowed = {s.id for p in projects for s in self._sources(p)}
+            if any(s not in allowed for s in source_ids):
+                raise PermissionError("source is not authorized")
+        selected = [s for s in status["sources"] if s["status"] != "excluded" and
+                    (s["source_id"] in source_ids if source_ids is not None else s["intended"]) and
+                    (not retry_failed or s["status"] == "failed")]
+        results = []
+        for source in selected:
+            try:
+                results.append(self.index_source(source["source_id"], dry_run=dry_run))
+            except Exception as error:
+                results.append({"source_id":source["source_id"],"failure":_failure(error)})
+        return {"dry_run":dry_run,"results":results}
 
     def health(self):
         status = self.get_index_status()

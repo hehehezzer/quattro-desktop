@@ -18,27 +18,27 @@ Categories: `episodic` (outcomes/investigations/failed approaches), `semantic` (
 
 - Content: nonempty, at most 24,000 UTF-8 bytes; complete validated record at most 32,000 UTF-8 bytes. MCP additionally limits content to 16,384 characters and total request frames.
 - Confidence: finite 0–1. Verification: `unverified`, `verified` or `disputed`. Verified records require source references and the transport's `can_verify` capability.
-- References/tags: at most 50 strings each, at most 1,000 characters per string. Metadata is a JSON object; non-finite values, credentials and oversized data fail.
+- References/tags: at most 50 nonblank strings each, at most 1,000 characters per string. Metadata is a JSON object; non-finite values, credentials and oversized data fail.
 - Credential detection scans content, all nested string values/keys, references, tags and serialized JSON, including bounded escaped/Unicode representations. This is defensive pattern detection, not a guarantee that arbitrary sensitive prose is recognizable.
 - `visibility: project` permits authorized project principals. `private` permits only the configured author, including recall, mutation and statistics. MCP callers cannot impersonate an author or change visibility through updates.
 - References are evidence identifiers, not executable links. A caller's verification flag does not independently prove truth; trusted verification permission and evidence review remain operator responsibilities.
 
 ## Lifecycle
 
-Create → active record, revision 1, audit snapshot. Identical normalized content in the same project/category/visibility/private-author scope returns the existing active record. Fact identity is checked before deduplication, so a duplicate cannot bypass a contradiction or acquire a different fact key.
+Create → active record, revision 1, audit snapshot. Identical normalized content in the same project/visibility/private-author scope returns the existing active record without silently escalating confidence or verification. Fact identity is checked before deduplication; a duplicate cannot bypass a contradiction or acquire another fact key. Deduplication does not perform fuzzy semantic merging.
 
 Update → atomic expected-revision check, validation, revision increment and event. Verification permission applies to the resulting record, including updates to already verified records. Once assigned, `fact_key` cannot be cleared or renamed. Content of an active fact cannot be replaced in place.
 
 Supersede → create a new record with `supersedes` and the same fact key. The old record becomes `superseded`, links to the new ID and disappears from ordinary recall. Competing active values for the same accessible fact key are rejected. Private facts belonging to another principal do not disclose their presence through a conflict error.
 
-Invalidate → mark `invalidated`, retain reason/history and remove from ordinary recall. Historical retrieval is explicit. Delete → remove the record, FTS row and content-bearing event history; add a content-free deletion event. Deletion is logical database deletion, **not** guaranteed forensic erasure from SQLite free pages, WAL files or existing backups.
+Invalidate → mark `invalid`, retain reason/history and remove from ordinary recall. Historical retrieval is explicit; `memory history --project PROJECT ID` authorizes the record before exposing retained revision snapshots. Delete → remove the record, FTS row and content-bearing event history. Deletion is logical, not guaranteed forensic erasure from SQLite free pages, WAL or backups.
 
 ## Freshness and contradictions
 
-Prefer current repository evidence to older/unverified observations. Context understands explicit source `Fact: key=value` declarations and flat structured configuration, plus memory `metadata.claims` objects. Disagreement is reported with evidence IDs and a preference; contradictory memories are not assembled as current facts. Source authority determines preference, with repository evidence winning equal-authority ties. Missing/changed indexed files are marked outdated and excluded from current context until reindexed.
+Prefer current source evidence to older/unverified observations. Context compares explicit `Fact: key=value` declarations, flat structured configuration and memory `metadata.claims`. Conflicts identify evidence IDs and a preference; contradictory/disputed memories are not assembled as current facts. Source authority determines preference, with repository evidence winning equal-authority ties. Missing/changed source evidence is suppressed until reconciled; invalidated/superseded memory remains available only through explicit historical inspection.
 
 This is not general natural-language truth detection. Use stable `fact_key` values, explicit claim metadata, references and supersession for important facts. Ordinary prose must still be reviewed by the client.
 
 ## Integrity and recovery
 
-WAL, full synchronization, foreign keys and lock timeouts protect independent connections. Deduplication, fact conflict checks, expected revisions, state changes, FTS and events commit together. Indexing failures do not mutate this database. Health/statistics run SQLite quick checks. Online backups include committed WAL data; keep backups private and retain originals before imports. See [migration](MIGRATION.md).
+WAL, full synchronization, foreign keys and lock timeouts protect independent connections. Deduplication, conflict/revision checks, state transitions, FTS and audit events commit together. Indexing does not mutate memory. `doctor` uses genuinely read-only connections and checks integrity without initializing or repairing schema. Private multi-database backup includes committed WAL, source mappings, vectors, feedback, history and receipts; checksummed isolated restore validates schema/authorization/integrity and source links before recording recovery. See [operations](installation.md#backups-and-compatible-legacy-import) and [migration](MIGRATION.md). Verification permission and references are provenance gates, not automatic semantic proof.
