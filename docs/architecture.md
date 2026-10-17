@@ -52,7 +52,7 @@ Independent clients open independent SQLite connections. Memory deduplication, f
 
 Opening an established, complete retrieval schema avoids an immediate writer transaction; a reader can use the prior committed snapshot while another process atomically replaces a source. Schema initialization/migration still takes its own writer transaction.
 
-The source indexer uses POSIX descriptor-relative, no-follow file opens to enforce filesystem containment. Linux is locally verified. Portable memory/MCP tests are configured in Windows CI; Windows indexing and macOS runtime remain unverified.
+Source indexing uses POSIX descriptor-relative no-follow opens or native Windows reparse-point opens with ancestors pinned against write/delete sharing. Windows storage validates effective and inherited ACL grants for the operator, SYSTEM and Administrators without rewriting permissions; broad/shared storage directories fail closed. Native containment/ACL regressions run in the Windows CI matrix. Linux runtime is locally verified; Windows qualification is reported separately in the test report. macOS runtime remains unverified.
 
 ## Extension boundary
 

@@ -341,6 +341,9 @@ def private_database(path: pathlib.Path) -> None:
         parent = path.parent.stat()
         if parent.st_uid != os.getuid() or parent.st_mode & 0o077:
             raise ValueError("database directory must be owned by the operator and mode 0700")
+    elif os.name == "nt":
+        from ._windows import require_private_acl
+        require_private_acl(path.parent)
     try:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
@@ -349,6 +352,8 @@ def private_database(path: pathlib.Path) -> None:
     else:
         os.close(descriptor)
     os.chmod(path, 0o600)
+    if os.name == "nt":
+        require_private_acl(path)
 
 
 class RetrievalStore:

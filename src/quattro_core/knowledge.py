@@ -64,6 +64,9 @@ def _safe_root(root: pathlib.Path) -> None:
 
 def _read_file(root: pathlib.Path, relative: pathlib.Path) -> tuple[str, os.stat_result]:
     """Walk directory descriptors: neither ancestor swaps nor leaf links escape root."""
+    if os.name == "nt":
+        from ._windows import read_file
+        return read_file(root, relative, MAX_FILE_BYTES)
     flags = os.O_RDONLY | os.O_NOFOLLOW
     descriptors: list[int] = []
     try:

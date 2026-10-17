@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import select
+import queue
+import threading
 import subprocess
 import sys
 import tempfile
@@ -20,14 +21,29 @@ class StdioClient:
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         env=env)
         self.sequence = 0
+        self.responses = queue.Queue()
+        self.reader = threading.Thread(target=self._read_responses, daemon=True)
+        self.reader.start()
+
+    def _read_responses(self):
+        try:
+            for line in self.process.stdout:
+                self.responses.put(line)
+        finally:
+            self.responses.put(None)
 
     def raw(self, payload: bytes) -> dict:
-        self.process.stdin.write(payload + b"\n")
-        self.process.stdin.flush()
-        if not select.select([self.process.stdout], [], [], 10)[0]:
+        try:
+            self.process.stdin.write(payload + b"\n")
+            self.process.stdin.flush()
+        except BrokenPipeError:
+            pass  # A rejected oversized frame can close input after queuing its error.
+        try:
+            line = self.responses.get(timeout=10)
+        except queue.Empty:
             self.process.kill()
-            raise AssertionError("MCP response timed out")
-        line = self.process.stdout.readline()
+            self.process.wait(timeout=10)
+            raise AssertionError("MCP response timed out") from None
         if not line:
             raise AssertionError("MCP server closed without a response")
         return json.loads(line)
@@ -49,11 +65,24 @@ class StdioClient:
         return response["result"]
 
     def close(self) -> None:
-        self.process.stdin.close()
-        self.process.wait(timeout=10)
-        stderr = self.process.stderr.read().decode()
-        self.process.stdout.close()
-        self.process.stderr.close()
+        try:
+            self.process.stdin.close()
+        except BrokenPipeError:
+            pass
+        timed_out = False
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            self.process.kill()
+            self.process.wait(timeout=10)
+        finally:
+            self.reader.join(timeout=10)
+            stderr = self.process.stderr.read().decode()
+            self.process.stdout.close()
+            self.process.stderr.close()
+        if timed_out:
+            raise AssertionError("MCP process did not terminate")
         if self.process.returncode != 0:
             raise AssertionError("MCP process failed: " + stderr)
 

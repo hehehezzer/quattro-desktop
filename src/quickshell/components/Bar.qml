@@ -48,8 +48,8 @@ PanelWindow {
 
     // Show the full date and time by default; right-click toggles to HH:mm.
     property bool alternateClockFormat: true
-    property var agentUsage: ({})
-    property var usageWindowList: []
+    readonly property var agentUsage: NativeUsage.snapshot
+    readonly property var usageWindowList: root.usageWindows(root.agentUsage)
     property var systemStats: ({
         "cpuPercent": 0,
         "ramPercent": 0,
@@ -108,7 +108,6 @@ PanelWindow {
         )
     }
 
-    Component.onCompleted: usageProcess.running = true
     TapHandler {
         property int pressRevision: -1
         acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
@@ -116,32 +115,13 @@ PanelWindow {
         onTapped: PopupManager.barTapped(pressRevision)
     }
 
-    Process {
-        id: usageProcess
-        command: [Quickshell.env("HOME") + "/.local/bin/quattro-agent", "usage", "status"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                try {
-                    const parsed = JSON.parse(text)
-                    root.agentUsage = parsed
-                    root.usageWindowList = root.usageWindows(parsed)
-                } catch (error) {
-                    root.agentUsage = ({ "stale": true })
-                    root.usageWindowList = []
-                }
-            }
-        }
-    }
 
     Timer {
         running: true
         repeat: true
-        // Re-read the selected account promptly after account set/switch actions.
         interval: 2000
         onTriggered: {
             root.countdownNow = Date.now()
-            usageProcess.running = false
-            usageProcess.running = true
         }
     }
 

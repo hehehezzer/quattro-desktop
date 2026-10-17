@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -23,7 +24,7 @@ from quattro_core.benchmark import load_cases, run_benchmark
 class RetrievalTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = pathlib.Path(self.temp.name)
+        self.root = pathlib.Path(self.temp.name).resolve()
         self.repo = self.root / "repo"; self.repo.mkdir()
         subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
         subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "test@example.invalid"], check=True)
@@ -317,7 +318,11 @@ class RetrievalTests(unittest.TestCase):
     def test_database_is_private_and_observability_omits_raw_embedding(self):
         identifier = self.store.upsert_document(source_type="documentation", content="observable knowledge", repository=str(self.repo), branch="main")
         self.store.search("sensitive user question", repository=str(self.repo), branch="main")
-        self.assertEqual(self.db.stat().st_mode & 0o777, 0o600)
+        if os.name == "nt":
+            from quattro_core._windows import require_private_acl
+            require_private_acl(self.db)
+        else:
+            self.assertEqual(self.db.stat().st_mode & 0o777, 0o600)
         self.assertNotIn("embedding", json.dumps(self.store.inspect(identifier)))
         self.assertIsNotNone(self.store.last_trace())
         self.assertNotIn("sensitive user question", json.dumps(self.store.last_trace()))
@@ -441,7 +446,11 @@ class RetrievalTests(unittest.TestCase):
         )
         backups = list(self.db.parent.glob(self.db.name + ".v2.*.bak"))
         self.assertEqual(len(backups), 1)
-        self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
+        if os.name == "nt":
+            from quattro_core._windows import require_private_acl
+            require_private_acl(backups[0])
+        else:
+            self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":

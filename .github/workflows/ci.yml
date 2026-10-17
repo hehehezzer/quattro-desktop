@@ -69,6 +69,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_*core.py'
           python -m unittest discover -s tests -p 'test_retrieval.py'
           python -m unittest discover -s tests -p 'test_core_interfaces.py'
+          python -m unittest discover -s tests -p 'test_windows_io.py'
       - name: Console and module startup
         run: python -c "import quattro_core, quattro_intelligence_mcp"; quattro-intelligence --help; quattro-intelligence-mcp --help
 

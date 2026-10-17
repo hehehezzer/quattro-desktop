@@ -10,6 +10,19 @@
 - Add consistent private snapshots, manifest/schema/checksum checks and isolated restore, preserving vectors, source mappings, memory history and receipts. Enforce full-store source/project/private-memory export boundaries.
 - Add a 64-case authorized, versioned evaluation corpus, baseline/final machine reports and fixed isolation/freshness/memory-eligibility/availability/held-out recall/no-evidence gates. Retain Nomic, llama.cpp and existing SQLite/memory architecture.
 - Make the owner's branch → validation → commit → push → PR delivery requirement explicit in repository instructions, including remote-SHA and clean-worktree verification; merging and deployment remain separately authorized.
+- Restore native Windows indexing with no-reparse handle traversal and pinned non-writable ancestors; validate real Windows storage ACLs, including future sidecar inheritance, rather than interpreting POSIX mode bits. Make the stdio regression harness pipe-portable and add native handle/ACL regressions.
+
+## Preserved desktop and historical execution updates
+
+- Restore Quickshell limit usage from native omp Codex reports instead of
+  obsolete isolated-account authentication state. Share one bounded collector
+  across monitor bars and the Agents meter, preserve private last-known-good
+  limits on failure, and omit unknown windows or ambiguous account attribution.
+  Include the helper and singleton in the Desktop deployment inventory.
+- Add categorical operational preflight, scoped retrieval advice and repeated-failure
+  recovery telemetry for native adapters. Keep host permissions and model plans
+  authoritative; standalone Codex MCP advice remains explicit.
+- Document the separate controlled Qiro worker relay and its limited tool coverage.
 
 ## Unreleased — Native intelligence clients
 
