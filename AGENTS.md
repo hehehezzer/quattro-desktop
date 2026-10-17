@@ -24,4 +24,4 @@ python scripts/check_python.py
 python scripts/check_public_artifacts.py
 ```
 
-The public artifact guard reads the Git index: stage intentional deletions/new files before a release check, and never stage local state. Document behavior/schema changes and exercised evidence in the changelog/test report. No deployment, push, release tag or publication is implicit in local development.
+The owner's standing delivery requirement is mandatory: dedicated non-`main` branch → validate → commit → push the branch → open a PR to `main`. Verify the remote SHA and leave the task worktree clean; a local commit alone is not completion. This standing authorization covers branch publication, not merging, release tags, deployment or changes to native permissions. Report an actual blocker instead of silently omitting push or PR.

@@ -9,6 +9,7 @@
 - Persist content-free attempt/result/failure receipts with resolved project/source scope, evidence revisions and context bytes; separate Codex stdout submission from host acceptance and model use. Isolate adapter Python imports from untrusted workspaces.
 - Add consistent private snapshots, manifest/schema/checksum checks and isolated restore, preserving vectors, source mappings, memory history and receipts. Enforce full-store source/project/private-memory export boundaries.
 - Add a 64-case authorized, versioned evaluation corpus, baseline/final machine reports and fixed isolation/freshness/memory-eligibility/availability/held-out recall/no-evidence gates. Retain Nomic, llama.cpp and existing SQLite/memory architecture.
+- Make the owner's branch → validation → commit → push → PR delivery requirement explicit in repository instructions, including remote-SHA and clean-worktree verification; merging and deployment remain separately authorized.
 
 ## Unreleased — Native intelligence clients
 
