@@ -7,3 +7,5 @@ Report vulnerabilities through a private GitHub Security Advisory for this repos
 The active intelligence interface is `quattro_core`/stdio MCP. Historical orchestration releases have incompatible security/schema contracts and are not part of the new runtime. Application-level principal/config checks are not an OS sandbox for clients that can rewrite configuration or read the database directly.
 
 See [security architecture](docs/security.md) for allowlists, untrusted retrieval, pattern-detection limitations, permissions, backups and safe deployment boundaries. Never move native credentials into Quattro or expose a local embedding/MCP service publicly by default.
+
+Release scans must complete successfully before publication is considered clean. `scripts/check_public_history.py` checks every commit reachable from `HEAD`; a failed Git marker or credential query is a scan failure, not evidence that no match exists. Investigate repository/object access and Git errors before rerunning. Do not waive historical findings or reduce reachable-history coverage merely to clear CI.

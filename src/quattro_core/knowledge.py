@@ -75,7 +75,7 @@ def _read_file(root: pathlib.Path, relative: pathlib.Path) -> tuple[str, os.stat
         for part in (*root.parts[1:], *relative.parts[:-1]):
             descriptor = os.open(part, flags | os.O_DIRECTORY, dir_fd=descriptor)
             descriptors.append(descriptor)
-        descriptor = os.open(relative.name, flags, dir_fd=descriptor)
+        descriptor = os.open(relative.name, flags | os.O_NONBLOCK, dir_fd=descriptor)
         descriptors.append(descriptor)
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_FILE_BYTES:

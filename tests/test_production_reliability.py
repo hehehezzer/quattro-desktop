@@ -62,6 +62,59 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(self.service.index_source("code")["deleted"],1)
         self.assertEqual(self.service.get_index_status()["documents"],0)
 
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "mkfifo"), "requires POSIX FIFOs")
+    def test_fifo_replacement_does_not_block_retrieval_index_or_deep_doctor(self):
+        (self.source / "healthy.md").write_text(
+            "# Healthy\nDurableCanary healthy evidence.\n", encoding="utf-8"
+        )
+        self.service.index_source("code")
+        self.assertEqual(self.service.search_knowledge("alpha", "DurableCanary")["total"], 2)
+        self.path.unlink()
+        os.mkfifo(self.path)
+        script = """import json, sys
+from contextlib import closing
+from pathlib import Path
+from quattro_core.config import Config
+from quattro_core.doctor import diagnose
+from quattro_core.knowledge import KnowledgeService
+config_path = Path(sys.argv[1])
+config = Config.load(config_path)
+operation = sys.argv[2]
+if operation == "doctor":
+    result = diagnose(config, config_path, project="alpha", deep=True)
+else:
+    with closing(KnowledgeService(config)) as service:
+        if operation == "search":
+            result = service.search_knowledge("alpha", "DurableCanary", strategy="keyword")
+        elif operation == "context":
+            result = service.get_project_context("alpha", "DurableCanary", budget=8192, strategy="keyword")
+        else:
+            result = service.index_source("code")
+print(json.dumps(result))
+"""
+        for operation in ("search", "context", "doctor", "index"):
+            with self.subTest(operation=operation):
+                completed = subprocess.run(
+                    [sys.executable, "-c", script, str(self.config_path), operation],
+                    env=dict(os.environ, PYTHONPATH=str(Path(__file__).parents[1] / "src")),
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                result = json.loads(completed.stdout)
+                if operation in {"search", "context"}:
+                    entries = result["results" if operation == "search" else "knowledge"]
+                    self.assertEqual([r["citation"]["path"] for r in entries], ["healthy.md"])
+                    self.assertTrue(all(r["citation"]["provenance"] == "current" for r in entries))
+                elif operation == "doctor":
+                    self.assertEqual(result["sources"]["counts"]["stale"], 1)
+                    self.assertEqual(result["status"], "degraded")
+                else:
+                    self.assertEqual((result["deleted"], result["unchanged"]), (1, 1))
+        self.assertEqual(
+            [r["citation"]["path"] for r in self.service.search_knowledge("alpha", "DurableCanary")["results"]],
+            ["healthy.md"],
+        )
+
     def test_timestamp_preserving_edits_are_stale(self):
         self.service.index_source("code")
         stamp = self.path.stat()

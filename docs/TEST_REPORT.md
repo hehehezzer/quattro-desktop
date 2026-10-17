@@ -13,6 +13,15 @@ Baseline verification date: 2026-10-11 UTC. Linux x86_64; Python 3.14.7, SQLite 
 
 Publication and native-platform observations above supersede the earlier dated publication/Windows limitations below; historical measurements remain preserved.
 
+### Independent reviewer/fixer cycle — 2026-10-17
+
+- Reviewed PR50 at `0637444` against base `6f22259`, then independently re-reviewed the completed repair delta and affected callers. No remaining actionable code finding was identified in the reviewed state; the existing public-history gate still blocks merge. Review covered active knowledge/memory/recovery/diagnostic/transport paths and retirement compatibility, not an exhaustive frozen-desktop audit.
+- Reproduced a release-scanner fail-open through the actual CLI in an isolated committed Git repository: literal-marker queries exited128 while history/credential queries worked; baseline printed PASS/exit0. The repaired scanner reports scan errors/exit1, while an unfaulted control still passes. Marker definitions, reachable ancestors, credential checks and fixture exemptions are unchanged.
+- Reproduced an unopened FIFO blocking the actual POSIX source reader beyond a 1.5-second deadline; the child was killed/reaped. Nonblocking leaf opens now reach the existing regular-file rejection. Actual authorized documentation-source CLI query/context/deep-doctor/index each finished in 0.061–0.068 seconds in one controlled local observation: healthy evidence retained, stale coverage diagnosed, one invalid record deleted and one healthy record unchanged. These are smoke observations, not retrieval-benchmark percentiles.
+- Coordinated full suite: **272 tests / three skips, OK in 30.523 seconds**; the new FIFO and marker-process-error/real-Git regressions passed. Compilation, Python hygiene, current-tree artifact policy and whitespace checks passed. Existing skip reasons remain the opt-in desktop runtime and two Windows-only native tests.
+- Fresh isolated wheel SHA256 `a25191e1bd3c11f9f927c317583daab8da415f744018e556262f0d500c2a7cd0` built and installed in a temporary environment. Actual installed CLI registered/indexed two documents; after FIFO replacement, one MCP process initialized, returned only the current healthy citation from search/context, and answered a subsequent ping. Temporary fixtures/venv removed; no global installation, live-store change, history rewrite, merge or deployment.
+
+
 
 ## Production reliability release — 2026-10-16
 

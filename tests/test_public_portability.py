@@ -91,6 +91,73 @@ class PublicPortabilityTests(unittest.TestCase):
         })
         self.assertNotEqual(mixed.returncode, 0)
 
+    def test_public_history_fails_closed_on_marker_only_process_errors(self):
+        for returncode in (2, 128, -15):
+            with self.subTest(returncode=returncode):
+                def scan(command, **kwargs):
+                    failed_marker = (
+                        "-F" in command
+                        and command[command.index("-e") + 1] == public_history.MARKERS[0]
+                    )
+                    return subprocess.CompletedProcess(
+                        command, returncode if failed_marker else 1, stdout=""
+                    )
+
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with (
+                    mock.patch.object(public_history, "run", side_effect=["abc123\n", ""]),
+                    mock.patch.object(public_history.subprocess, "run", side_effect=scan),
+                    mock.patch("sys.stdout", stdout),
+                    mock.patch("sys.stderr", stderr),
+                ):
+                    result = public_history.main()
+                self.assertEqual(result, 1)
+                self.assertIn("private marker scan failed", stderr.getvalue())
+                self.assertNotIn("PASS", stdout.getvalue())
+                self.assertNotIn("credential scan failed", stderr.getvalue())
+
+    def test_public_history_rejects_real_marker_scan_revision_failure(self):
+        actual_run = subprocess.run
+        with tempfile.TemporaryDirectory() as directory:
+            repository = pathlib.Path(directory)
+            actual_run(["git", "init", "-q", "-b", "main"], cwd=repository, check=True)
+            (repository / "sample.txt").write_text(
+                public_history.MARKERS[0] + "operator\n", encoding="utf-8"
+            )
+            actual_run(["git", "add", "sample.txt"], cwd=repository, check=True)
+            actual_run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                 "commit", "-qm", "fixture"],
+                cwd=repository, check=True,
+            )
+            scan_errors = []
+
+            def scan(command, *args, **kwargs):
+                command = list(command)
+                failed_marker = (
+                    command[:2] == ["git", "grep"]
+                    and "-F" in command
+                    and command[command.index("-e") + 1] == public_history.MARKERS[0]
+                )
+                if failed_marker:
+                    command[-2] = "nonexistent-scan-revision"
+                result = actual_run(command, *args, cwd=repository, **kwargs)
+                if failed_marker:
+                    scan_errors.append(result.returncode)
+                return result
+
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with (
+                mock.patch.object(public_history.subprocess, "run", side_effect=scan),
+                mock.patch("sys.stdout", stdout),
+                mock.patch("sys.stderr", stderr),
+            ):
+                result = public_history.main()
+            self.assertEqual(scan_errors, [128])
+            self.assertEqual(result, 1)
+            self.assertIn("private marker scan failed", stderr.getvalue())
+            self.assertNotIn("PASS", stdout.getvalue())
+
     def test_public_history_reports_git_grep_execution_errors(self):
         failed = subprocess.CompletedProcess(
             args=["git", "grep"], returncode=128, stdout="", stderr="invalid regex"

@@ -11,6 +11,8 @@
 - Add a 64-case authorized, versioned evaluation corpus, baseline/final machine reports and fixed isolation/freshness/memory-eligibility/availability/held-out recall/no-evidence gates. Retain Nomic, llama.cpp and existing SQLite/memory architecture.
 - Make the owner's branch → validation → commit → push → PR delivery requirement explicit in repository instructions, including remote-SHA and clean-worktree verification; merging and deployment remain separately authorized.
 - Restore native Windows indexing with no-reparse handle traversal and pinned non-writable ancestors; create new storage/recovery directories with protected inheritable ACLs and reject broad existing storage, including future sidecar grants, rather than interpreting POSIX mode bits. Make the stdio regression harness pipe-portable and add native handle/ACL regressions.
+- Fail the full-history release gate when a private-marker Git scan errors or is interrupted, instead of reporting incomplete scans as clean; preserve every existing marker, credential rule and reachable ancestor.
+- Open POSIX source leaves nonblocking before regular-file validation, preventing an unopened FIFO from hanging retrieval, context, indexing or deep doctor while preserving healthy evidence and no-follow containment.
 
 ## Preserved desktop and historical execution updates
 
