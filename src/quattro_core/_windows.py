@@ -18,6 +18,8 @@ def _api():
     kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                                   pointer, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
     kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CreateDirectoryW.argtypes = [wintypes.LPCWSTR, pointer]
+    kernel.CreateDirectoryW.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel.CloseHandle.restype = wintypes.BOOL
     kernel.GetCurrentProcess.restype = wintypes.HANDLE
@@ -38,6 +40,9 @@ def _api():
     security.GetNamedSecurityInfoW.restype = wintypes.DWORD
     security.GetAce.argtypes = [pointer, wintypes.DWORD, ctypes.POINTER(pointer)]
     security.GetAce.restype = wintypes.BOOL
+    security.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(pointer), ctypes.POINTER(wintypes.DWORD)]
+    security.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
     return kernel, security
 
 
@@ -160,3 +165,34 @@ def read_file(root: Path, relative: Path, maximum: int):
             os.close(descriptor)
         for handle in reversed(handles):
             kernel.CloseHandle(handle)
+
+
+class _SecurityAttributes(ctypes.Structure):
+    _fields_ = [("length", wintypes.DWORD), ("descriptor", wintypes.LPVOID),
+                ("inherit_handle", wintypes.BOOL)]
+
+
+def private_directory(path: Path, *, exist_ok: bool = False) -> None:
+    """Create an owned storage directory with a protected inheritable DACL atomically."""
+    if path.exists():
+        if not exist_ok:
+            raise FileExistsError(str(path))
+        require_private_acl(path)
+        return
+    if not path.parent.is_dir():
+        private_directory(path.parent, exist_ok=True)
+    kernel, security = _api()
+    descriptor = wintypes.LPVOID()
+    sddl = f"D:P(A;OICI;FA;;;{_current_sid()})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+    if not security.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl, 1, ctypes.byref(descriptor), None):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        attributes = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), descriptor, False)
+        if not kernel.CreateDirectoryW(str(path), ctypes.byref(attributes)):
+            error = ctypes.get_last_error()
+            if error != 183 or not exist_ok:
+                raise ctypes.WinError(error)
+        require_private_acl(path)
+    finally:
+        kernel.LocalFree(descriptor)

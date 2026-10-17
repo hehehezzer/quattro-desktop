@@ -10,7 +10,7 @@
 - Add consistent private snapshots, manifest/schema/checksum checks and isolated restore, preserving vectors, source mappings, memory history and receipts. Enforce full-store source/project/private-memory export boundaries.
 - Add a 64-case authorized, versioned evaluation corpus, baseline/final machine reports and fixed isolation/freshness/memory-eligibility/availability/held-out recall/no-evidence gates. Retain Nomic, llama.cpp and existing SQLite/memory architecture.
 - Make the owner's branch → validation → commit → push → PR delivery requirement explicit in repository instructions, including remote-SHA and clean-worktree verification; merging and deployment remain separately authorized.
-- Restore native Windows indexing with no-reparse handle traversal and pinned non-writable ancestors; validate real Windows storage ACLs, including future sidecar inheritance, rather than interpreting POSIX mode bits. Make the stdio regression harness pipe-portable and add native handle/ACL regressions.
+- Restore native Windows indexing with no-reparse handle traversal and pinned non-writable ancestors; create new storage/recovery directories with protected inheritable ACLs and reject broad existing storage, including future sidecar grants, rather than interpreting POSIX mode bits. Make the stdio regression harness pipe-portable and add native handle/ACL regressions.
 
 ## Preserved desktop and historical execution updates
 

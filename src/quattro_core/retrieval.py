@@ -332,18 +332,23 @@ class IndexSummary:
     budget_exhausted: bool = False
 
 
+def _private_directory(path: pathlib.Path, *, exist_ok: bool = False) -> None:
+    if os.name == "nt":
+        from ._windows import private_directory
+        private_directory(path, exist_ok=exist_ok)
+    else:
+        path.mkdir(mode=0o700, parents=True, exist_ok=exist_ok)
+
+
 def private_database(path: pathlib.Path) -> None:
     """Create private storage before SQLite can create journals or WAL sidecars."""
     if any(part.is_symlink() for part in (path, *path.parents)):
         raise OSError("database paths cannot contain symbolic links")
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _private_directory(path.parent, exist_ok=True)
     if os.name == "posix":
         parent = path.parent.stat()
         if parent.st_uid != os.getuid() or parent.st_mode & 0o077:
             raise ValueError("database directory must be owned by the operator and mode 0700")
-    elif os.name == "nt":
-        from ._windows import require_private_acl
-        require_private_acl(path.parent)
     try:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
@@ -353,6 +358,7 @@ def private_database(path: pathlib.Path) -> None:
         os.close(descriptor)
     os.chmod(path, 0o600)
     if os.name == "nt":
+        from ._windows import require_private_acl
         require_private_acl(path)
 
 

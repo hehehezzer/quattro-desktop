@@ -59,7 +59,6 @@ class Receipts:
     def __init__(self, config: Config):
         self.config = config
         self.path = safe_path(config.database_dir / "native-receipts.sqlite3")
-        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         private_database(self.path)
         self.connection = sqlite3.connect(self.path, timeout=10)
         self.connection.row_factory = sqlite3.Row

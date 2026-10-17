@@ -9,7 +9,7 @@ import sqlite3
 from contextlib import ExitStack, closing
 
 from .config import safe_path
-from .retrieval import utc_now
+from .retrieval import utc_now, _private_directory
 
 DATABASES = ("retrieval.sqlite3", "memory.sqlite3", "native-receipts.sqlite3")
 
@@ -76,7 +76,7 @@ def backup(config, destination):
         raise PermissionError("full-store backup requires operator write authority")
     destination = safe_path(destination)
     # Authorization is rechecked while all writer reservations are held below.
-    destination.mkdir(mode=0o700, parents=True, exist_ok=False)
+    _private_directory(destination)
     manifest = {"version":1, "created_at":utc_now(), "projects":sorted(config.projects),
                 "embedding":config.embedding, "files":{}, "complete":False,
                 "sources":[{"id":s.id,"project":s.project,"root":str(s.root),"kind":s.kind,
@@ -134,7 +134,7 @@ def restore(config, source, destination):
     source, destination = safe_path(source, directory=True), safe_path(destination)
     manifest_path = source / "manifest.json"
     files = verify_backup(config, source)["files"]
-    destination.mkdir(mode=0o700, parents=True, exist_ok=False)
+    _private_directory(destination)
     for name in files:
         target = destination / name
         descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

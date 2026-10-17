@@ -55,13 +55,13 @@ class WindowsBoundaryTests(unittest.TestCase):
             self.assertTrue((root / "released/evidence.txt").is_file())
 
     def test_public_acl_is_rejected_before_database_creation(self):
-        from quattro_core._windows import require_private_acl
+        from quattro_core._windows import require_private_acl, private_directory
         from quattro_core.retrieval import private_database
         for grant in ("*S-1-1-0:(OI)(CI)(R)", "*S-1-1-0:(OI)(IO)(R)"):
             with self.subTest(grant=grant), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory).resolve()
                 storage = root / "storage"
-                storage.mkdir()
+                private_directory(storage)
                 require_private_acl(storage)
                 subprocess.run(["icacls", str(storage), "/grant", grant],
                                check=True, capture_output=True, timeout=10)

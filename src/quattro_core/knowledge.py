@@ -186,8 +186,6 @@ def _failure(error):
 class KnowledgeService:
     def __init__(self, config, *, read_only=False):
         self.config = config
-        if not read_only:
-            config.database_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         backend = LocalNeuralEmbeddingBackend() if config.embedding == "local-neural" else LexicalBackend()
         self.store = RetrievalStore(config.database_dir / "retrieval.sqlite3", embedding_backend=backend, read_only=read_only)
         try:
