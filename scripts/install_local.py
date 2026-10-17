@@ -1,71 +1,84 @@
 #!/usr/bin/env python3
-"""Dependency-free user-local installer for hosts where Python omits pip."""
+"""Install only the intelligence wheel into an isolated virtual environment."""
 from __future__ import annotations
 
-import argparse
 import os
+import argparse
+import json
 from pathlib import Path
-import shutil
-import tempfile
+import subprocess
+import venv
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "src"
-PACKAGES = ("quattro", "quattro_agent")
-MODULES = (
-    "quattro_deployment.py", "quattro_harness.py", "quattro_image_mcp.py",
-    "quattro_memory.py", "quattro_pr_review.py", "quattro_release.py",
-)
 
 
-def install(target: Path) -> None:
-    target.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".quattro-install-", dir=target) as temporary:
-        stage = Path(temporary)
-        for package in PACKAGES:
-            shutil.copytree(SOURCE / package, stage / package,
-                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-        for module in MODULES:
-            shutil.copy2(SOURCE / module, stage / module)
-        shutil.copy2(SOURCE / "quattro-agent", stage / "quattro-agent")
-        (stage / "quattro-agent").chmod(0o755)
-        names = (*PACKAGES, *MODULES, "quattro-agent")
-        backups = {}
-        installed = []
-        try:
-            for name in names:
-                destination = target / name
-                backup = target / (".quattro-old-" + name.replace("/", "_"))
-                if backup.exists():
-                    shutil.rmtree(backup) if backup.is_dir() else backup.unlink()
-                if destination.exists():
-                    os.replace(destination, backup)
-                    backups[name] = backup
-                os.replace(stage / name, destination)
-                installed.append(name)
-        except BaseException:
-            for name in reversed(installed):
-                destination = target / name
-                if destination.exists():
-                    shutil.rmtree(destination) if destination.is_dir() else destination.unlink()
-                if name in backups:
-                    os.replace(backups[name], destination)
-            for name, backup in backups.items():
-                destination = target / name
-                if backup.exists() and not destination.exists():
-                    os.replace(backup, destination)
-            raise
-        for backup in backups.values():
-            if backup.exists():
-                shutil.rmtree(backup) if backup.is_dir() else backup.unlink()
+def reject_symlink_components(path: Path) -> None:
+    for component in (*reversed(path.parents), path):
+        if component.is_symlink():
+            raise ValueError(f"Symlinked installation path is not allowed: {component}")
+
+
+def validate_environment(destination: Path) -> Path:
+    config = destination / "pyvenv.cfg"
+    commands = destination / ("Scripts" if os.name == "nt" else "bin")
+    for path in (config, commands):
+        reject_symlink_components(path)
+    if not config.is_file() or not commands.is_dir():
+        raise ValueError(f"Destination is not a virtual environment: {destination}")
+    settings = {
+        key.strip().lower(): value.strip().lower()
+        for line in config.read_text().splitlines() if "=" in line
+        for key, value in [line.split("=", 1)]
+    }
+    if settings.get("include-system-site-packages", "false") != "false":
+        raise ValueError("Virtual environment must not enable system site packages")
+    python = commands / ("python.exe" if os.name == "nt" else "python")
+    probe = subprocess.run(
+        [str(python), "-I", "-c", "import json,sys,sysconfig; print(json.dumps({'prefix':sys.prefix,'paths':{k:sysconfig.get_path(k) for k in ('scripts','purelib','platlib')}}))"],
+        check=True, capture_output=True, text=True,
+    )
+    layout = json.loads(probe.stdout)
+    if Path(layout["prefix"]).resolve() != destination:
+        raise ValueError("Interpreter does not belong to the destination virtual environment")
+    for location in layout["paths"].values():
+        path = Path(location)
+        reject_symlink_components(path)
+        if not path.resolve().is_relative_to(destination):
+            raise ValueError(f"Virtual environment installation path escapes destination: {path}")
+    for name in ("quattro-intelligence", "quattro-intelligence-mcp", "quattro-intelligence-native"):
+        for suffix in ("", ".exe", "-script.py"):
+            reject_symlink_components(commands / (name + suffix))
+    return python
+
+
+def install(destination: Path) -> Path:
+    destination = destination.expanduser().absolute()
+    reject_symlink_components(destination)
+    destination = destination.resolve()
+    if destination.exists() and not (destination / "pyvenv.cfg").is_file():
+        raise ValueError(f"Destination is not a virtual environment: {destination}")
+    if not destination.exists():
+        venv.EnvBuilder(with_pip=True).create(destination)
+    python = validate_environment(destination)
+    subprocess.run(
+        [str(python), "-I", "-m", "pip", "--isolated", "install", "--no-deps", str(ROOT)],
+        check=True,
+    )
+    return destination
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--target", type=Path,
-                        default=Path.home() / ".local" / "bin")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--destination", type=Path, default=ROOT / ".venv",
+                        help="Isolated virtual environment (default: repository .venv)")
     args = parser.parse_args()
-    install(args.target.expanduser().resolve())
+    try:
+        destination = install(args.destination)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
+        parser.exit(1, f"Installation failed: {error}\n")
+    print(f"Installed intelligence core in {destination}")
+    print("No desktop, service, native-agent, or global command registration was performed.")
     return 0
 
 

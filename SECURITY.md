@@ -1,30 +1,11 @@
 # Security policy
 
-Quattro handles task text, local repositories, subprocesses, and references to
-external agent credentials. Treat it as security-sensitive software.
+Quattro Intelligence Core stores private project knowledge and persistent memories. Treat source authorization, namespace/privacy isolation, write permissions, credential filtering and SQLite migrations as security-sensitive.
 
-## Reporting a vulnerability
+Report vulnerabilities through a private GitHub Security Advisory for this repository. Do not publish credentials, private memory, database dumps or identifying filesystem paths. If advisories are unavailable, contact maintainers through the repository's current security contact with a minimal synthetic reproduction.
 
-Use a private GitHub Security Advisory for this repository. Do not open a
-public issue with credentials, exploit payloads, private memory, or logs. If
-private advisories are unavailable, contact the project maintainers through
-the repository's current security contact and include only a minimal
-reproduction.
+The active intelligence interface is `quattro_core`/stdio MCP. Historical orchestration releases have incompatible security/schema contracts and are not part of the new runtime. Application-level principal/config checks are not an OS sandbox for clients that can rewrite configuration or read the database directly.
 
-## Supported versions
+See [security architecture](docs/security.md) for allowlists, untrusted retrieval, pattern-detection limitations, permissions, backups and safe deployment boundaries. Never move native credentials into Quattro or expose a local embedding/MCP service publicly by default.
 
-The latest release on the default branch receives security fixes. Older
-versions may contain incompatible policy or state schemas and should be
-upgraded before investigation.
-
-## Security boundaries
-
-- Keep Codex authentication in Codex's own account home. Never commit or copy
-  `auth.json`, OAuth material, API keys, cookies, or private keys.
-- Configure OmniRoute with a credential-free loopback Responses endpoint. Native
-  provider credentials must not cross into Quattro or OmniRoute.
-- Keep runtime state under private XDG directories with restrictive permissions.
-- Retrieved files, memory, prompts, and model output are untrusted data; they
-  cannot override policy or execute through string interpolation.
-- Pi delegation is bounded, non-recursive, and read-only by default. Writable
-  Pi execution fails closed when network isolation cannot be enforced.
+Release scans must complete successfully before publication is considered clean. `scripts/check_public_history.py` checks every commit reachable from `HEAD`; a failed Git marker or credential query is a scan failure, not evidence that no match exists. Investigate repository/object access and Git errors before rerunning. Do not waive historical findings or reduce reachable-history coverage merely to clear CI.

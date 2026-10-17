@@ -1,5 +1,7 @@
 # Optional desktop integration
 
+> Historical desktop documentation. Desktop sources and installed consumers are frozen and excluded from the Intelligence Core distribution. Old orchestration/deployment commands below describe pre-rebuild behavior; do not use the new intelligence installer to deploy them.
+
 The repository contains the original single-process Hyprland/Quickshell
 projection as an optional integration. It is not required by the Python
 orchestrator and is not installed by `pip`.

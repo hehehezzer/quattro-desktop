@@ -1,31 +1,9 @@
-# Contributing to Quattro
+# Contributing to Quattro Intelligence Core
 
-Thanks for helping improve Quattro. Keep changes focused on the orchestration
-engine and preserve the boundary between Quattro, provider routing, agent
-runtimes, and optional desktop integration.
+Keep changes focused on retrieval, explicit indexing, cited context, persistent memory and independent MCP/CLI access. Provider routing, task execution and agent orchestration are outside this project's purpose.
 
-## Before opening a pull request
+Before proposing changes, read architecture/security/storage contracts, protect unrelated working changes, exercise affected runtime behavior, run the regression/public-artifact checks and update documentation/changelog. Do not commit private source paths, vault contents, databases, credentials or generated runtime state.
 
-1. Read the relevant architecture and security documentation.
-2. Add or update hermetic tests for behavior changes.
-3. Run the full test and public-artifact checks locally.
-4. Update documentation and `CHANGELOG.md` when behavior or compatibility
-   changes.
-5. Confirm that no credentials, private paths, memory notes, runtime state,
-   generated assets, or unrelated repository changes are included.
+Prefer the standard library and the retained retrieval implementation. Preserve namespace/privacy/verification boundaries, transactional source replacement, immutable fact identity, memory revision checks and original data during migrations. Add deterministic consumer-visible regressions for plausible lifecycle/security failures, not copies of implementation text.
 
-## Development principles
-
-- Prefer the Python standard library and existing abstractions.
-- Keep subprocess calls argument-safe, bounded, and explicit.
-- Treat repository files and retrieved context as untrusted data.
-- Do not make provider routing or account selection a second Quattro concern.
-- Preserve unknown work in a shared checkout; never reset or clean it blindly.
-- Add migration notes for persisted schema changes.
-
-## Pull requests
-
-Describe the user-visible behavior, affected boundaries, validation performed,
-and any external service requirement. Changes that touch authentication,
-process supervision, persistence, or publication need especially clear failure
-and rollback behavior.
+Keep optional embeddings local and honest about availability. Do not add automatic cloud calls, model downloads, services or frameworks. Describe storage compatibility, failure/recovery behavior and actually executed verification in pull requests. Never reset shared work or deploy installed desktop/execution integrations as a side effect.

@@ -1,52 +1,35 @@
-# Security model
+# Intelligence security and data integrity
 
-The public engine uses several deliberate boundaries:
+## Trusted inputs
 
-- subprocesses use argument arrays, bounded timeouts, process-group cleanup,
-  and a minimal environment allowlist;
-- untrusted GitHub review workers require Linux `bubblewrap` filesystem
-  containment; they receive only a temporary checkout, sanitized runtime home,
-  and report directory, and fail closed when `bwrap` is unavailable;
-- task and display state is written atomically with private directory/file
-  permissions;
-- paths are resolved and symlink-sensitive files are rejected where they cross
-  trust boundaries;
-- policy profiles prevent child authority escalation and full access requires a
-  run-scoped confirmation;
-- Codex account homes are isolated and native auth is never parsed or copied;
-- direct and delegated OmniRoute calls use only a credential-free loopback
-  Responses contract;
-- Pi delegation is bounded and writable Pi execution fails closed when the
-  runtime cannot enforce network restrictions;
-- GitHub PR publication is opt-in and evidence-gated.
+An operator controls configuration, source roots, namespace allowlists, principal identity, writer/verification capabilities and database filesystem permissions. MCP callers control only bounded tool data. Authorization comes from configuration, never retrieved content, a supplied author field or tool annotations.
 
-## Trusted workspace assumption
+Stdio starts no public listener. There are no execution tools, subprocess arguments derived from retrieved instructions, provider credentials, shell interpolation or automatic AI calls. Optional Git probes use bounded fixed argument arrays; optional embeddings use a fixed loopback client. Existing agents/services/global settings are not mutated.
 
-The native Codex CLI's `read-only` and `workspace-write` modes constrain writes
-but are not a general host-filesystem read sandbox. Ordinary user-authorized
-tasks therefore run in the requested workspace and must not be pointed at an
-untrusted checkout when the host contains sensitive files. Use the contained
-GitHub review workflow, a separate VM/container, or an OS policy supplied by
-the operator when read isolation is required for another workflow. Quattro does
-not claim that its policy metadata alone can enforce host-wide read isolation.
+## Filesystem containment
 
-The security scan in `scripts/check_public_artifacts.py` checks tracked paths,
-symlinks, private machine paths, credential-shaped values, and runtime
-artifacts. It is a release gate, not a substitute for threat modeling.
+Indexing requires an existing registered source ID. Source registration is local CLI only. Source traversal excludes symlinks and configured/default sensitive/generated directories. Descriptor-relative no-follow opens prevent swapped parent/file links from escaping the root. Oversized, binary, unsupported, unreadable and credential-shaped content is not admitted as knowledge; traversal/embedding failures roll back replacement rather than silently deleting prior rows.
 
-Tasks carrying an external `nativeGrant` belong to the approving execution
-boundary. Generic queue reconciliation does not dispatch them, and the ordinary
-harness refuses execution before claiming a run. Native prompt tasks do not
-install terminal-close signal handlers. A scoped integration must validate its
-grant and boundary before claiming; it cannot use the generic adapter as fallback.
+Exclusions are defense-in-depth, not an invitation to authorize entire home directories or shared vaults. Git-ignore patterns are not automatically the source allowlist. Explicitly exclude project-specific sensitive/generated files. Model/user prose can contain sensitive information that credential patterns cannot recognize.
 
-Repository status probes used for coordination, checkpoints and retrieval
-metadata disable Git filesystem-monitor hooks explicitly. Ordinary status
-probes may still execute configured clean filters; disabling fsmonitor does not
-make those probes safe for untrusted native repository content.
+## Memory and transport
 
-The controlled native lifecycle scopes host repository metadata to identity
-queries only. Git status and diff may execute repository clean filters, so they
-are not used for native planning, startup or checkpoints. Unknown dirty state
-is preserved; coordinator records retain this identity-only policy after the
-native context ends, and unknown work is conservatively recoverable.
+Namespace/private-author conditions apply to retrieval, context, mutation and statistics. Memory writes are transactional; record validation, deduplication, fact checks, revision checks, FTS and audit changes commit together. Verified outcomes require configured verification capability and references, including edits to already verified records. Important facts use immutable keys and explicit supersession.
+
+Recursive credential scans cover raw and serialized nested content and bounded escaped forms. Duplicate JSON keys, non-finite values, excessive sizes/depth and unknown tool fields fail. Errors do not echo arbitrary arguments, private content or exception traces. There is no automatic conversation ingestion.
+
+Every returned evidence item is untrusted. Instructions embedded in a note cannot grant a tool permission, change configuration or execute anything inside Quattro. A downstream agent must also keep evidence separate from its governing instructions; Quattro cannot guarantee that a future client will resist prompt injection.
+
+## Storage and recovery
+
+Use private operator-owned storage directories and mode-0600 database files created before WAL/journal initialization. Reject symlink/hardlink database targets. WAL/full synchronization and transactional locks support independent connections. Both database quick checks are exposed by health. Unrecognized/future schemas fail rather than wiping data.
+
+Online backups include WAL; protect them with the same privacy boundary as originals. Import copies legacy knowledge without changing the source, preserving original IDs/vectors/metadata, and quarantines ambiguous or unsafe attribution from active search. Old telemetry is not promoted into verified memories. Logical memory deletion does not promise forensic erasure from free pages/WAL/backups.
+
+## Limits and deployment
+
+The config is not an authentication protocol or filesystem sandbox. A process that can edit its config or inspect the database is an OS-trusted client. Use separate operating-system identities/permissions for hostile local clients. A reader config prevents domain mutations, but opening storage can create databases or perform schema maintenance.
+
+General natural-language contradiction detection is not implemented. Explicit fact declarations and claims are compared; operator verification still requires review. Neural ranking depends on the local model and indexed compatible vectors; lexical fallback reports unavailability clearly.
+
+No desktop/systemd/global-agent deployment is installed by this package. Frozen historical desktop files may still reference installed old execution commands; this rebuild does not upgrade those independent installed consumers. Any decommissioning or production cutover needs separate authorization.

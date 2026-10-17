@@ -10,50 +10,8 @@ from unittest import mock
 
 SRC = pathlib.Path(__file__).parents[1] / "src"
 sys.path.insert(0, str(SRC))
-from quattro_harness import HarnessRuntime
-from quattro_agent import cli
 
 
-class GhosttyLaunchTests(unittest.TestCase):
-    def test_worker_arguments_preserve_identity_directory_and_process_ownership(self):
-        task = {"display_title": "Task with spaces", "project_path": "/tmp/project with spaces"}
-        store = mock.Mock()
-        store.get_task.return_value = task
-        runtime = types.SimpleNamespace(command_resolver=mock.Mock(return_value="/usr/bin/ghostty"),
-                                        store=store, script_path=pathlib.Path("/tmp/quattro-agent"))
-        with mock.patch("quattro_harness.subprocess.Popen") as popen:
-            HarnessRuntime.launch_terminal(runtime, "exact-task")
-        runtime.command_resolver.assert_called_once_with("ghostty")
-        command = popen.call_args.args[0]
-        self.assertEqual(command, ["/usr/bin/ghostty", "--gtk-single-instance=false",
-                                  "--class=com.quattro.ai", "--title=Task with spaces",
-                                  "--working-directory=/tmp/project with spaces", "-e",
-                                  "/tmp/quattro-agent", "_task-worker", "exact-task"])
-        self.assertTrue(popen.call_args.kwargs["start_new_session"])
-        self.assertEqual(popen.call_args.kwargs["cwd"], task["project_path"])
-        self.assertNotIn("shell", popen.call_args.kwargs)
-
-    def test_missing_ghostty_fails_without_spawning(self):
-        runtime = types.SimpleNamespace(command_resolver=lambda _: None)
-        with mock.patch("quattro_harness.subprocess.Popen") as popen:
-            with self.assertRaisesRegex(FileNotFoundError, "ghostty"):
-                HarnessRuntime.launch_terminal(runtime, "task")
-        popen.assert_not_called()
-
-    def test_discovery_preserves_old_sessions_and_requires_exact_worker_identity(self):
-        for name in ("foot", "ghostty", "unrelated"):
-            with self.subTest(executable=name), tempfile.TemporaryDirectory() as value:
-                root = pathlib.Path(value)
-                exe = root / name
-                exe.touch()
-                process = root / "321"
-                process.mkdir()
-                (process / "exe").symlink_to(exe)
-                (process / "cmdline").write_bytes(
-                    f"{exe}\0-e\0quattro-agent\0_task-worker\0task-exact\0".encode())
-                expected = 321 if name in {"foot", "ghostty"} else None
-                self.assertEqual(cli.session_terminal_pid({"taskId": "task-exact"}, root), expected)
-                self.assertIsNone(cli.session_terminal_pid({"taskId": "task-other"}, root))
 
 
 class GhosttyThemeTests(unittest.TestCase):

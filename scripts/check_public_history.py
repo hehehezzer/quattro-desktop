@@ -56,6 +56,10 @@ def main() -> int:
             )
             if result.returncode == 0:
                 findings.append(f"{commit[:12]}: private marker {marker!r}")
+            elif result.returncode != 1:
+                findings.append(
+                    f"{commit[:12]}: private marker scan failed for marker {marker!r}"
+                )
         for pattern in TOKEN_PATTERNS:
             result = subprocess.run(
                 ("git", "grep", "-I", "-n", "-E", "-e", pattern, commit, "--"),

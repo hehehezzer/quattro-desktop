@@ -1,5 +1,7 @@
 # Desktop system controls
 
+> Historical, separately installed desktop surface. This document records retained desktop behavior, not an Intelligence Core service or deployment contract. The intelligence rebuild does not change or activate these controls.
+
 ## Scope and architecture
 
 This extends the existing single Quickshell process and theme, not a replacement
