@@ -2,7 +2,7 @@
 
 ## Boundary
 
-`quattro_core` is the complete runtime package. It imports no orchestration package, agent framework, desktop, Jev or OmniRoute integration. Runtime dependencies are Python's standard library and SQLite with FTS5. Git supplies optional repository provenance; it is not needed to start or index an ordinary directory. Local Nomic embeddings are optional and separately operated.
+`quattro_core` is the complete Intelligence runtime package. It imports no orchestration package, agent framework, desktop or external execution integration. Runtime dependencies are Python's standard library and SQLite with FTS5. Git supplies optional repository provenance; it is not needed to start or index an ordinary directory. Local Nomic embeddings are optional and separately operated.
 
 ```mermaid
 flowchart LR
@@ -58,4 +58,4 @@ Source indexing uses POSIX descriptor-relative no-follow opens or native Windows
 
 Clients integrate with the documented MCP contract rather than SQL or legacy imports. Storage-specific operations are localized in `RetrievalStore`, `MemoryStore` and the source ownership queries, without a speculative generic ORM. A future PostgreSQL/pgvector adapter must implement those store operations and transactional invariants; SQLite-specific FTS/ranking queries would need adapter work. PostgreSQL support is not implemented or claimed.
 
-Historical desktop sources and helper utilities are retained separately and excluded from the distribution. Existing installed desktop/execution consumers are frozen, not pointed at the incompatible intelligence interface. See [migration](MIGRATION.md).
+The optional Arch desktop setup and retained desktop helpers are separate from the Intelligence Python distribution. Existing installed execution consumers are not migrated or pointed at the incompatible intelligence interface. See [migration](MIGRATION.md) for data preservation and [desktop maintenance](desktop.md) for the desktop boundary.

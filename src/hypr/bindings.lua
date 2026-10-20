@@ -35,7 +35,7 @@ hl.bind(
 )
 
 -- ============================================================
--- QUATTRO AI
+-- QUATTRO INTELLIGENCE
 -- ============================================================
 
 hl.bind(
@@ -45,18 +45,9 @@ hl.bind(
 
 hl.bind(
     "SUPER + SHIFT + CTRL + SPACE",
-    hl.dsp.exec_cmd("qs ipc call agents newTask")
+    hl.dsp.exec_cmd("qs ipc call agents search")
 )
 
-hl.bind(
-    "SUPER + CTRL + G",
-    hl.dsp.exec_cmd("quattro-agent chatgpt")
-)
-
-hl.bind(
-    "SUPER + CTRL + X",
-    hl.dsp.exec_cmd("quattro-agent dictation toggle")
-)
 
 -- ============================================================
 -- QUATTRO CAPTURE
@@ -84,8 +75,7 @@ hl.bind(
 -- Quattro-style Hyprland bindings
 -- ============================================================
 
--- Lock the graphical session and move to the recovery TTY. The Hyprland
--- process remains alive, so `resume` returns to the same desktop state.
+-- Lock the current graphical session with the system's trusted hyprlock policy.
 hl.bind(
     "SUPER + L",
     hl.dsp.exec_cmd("quattro-session lock")
@@ -99,7 +89,7 @@ hl.bind(
 
 hl.bind(
     "SUPER + SHIFT + F",
-    hl.dsp.exec_cmd("env GDK_BACKEND=x11 XDG_SESSION_TYPE=x11 nautilus --new-window")
+    hl.dsp.exec_cmd("nautilus --new-window")
 )
 
 -- Window controls

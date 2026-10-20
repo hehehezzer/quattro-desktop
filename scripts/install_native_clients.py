@@ -34,16 +34,28 @@ def write_private(path, content, *, mode=None):
 
 
 def codex_configuration(original, executable, config):
-    # Preserve every non-Quattro TOML table verbatim, including comments and policy.
+    # Parse complete statements, not physical lines: a multiline string can itself
+    # contain text that looks like a table header. Keep unrelated source verbatim.
+    tomllib.loads(original)
     lines = []
     discard = False
+    statement = ""
     for line in original.splitlines(keepends=True):
-        header = re.match(r"^\s*\[([^\]]+)\]\s*(?:#.*)?$",line.strip())
-        if header:
-            discard = bool(re.fullmatch(r"mcp_servers\.quattro_intelligence(?:\..+)?",header[1]))
-        if not discard:
-            lines.append(line)
-    output = "".join(lines).rstrip()+"\n\n[mcp_servers.quattro_intelligence]\n"
+        statement += line
+        try:
+            parsed = tomllib.loads(statement)
+        except tomllib.TOMLDecodeError:
+            continue
+        if statement.lstrip().startswith("["):
+            # tomllib resolves quoted, escaped and dotted header keys identically.
+            discard = "quattro_intelligence" in parsed.get("mcp_servers",{})
+        if not discard or statement.lstrip().startswith("#"):
+            lines.append(statement)
+        statement = ""
+    output = "".join(lines)
+    if output and not output.endswith("\n\n"):
+        output += "\n" if output.endswith("\n") else "\n\n"
+    output += "[mcp_servers.quattro_intelligence]\n"
     output += f"command = {json.dumps(str(executable))}\nargs = [\"--config\", {json.dumps(str(config))}]\nrequired = true\ntool_timeout_sec = 1800\n"
     output += '\n[mcp_servers.quattro_intelligence.env]\nQUATTRO_NATIVE_HOST = "codex"\n'
     for name in (*READ_TOOLS,*WRITE_TOOLS):

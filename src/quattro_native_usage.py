@@ -14,7 +14,7 @@ import tempfile
 import time
 
 HOME = Path.home()
-CACHE = HOME / ".local/state/quattro/agents/usage/native-omp.json"
+CACHE = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "quattro/agents/usage/native-omp.json"
 MAX_AGE_SECONDS = 900
 
 

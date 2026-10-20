@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — Selectable Arch setup and focused onboarding
+
+- Make Quattro Intelligence the primary README/onboarding path; consolidate guides and remove obsolete product, rebuild-audit and unrelated shell-proxy documents while retaining migration, release evidence and asset licensing.
+- Add `./install.sh --arch` for an existing Arch installation, with selectable desktop, intelligence, applications and native-client features; keep `--core` isolated. JEV is external and optional, not a dependency or a revived execution router.
+- Show mutation-free setup plans, install official Arch packages, back up changed configuration files with rollback journals, support isolated-home staging, preserve existing Intelligence configuration/accounts, and require explicit registered-source configuration for native integration. Never restart the live desktop or enable system services during setup.
+- Replace retained execution controls with the recovered read-only Intelligence desktop panel, generic monitor/Wi-Fi discovery, a single-instance shell launcher and the missing bounded, sensitive-state-aware clipboard capture helper. Remove automatic host-specific VPN startup and retired execution shortcuts.
+- Repair native client reinstallation for semantically equivalent quoted/dotted TOML table names without changing unrelated native model, account, hook, permission or file-mode settings.
+- Preserve distinct retrieval chunks that share cited source lines while continuing to suppress genuinely contained class/method evidence.
+- Acknowledge the owner's explicitly approved, immutable historical non-credential machine-path finding without rewriting published history or exempting new content, credentials or scan errors; document the exact scope in `SECURITY.md`.
+- Replace obsolete source-text execution/startup assertions with behavior coverage for dry-run/opt-in boundaries, backups, source isolation, chunk pagination and safe repeated native registration.
+
 ## Unreleased — Production reliability and retrieval
 
 - Distinguish registered, intended, pending, indexed, stale, failed and excluded source coverage. Preserve missing-root configurations for diagnosis, explicit scope decisions, structured failures and separate attempt/success timestamps.

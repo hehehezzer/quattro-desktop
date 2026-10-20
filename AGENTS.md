@@ -11,7 +11,7 @@ Quattro is a standalone persistent-memory and hybrid-retrieval service, **not** 
 - Memory defaults to unverified, requires references for verified records and explicit supersession for changing facts. Never persist credentials or entire conversations automatically.
 - Source replacement is atomic. Unchanged content must not be embedded again. Failures preserve prior committed knowledge.
 - Preserve user changes and live databases. No global agent settings, desktop/service deployment, production changes or native integration registration without separate authorization.
-- Frozen desktop source is excluded from the package; do not silently reconnect legacy installed execution consumers to new contracts.
+- The optional Arch desktop profile is separate from the intelligence package. Keep feature selection, portable hardware defaults, reversible configuration backups and explicit native registration; do not reconnect retired execution consumers to new contracts. Never activate the running desktop as a side effect of setup.
 
 ## Verification
 

@@ -261,6 +261,22 @@ class KnowledgeCoreTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["symbol"], "remember_lesson")
         self.assertEqual([r["symbol"] for r in result["results"] if r["citation"]["path"] == "store.py"], ["remember_lesson"])
 
+    def test_distinct_character_chunks_remain_retrievable_when_citation_lines_overlap(self):
+        for newline in ("", "\n"):
+            with self.subTest(multiline=bool(newline)):
+                first = ("copper firstpassage " + newline + "alpha " * 6000)[:32000]
+                second = ("copper secondpassage " + "beta " * 7000)[:32000]
+                self.write(self.a, "long.txt", first + second)
+                self.service.index_source("a")
+                result = self.service.search_knowledge("alpha", "copper", strategy="keyword")
+                self.assertEqual(result["total"], 2)
+                self.assertEqual({row["content"] for row in result["results"]}, {first, second})
+                page = self.service.search_knowledge("alpha", "copper", strategy="keyword",
+                                                     limit=1, offset=1)
+                self.assertEqual(page["total"], 2)
+                self.assertEqual([row["id"] for row in page["results"]],
+                                 [row["id"] for row in result["results"][1:2]])
+
     def test_unrecognized_database_is_rejected_without_mutation(self):
         path = self.root / "unrelated.sqlite3"
         with closing(sqlite3.connect(path)) as db:

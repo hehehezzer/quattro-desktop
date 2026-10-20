@@ -470,10 +470,15 @@ class KnowledgeService:
             seen.add(key)
             location = (row["source_id"], row["path"])
             start, end = row["start_line"], row["end_line"]
-            if start is not None and end is not None and any(start <= old_end and end >= old_start for old_start, old_end in spans.get(location, ())):
+            # Character-split chunks may share a line without sharing evidence.
+            # Suppress contained class/method units, not distinct same-line chunks.
+            if start is not None and end is not None and any(
+                    start <= old_end and end >= old_start
+                    and (row["content"] in old_content or old_content in row["content"])
+                    for old_start, old_end, old_content in spans.get(location, ())):
                 continue
             if start is not None and end is not None:
-                spans.setdefault(location, []).append((start, end))
+                spans.setdefault(location, []).append((start, end, row["content"]))
             provenance = item["provenance"]
             metadata = json.loads(row["metadata_json"])
             citation = {"path":row["path"],"start_line":row["start_line"],"end_line":row["end_line"],"content_hash":row["content_hash"],"file_hash":row["file_hash"],"source_id":row["source_id"],"source_kind":source_map[row["source_id"]].kind,"namespace":project,"project":project,"provenance":provenance,"commit_sha":None if metadata.get("workingTreeDirty") else row["commit_sha"]}

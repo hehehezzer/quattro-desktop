@@ -5,13 +5,15 @@
 Python 3.11+ with SQLite FTS5. Runtime uses only the standard library. Git supplies repository provenance/ignore enforcement; plain non-Git document roots do not require it. No native agent or framework is required. Build/install uses ordinary setuptools/pip tooling, not a cloud AI service.
 
 ```bash
-./install.sh
+./install.sh --core
 # Equivalent, with a chosen isolated environment:
 python scripts/install_local.py --destination .venv
 .venv/bin/quattro-intelligence --help
 ```
 
-Existing destinations must be isolated virtual environments. Symlinked destination/bin/package paths, global/system-site-package destinations and linked console targets are rejected. The installer does not register native integrations, global commands, desktop services or future agents. From source, `PYTHONPATH=src python -m quattro_core.cli ...` works without installation.
+Existing destinations must be isolated virtual environments. Symlinked destination/bin/package paths, global/system-site-package destinations and linked console targets are rejected. The core installer does not register native integrations, global commands or desktop services. From source, `PYTHONPATH=src python -m quattro_core.cli ...` works without installation.
+
+For optional desktop setup on an existing Arch system, use `./install.sh --arch --dry-run`, then `./install.sh --arch` after reviewing the plan. Feature selection, backup behavior, native prerequisites and isolated-home staging are documented in the [README](../README.md#optional-arch-desktop). This separate profile is not an OS installer and does not activate the running desktop.
 
 ## Setup and independent sources
 

@@ -1,8 +1,10 @@
-# Migration and retirement report
+# Migration and data preservation
 
-## Baseline and rollback
+This guide preserves the Intelligence cutover and legacy-data recovery contract. Historical observations below describe the 2026-10-11 rebuild, not the current installer or installed desktop state. The active product is standalone retrieval and persistent memory; optional desktop setup is documented in the [README](../README.md#optional-arch-desktop).
 
-Original branch: `feat/dynamic-main-integration`; original revision: `dc88f61d84c0765078a2292823abfca29a39e533`. The working tree was clean before the rebuild. Development occurs on `feat/intelligence-core-rebuild`.
+## Historical baseline and rollback
+
+Original branch: `feat/dynamic-main-integration`; original revision: `dc88f61d84c0765078a2292823abfca29a39e533`. The working tree was clean before the rebuild, developed on `feat/intelligence-core-rebuild`.
 
 Before destructive source retirement, a complete Git bundle was created and verified. Six actual SQLite stores were backed up using SQLite's online backup API, and every backup returned `PRAGMA quick_check = ok`. Durable copies are held in a private local preservation directory outside the repository: `pre-rebuild.bundle` and `databases/`. Their exact workstation location is supplied in the delivery message, not committed into public documentation.
 
@@ -16,13 +18,13 @@ No original live database, installed desktop service, native agent integration, 
 | Index v2 → v3 | Non-destructive upgrade with private online backup; per-document embedding identity retained; no generation-mismatch wipe |
 | Repository knowledge | Explicit source/namespace ownership layered over original schema; full-tail chunks/import/config units; atomic source replacement |
 | Structured memory | New independent WAL/FTS5 schema; explicit verification, references, identity/privacy, revision and fact lifecycle |
-| Shared intelligence interface | Replaced execution-coupled native/Jev/supervisor imports with standalone knowledge/memory/MCP boundary |
-| Package/install | `quattro-intelligence-core` 1.0.0; only core package and MCP launcher distributed; isolated install, no native/global registration |
-| Desktop/platform assets | Frozen historical consumer material, excluded from new distribution; no reconnecting installed old consumers to incompatible contracts |
+| Shared intelligence interface | Replaced execution-coupled imports with standalone knowledge/memory/MCP boundary |
+| Package/install at cutover | `quattro-intelligence-core` 1.0.0; isolated core installation, no implicit native/global registration |
+| Desktop/platform assets | Retained separately and excluded from the Intelligence distribution; no reconnecting installed execution consumers to incompatible contracts |
 
-Source retirement removed 255 obsolete files across execution modules, adapters, agent-only tests, execution benchmarks, routing/deployment documentation and scripts. Removed responsibilities include DIRECT/DELEGATE classification, provider/account/model routing, Jev decisions, OmniRoute execution, agent workers/spawning, native Codex/Pi/OMP lifecycle hooks, sessions/task supervision/retries and execution dashboards/deployment entrypoints. The new package exports no execution CLI or wildcard execution API.
+Source retirement removed obsolete execution modules, adapters, execution-only tests/benchmarks, routing research and deployment entrypoints. Model/provider/account routing, agent spawning, task/session supervision and execution dashboards are not Intelligence responsibilities. The package exports no execution CLI or wildcard execution API.
 
-Frozen desktop source may still refer to independently installed historical commands. Those old installed consumers are not new-core clients and were deliberately not uninstalled, restarted or modified. Removing their installed functionality is a separate production/desktop decision. No Paperclip, Herdr, OMP or other future ecosystem was installed or configured.
+Retained desktop source may still reference independently installed historical commands. Those installed consumers were not new-core clients and were deliberately not uninstalled, restarted or migrated by the rebuild. Desktop setup now remains a separate opt-in profile; it does not restore the retired execution system.
 
 ## Real database migration proof
 

@@ -172,6 +172,56 @@ class PublicPortabilityTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("credential scan failed", stderr.getvalue())
 
+    def test_history_acknowledgment_is_immutable_and_never_exempts_credentials(self):
+        scanner = str(ROOT / "scripts")
+        launch = (
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "import check_public_history as gate; "
+            "gate.ACKNOWLEDGED_HOME_PATH = (sys.argv[2], 'restart', sys.argv[3], 1); "
+            "raise SystemExit(gate.main())"
+        )
+        for case in ("approved", "different-commit", "different-blob", "extra-match",
+                     "different-marker", "credential"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                repository = pathlib.Path(directory)
+
+                def git(*arguments):
+                    return subprocess.check_output(
+                        ["git", "-C", str(repository), *arguments], text=True
+                    ).strip()
+
+                git("init", "-q", "-b", "main")
+                git("config", "user.name", "Test")
+                git("config", "user.email", "test@example.invalid")
+                content = public_history.MARKERS[0] + "operator\n"
+                if case == "extra-match":
+                    content += public_history.MARKERS[0] + "second\n"
+                if case == "different-marker":
+                    content += public_history.MARKERS[1] + "\n"
+                if case == "credential":
+                    content += "s" + "k-" + "livecredentialvalue123\n"
+                (repository / "restart").write_text(content)
+                git("add", "restart")
+                git("commit", "-qm", "reviewed fixture")
+                commit = git("rev-parse", "HEAD")
+                blob = git("rev-parse", "HEAD:restart")
+                if case == "different-commit":
+                    (repository / "unrelated").write_text("new public content\n")
+                    git("add", "unrelated")
+                    git("commit", "-qm", "new commit retains old blob")
+                if case == "different-blob":
+                    blob = "0" * 40
+                result = subprocess.run(
+                    [sys.executable, "-c", launch, scanner, commit, blob],
+                    cwd=repository, capture_output=True, text=True, timeout=10,
+                )
+                if case == "approved":
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    expected = "credential marker" if case == "credential" else "private marker"
+                    self.assertIn(expected, result.stderr)
+
 
 
 if __name__ == "__main__":

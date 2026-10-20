@@ -1,6 +1,19 @@
 # Intelligence Core test report
 
+This is a dated evidence archive. Use the [README](../README.md) for current onboarding and the [development guide](development.md) for current checks; historical environment, installation and publication observations are not current setup instructions.
+
 Baseline verification date: 2026-10-11 UTC. Linux x86_64; Python 3.14.7, SQLite 3.53.4. The baseline did not install native agents or activate a production deployment. The separately authorized local native integration below supersedes its client-deployment limitation.
+
+## Selectable Arch onboarding and PR review — 2026-10-21
+
+- Integrated Linux suite: **267 tests / three skips, OK in 31.030 seconds**; Python hygiene and compilation passed. The skips remain two native Windows checks and the opt-in desktop runtime case. Removed source-text assertions pinned to retired execution/startup wiring rather than rewriting them to match new strings.
+- Actual isolated-home `desktop,intelligence` setup and separate `--core` installation passed. Existing-config backup journals, opt-in rejection, dry-run mutation boundaries and symlink refusal have behavior regressions. Official package dependency resolution passed for the desktop/application/core set, plus the review-discovered clipboard paste dependency `wtype`; shellcheck 0.11.0 passed in a read-only, network-disabled container.
+- The terminal feature chooser installed a desktop-only isolated home with Intelligence omitted. A Pythonless PATH dry-run printed the bootstrap prerequisite without running package commands. The installed retrieval repair separately returned both distinct chunks from one long cited line; panel context and memory modes also completed against the synthetic store.
+- Staged Hyprland configuration passed `Hyprland --verify-config`. A temporary nested compositor loaded the provisioned Quickshell, exposed its IPC targets, rendered the new Intelligence panel and returned a real cited result from an explicitly registered synthetic source. Installed CLI and one stdio MCP process independently returned the current `evidence.md` citation and answered a subsequent ping. Real host services, account stores and native settings were not changed. Offscreen-only Qt lacked the layer-shell backend; the nested Wayland smoke supplied the actual rendering proof.
+- Independent PR review retained the standalone cutover and found two correctness defects: equivalent quoted TOML headers broke native reinstallation, and distinct chunks sharing a line were discarded. Both were reproduced before repair, fixed and statically re-reviewed; regressions cover preserved native policy/hooks/file modes and single-line/multiline chunk pagination.
+- The owner explicitly acknowledged the immutable, already-public non-credential historical home-path finding documented in `SECURITY.md`. All **253 reachable commits** passed the complete history scan with the narrow acknowledgment; its six focused regressions also passed. No published history was rewritten and credentials remain unexempted. Later publication/CI identities are recorded on PR #50.
+- A clean physical-machine installation, GPU-specific behavior and system-service activation were not exercised by the local staging/nested-surface proof. Setup does not claim to install Arch itself or copy machine-specific disks, credentials or private data.
+
 
 ## Publication follow-through — 2026-10-17
 

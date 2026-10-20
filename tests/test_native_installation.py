@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 import venv
@@ -30,6 +31,108 @@ class NativeInstallationTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+
+    def test_codex_configuration_replaces_semantically_equivalent_headers(self):
+        spellings = (
+            "mcp_servers.quattro_intelligence",
+            'mcp_servers."quattro_intelligence"',
+            "'mcp_servers'.'quattro_intelligence'",
+            '"mcp_servers" . "quattro_intelligence"',
+            r'mcp_servers."quattro\u005fintelligence"',
+        )
+        before = '''# Native controls stay byte-for-byte intact.
+model = "keep-native-model" # native choice
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+description = """
+[mcp_servers.quattro_intelligence]
+This is string content, not a server declaration.
+"""
+
+[model_providers.native]
+name = "unchanged account"
+'''
+        after = '''# Keep this neighboring server and its inline comments.
+[mcp_servers."quattro_intelligence.other"] # literal dotted name
+command = "other-server" # do not rewrite
+[mcp_servers."another]server"]
+command = "bracket-server"
+[[profiles.native.accounts]]
+name = "account-one"
+[profiles.native.permissions]
+approval_policy = "never" # owner policy
+
+'''
+        for header in spellings:
+            with self.subTest(header=header):
+                original = before + f'''[{header}] # replace old registration
+command = "obsolete-mcp"
+[{header}."env"]
+QUATTRO_NATIVE_HOST = "obsolete-host"
+[{header}.'tools'."search_knowledge"]
+approval_mode = "obsolete-mode"
+[[{header}.tools."custom.tool"]]
+description = """
+[profiles.should_not_escape_discard]
+obsolete-multiline-content
+"""
+''' + after
+                output = install_native_clients.codex_configuration(original,"/new/mcp","/new/config.json")
+                self.assertTrue(output.startswith(before))
+                self.assertIn(after,output)
+                self.assertNotIn("obsolete-",output)
+                parsed = tomllib.loads(output)
+                server = parsed["mcp_servers"]["quattro_intelligence"]
+                self.assertEqual(server["command"],"/new/mcp")
+                self.assertEqual(server["env"],{"QUATTRO_NATIVE_HOST":"codex"})
+                for tool in install_native_clients.READ_TOOLS:
+                    self.assertEqual(server["tools"][tool]["approval_mode"],"approve")
+                for tool in install_native_clients.WRITE_TOOLS:
+                    self.assertEqual(server["tools"][tool]["approval_mode"],"prompt")
+                self.assertEqual(install_native_clients.codex_configuration(output,"/new/mcp","/new/config.json"),output)
+
+    def test_repeated_native_installation_preserves_config_and_permissions(self):
+        home = self.root/"home"
+        codex = home/".codex"
+        codex.mkdir(parents=True)
+        config = codex/"config.toml"
+        native = '''model = "native-model" # keep inline text
+approval_policy = "on-request"
+sandbox_mode = "read-only"
+[accounts."native.account"]
+name = "native-account"
+[profiles.native.permissions]
+approval_policy = "never"
+'''
+        config.write_text(native + '''["mcp_servers" . 'quattro_intelligence'.env]
+QUATTRO_NATIVE_HOST = "old-host"
+['mcp_servers'."quattro_intelligence".tools.'save_memory']
+approval_mode = "old-mode"
+''')
+        config.chmod(0o640)
+        hooks = codex/"hooks.json"
+        native_hook = {"type":"command","command":"native-command","timeout":15}
+        hooks.write_text(json.dumps({"hooks":{"UserPromptSubmit":[{"hooks":[native_hook]}]}}))
+        hooks.chmod(0o640)
+        python = self.root/"environment/bin/python"
+        config_dir = self.root/"selected-config"
+        with patch.object(Path,"home",return_value=home):
+            install_native_clients.install_clients(ROOT,python,config_dir)
+            first_config,first_hooks = config.read_text(),hooks.read_text()
+            install_native_clients.install_clients(ROOT,python,config_dir)
+        self.assertTrue(first_config.startswith(native))
+        self.assertEqual(config.read_text(),first_config)
+        self.assertEqual(hooks.read_text(),first_hooks)
+        self.assertEqual(stat.S_IMODE(config.stat().st_mode),0o640)
+        self.assertEqual(stat.S_IMODE(hooks.stat().st_mode),0o640)
+        parsed = tomllib.loads(first_config)
+        self.assertEqual(parsed["approval_policy"],"on-request")
+        self.assertEqual(parsed["sandbox_mode"],"read-only")
+        self.assertEqual(parsed["profiles"]["native"]["permissions"]["approval_policy"],"never")
+        self.assertEqual(parsed["mcp_servers"]["quattro_intelligence"]["command"],str(python.parent/"quattro-intelligence-mcp"))
+        handlers = json.loads(first_hooks)["hooks"]["UserPromptSubmit"]
+        self.assertEqual(handlers[0]["hooks"],[native_hook])
+        self.assertEqual(len(handlers),2)
 
     def test_private_configuration_copy_is_private_from_creation(self):
         directory = self.root/"traversable"

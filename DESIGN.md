@@ -155,7 +155,7 @@ components:
 
 **Creative North Star: "Instrument Sheet"**
 
-Quattro Desktop is a native Hyprland/Quickshell desktop whose Instrument skins treat the screen as a working instrument sheet: a quiet ground, sharp fields, measured text, and ruled live information. The Instrument Sheet visual language supplies the composition; real host state supplies the content. This is a Linux desktop system. PRODUCT.md’s existing “adaptive” platform field does not imply an iOS or Android implementation.
+The optional Hyprland/Quickshell desktop uses Instrument skins that treat the screen as a working instrument sheet: a quiet ground, sharp fields, measured text, and ruled live information. Real host state supplies the content. These notes preserve the desktop asset design language; they do not define the standalone Quattro Intelligence service or a mobile platform.
 
 The shared controls are compact and keyboard-operable. Monitoring opens as a broad sheet on the focused screen, with a dotted display title and readable monospaced measurements. Instrument, Instrument Paper, and Instrument Ember change material color while keeping the same hierarchy. The existing Lo-Fi Noir, Graphite, Terminal, Cyberpunk 2077, and Avengers: Doomsday skins retain their own palettes and background motifs; their authoritative values remain in src/quickshell/theme/Theme.qml.
 
@@ -277,7 +277,7 @@ The service exposes Loading, Live, Paused, Stale, and Unavailable. It collects o
 - **Don’t** fill chart gaps, invent sensor or process data, or imply a fixed network bandwidth.
 - **Don’t** replace native semantic controls or Canvas plots with reference artwork.
 - **Don’t** identify NDOT47 as Nothing’s official Ndot-Regular; the monitoring display face remains Doto.
-- **Don’t** infer a mobile platform or new widgets from the existing PRODUCT.md platform field or from the reference composition.
+- **Don’t** infer a mobile platform or new widgets from the reference composition.
 
 
 ### Desktop artwork and individual process memory

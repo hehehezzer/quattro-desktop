@@ -19,7 +19,6 @@ CACHE_HOME = Path(os.environ.get("XDG_CACHE_HOME", HOME / ".cache")).expanduser(
 EDIT_TARGETS = {
     "hyprland": (CONFIG_HOME / "hypr/hyprland.lua", "hyprland"),
     "bindings": (CONFIG_HOME / "hypr/bindings.lua", "hyprland"),
-    "ai": (CONFIG_HOME / "quattro/ai.json", "json"),
 }
 PACKAGE_TARGETS = {
     "code": "code",
@@ -92,9 +91,6 @@ def validate_json(path: Path) -> tuple[bool, str]:
 
 def search_roots(home: Path = HOME) -> list[Path]:
     roots = [home]
-    for path in (Path("/mnt/data-hdd"), Path("/mnt/data-ssd")):
-        if path.is_dir():
-            roots.append(path)
     return roots
 
 
