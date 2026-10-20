@@ -1,8 +1,8 @@
-# Optional desktop integration
+# Optional Arch desktop
 
-The repository contains the original single-process Hyprland/Quickshell
-projection as an optional integration. It is not required by the Python
-orchestrator and is not installed by `pip`.
+The desktop profile configures the retained Hyprland/Quickshell assets on an **existing Arch Linux installation**. It is separate from Quattro Intelligence and is not an operating-system installer. Start with the selection and safety instructions in the [README](../README.md#optional-arch-desktop).
+
+Quattro Intelligence does not control agents, accounts or desktop sessions. Historical execution launchers referenced by some retained desktop assets are not installed or reconnected by desktop setup. This guide preserves maintenance and third-party asset details, not a claim that every historical integration is provisioned.
 
 The source tree uses generic XDG paths and command names. Install helper
 commands into `PATH` or set `QUATTRO_*_COMMAND` overrides before starting
@@ -19,19 +19,9 @@ qs ipc show
 pgrep -a quickshell
 ```
 
-Keep exactly one persistent Quickshell process. Existing bar, workspace, tray,
-notification, system-panel, clipboard, and Agents IPC behavior must remain
-available. Hyprland-specific reloads require a running compositor and are not
-part of the hermetic CI gate.
+Keep exactly one persistent Quickshell process. Hyprland-specific reloads require a running compositor and are not part of the hermetic CI gate. The setup script does not reload the current compositor or restart the current shell; choose when to start the configured desktop yourself.
 
-The OMP menu entry invokes `quattro-projects-omp --choose-project`, or the
-command selected by `QUATTRO_PROJECTS_OMP_COMMAND`. Install the reviewed scoped
-Projects launcher before deploying this menu change. That launcher selects a
-directory within the existing approved Projects root, starts Quattro's protected
-OMP host console in a named Herdr workspace, and attaches a terminal client.
-Project selection does not grant access. Quattro retains repository and command
-authority; registered commands still require their actual human confirmation.
-The menu does not supply the general native-access confirmation flag.
+Agent execution launchers and their installed legacy consumers remain outside this setup. Do not point them at Quattro Intelligence as a substitute execution backend.
 
 System panels and the calendar open on the currently focused Hyprland monitor,
 including when their controls are clicked on a secondary display.
@@ -54,8 +44,8 @@ The bar and Agents limit meter consume one shared `NativeUsage` singleton.
 `quattro_native_usage.py`, installed in `~/.local/bin`, collects supported native
 `omp usage --json --redact --no-extensions --provider openai-codex` reports.
 This avoids mistaking an obsolete isolated Codex login for the account used by
-omp. Legacy Codex account controls remain available, but do not select an omp
-credential or determine native usage attribution.
+omp. Usage is read-only: the Intelligence panel does not expose login, credential
+selection or account-switching controls.
 
 Collection runs every two minutes with a 35-second timeout and no overlapping
 worker. Opening the Agents panel or selecting **Refresh native limits** uses
@@ -82,8 +72,7 @@ These commands collect/display limits, not session control. The helper never
 invokes login, logout, account switching, invalidation or process-group
 cancellation. Native SDK collection may refresh its own caches or OAuth state;
 `--provider` filters reported output and is not a network-isolation guarantee.
-Publish/deploy only the Desktop profile for this change; do not replace frozen
-Core, restart agent brokers, close terminals or modify ongoing omp/herdr sessions.
+Do not restart agent brokers, close terminals or modify ongoing native client sessions while maintaining desktop assets.
 
 ## Ghostty terminal integration
 
@@ -100,12 +89,7 @@ A builtin-only two-line Bash prompt can be sourced from
 terminal prompts stay unchanged. Existing shells keep their live prompt until
 their next normal startup. Foot stays installed and existing Foot sessions remain discoverable.
 
-Quattro workers use a separate Ghostty instance with a valid dotted application
-class and an argument-safe `-e` command; working directories and task identities
-are preserved. Session focusing recognizes both old Foot and new Ghostty classes.
-Permission-pinned scoped Pi packages are not rewritten by terminal migration;
-their inherited terminal handles work in Ghostty, but any internal legacy Foot
-launchers remain unchanged until an approved package update.
+Historical worker/window launchers are not installed by the desktop profile. Native client terminal behavior and permissions remain owned by the client.
 
 `TERMINAL=ghostty` is the session preference. The XDG terminal priority file names
 `com.mitchellh.ghostty.desktop`; consumers of that specification additionally need
@@ -130,8 +114,7 @@ and file hashes. No third-party stock or
 franchise artwork is downloaded. Originals are 1672×941, the builtin tool's
 returned resolution, and are aspect-cropped to each output. This set
 uses matching independent monitor backgrounds rather than a stretched panorama.
-Theme selection persists in the existing theme.json and updates both shell and
-Ghostty artwork; source and live assets are included in Desktop deployment.
+Theme selection persists in the existing theme.json and updates both shell and Ghostty artwork when the corresponding desktop helpers are installed.
 
 Processes shows individual resident memory (RSS), explicit MiB/GiB units and a
 percentage of physical RAM, with name/PID search, sorting and a scrolling list.
@@ -174,3 +157,5 @@ hint, Escape dismisses it, and the source retains its accessible labels/actions.
 Existing `DesktopButton.ToolTip.text` callers share this behavior. Full usage and
 monitoring detail remains available in the source panels. See
 [hover-tooltips.md](hover-tooltips.md) for the passive rich-content contract.
+
+See [desktop system controls](DESKTOP_SYSTEM_CONTROLS.md) for retained media, weather, Bluetooth and DSP maintenance details, and the [design reference](../DESIGN.md) for visual conventions. These references do not expand the setup feature list.

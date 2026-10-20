@@ -1,1593 +1,543 @@
+pragma ComponentBehavior: Bound
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
-import Quickshell.Wayland
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme" as QuattroTheme
 import "../services"
 import "shared"
 
+// Operate: a project-scoped Intelligence workspace in the existing Instrument
+// Sheet world. Search leads; three independent quota ledgers replace account
+// switching. Real semantic availability controls Hybrid/Lexical state. No agent
+// execution, approvals or automatic indexing. Fixed chrome, scrollable evidence.
 Scope {
     id: root
-
-    property string agentCommand: Quickshell.env("HOME") + "/.local/bin/quattro-agent"
     property bool opened: false
-    property string page: "home"
-    property string selectedAgent: "auto"
-    property string knowledgeMode: "retrieval"
-    property string statusMessage: ""
-    property var dashboard: ({"schemaVersion": 1, "agents": {}, "tasks": [], "sessions": [], "logicalSessions": [], "approvals": [], "project": {}, "retrieval": {}, "memory": {}})
-    readonly property var nativeUsage: NativeUsage.snapshot
-    property var selectedTaskDetails: null
-    property var selectedApproval: null
-    property var knowledgeResults: []
-    property var knowledgeMeta: ({})
-    property bool paletteOpen: false
-    property int paletteIndex: 0
-    property bool confirmOpen: false
-    property string approvalDecision: ""
-    property string actionKind: ""
-    property string actionOut: ""
-    property string actionErr: ""
-    property string searchOut: ""
-    property string searchErr: ""
-    property bool notificationBaselineReady: false
-    property var knownTaskStates: ({})
-    property var knownApprovals: ({})
-    property var promptEditor: null
-    property var knowledgeEditor: null
-    property var sessionEditor: null
-    property string promptDraft: ""
-    property string knowledgeQuery: ""
-    property string sessionQuery: ""
-
-    readonly property var activeStates: ["queued", "validating", "awaiting_approval", "ready", "running", "waiting_on_children", "validating_result", "blocked"]
-    readonly property var terminalStates: ["succeeded", "failed", "cancelled", "timed_out", "interrupted"]
-    readonly property var commandItems: [
-        {"id":"new-auto","label":"New AUTO Task","detail":"Use Quattro routing"},
-        {"id":"new-codex","label":"New Codex Task","detail":"Queue with Codex"},
-        {"id":"new-pi","label":"New Pi Task","detail":"Queue with Pi"},
-        {"id":"resume","label":"Resume Session","detail":"Recover checkpointed work"},
-        {"id":"knowledge","label":"Search Knowledge","detail":"Code and architecture evidence"},
-        {"id":"memory","label":"Search Memory","detail":"Project-scoped memories"},
-        {"id":"active","label":"View Active Task","detail":"Observe current execution"},
-        {"id":"tasks","label":"View Recent Tasks","detail":"Durable task history"},
-        {"id":"open","label":"Open Current Project","detail":"Use Quattro's Zed wrapper"},
-        {"id":"diff","label":"Review Current Diff","detail":"Open changed files"},
-        {"id":"system","label":"Retrieval Status","detail":"System diagnostics"},
-        {"id":"reindex","label":"Reindex Knowledge","detail":"Explicit maintenance"},
-        {"id":"benchmark","label":"Run Retrieval Benchmark","detail":"Explicit developer operation"}
-    ]
+    property string page: "knowledge"
+    property string mode: "knowledge"
+    property string project: ""
+    property string queryDraft: ""
+    property var dashboard: ({status: "loading", projects: []})
+    property var results: []
+    property var searchMeta: ({})
+    property string searchState: "idle"
+    property string searchMessage: ""
+    property string requestedProject: ""
+    property string requestedMode: ""
+    property string requestedQuery: ""
+    property var queryEditor: null
+    property double clock: Date.now()
+    readonly property string helper: Quickshell.env("HOME") + "/.local/bin/quattro_intelligence_panel.py"
+    readonly property var projects: array(dashboard.projects)
+    readonly property var currentProject: projects.find(item => item.id === project) || ({})
+    readonly property var accounts: NativeUsage.snapshot.primary ? [NativeUsage.snapshot] : []
+    readonly property bool compact: intelligenceWindow.width < 580
+    readonly property var retrievalInfo: mode !== "memory" && searchState === "ready" ? searchMeta : dashboard
 
     function array(value) { return Array.isArray(value) ? value : [] }
-    function object(value) { return value && typeof value === "object" ? value : ({}) }
-    function shortId(value) { const text = String(value || ""); return text.length > 14 ? text.slice(0, 12) + "…" : text }
-    function human(value) { const text = String(value || "unknown").replace(/_/g, " "); return text.charAt(0).toUpperCase() + text.slice(1) }
-    function age(value) {
-        if (!value) return "—"
-        const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000))
-        if (seconds < 60) return seconds + "s"
-        if (seconds < 3600) return Math.floor(seconds / 60) + "m"
-        return Math.floor(seconds / 3600) + "h " + Math.floor((seconds % 3600) / 60) + "m"
-    }
-    function resetText(epochSeconds) {
-        const value = Number(epochSeconds || 0)
-        if (!value) return "Reset unavailable"
-        const seconds = Math.max(0, Math.floor(value - Date.now() / 1000))
-        if (seconds < 3600) return "Resets in " + Math.max(1, Math.ceil(seconds / 60)) + "m"
-        if (seconds < 86400) return "Resets in " + Math.floor(seconds / 3600) + "h " + Math.floor((seconds % 3600) / 60) + "m"
-        return "Resets in " + Math.floor(seconds / 86400) + "d " + Math.floor((seconds % 86400) / 3600) + "h"
-    }
-    function stateColor(value) {
-        const state = String(value || "").toLowerCase()
-        if (["ready", "succeeded", "passed", "healthy"].indexOf(state) >= 0) return QuattroTheme.Theme.success
-        if (["failed", "cancelled", "timed_out", "unavailable", "declined"].indexOf(state) >= 0) return QuattroTheme.Theme.danger
-        if (["awaiting_approval", "blocked", "authentication required", "stale"].indexOf(state) >= 0) return QuattroTheme.Theme.warning
-        return QuattroTheme.Theme.accent
-    }
-    function activeTask() { return array(dashboard.tasks).find(task => activeStates.indexOf(task.state) >= 0) || null }
-    function filteredSessions(items) {
-        const query = sessionQuery.trim().toLowerCase()
-        if (!query) return array(items)
-        return array(items).filter(item => [
-            item.title, item.projectName, item.repository, item.workingDirectory,
-            item.sessionId, item.taskId, item.quattroSessionId,
-            item.coordinationSessionId, item.agent, item.accountId
-        ].map(value => String(value || "").toLowerCase()).join(" ").indexOf(query) >= 0)
-    }
-    function projectPath() {
-        const value = object(dashboard.project).repository
-        return typeof value === "string" && value.length > 0 ? value : ""
-    }
-    function requireProject() {
-        if (projectPath()) return true
-        statusMessage = "Authoritative project state is not available yet"
-        return false
-    }
     function focusedScreen() {
-        for (let screen of Quickshell.screens) if (Hyprland.monitorFor(screen) === Hyprland.focusedMonitor) return screen
+        for (const screen of Quickshell.screens)
+            if (Hyprland.monitorFor(screen) === Hyprland.focusedMonitor) return screen
         return Quickshell.screens[0]
     }
-    function agentState(name) {
-        const record = object(object(dashboard.agents)[name])
-        if (!record.available) return "Unavailable"
-        if (name === "codex") {
-            const account = array(dashboard.accounts).find(item => item.id === dashboard.activeAccount)
-            if (account && !account.authenticated) return "Authentication required"
-        }
-        const busy = array(dashboard.sessions).some(item => item.agent === name)
-            || array(dashboard.tasks).some(item => item.agent === name && activeStates.indexOf(item.state) >= 0)
-        return busy ? "Busy" : "Ready"
-    }
-    Connections {
-        target: PopupManager
-        function onRequested(name) {
-            if (name === "agents") root.opened ? root.close() : root.open("home");
-        }
-    }
-    function open(pageName) {
-        page = pageName || "home"
-        agentsWindow.screen = focusedScreen()
+    function open(target) {
+        page = target || "knowledge"
+        intelligenceWindow.screen = focusedScreen()
         opened = true
         refresh()
-        refreshAccountState()
-        refreshTitles()
-        NativeUsage.refresh()
-        Qt.callLater(() => root.promptEditor ? root.promptEditor.forceActiveFocus() : keyScope.forceActiveFocus())
+        Qt.callLater(() => queryEditor ? queryEditor.forceActiveFocus() : keyScope.forceActiveFocus())
     }
-    function close() { opened = false; paletteOpen = false; confirmOpen = false; page = "home"; statusMessage = "" }
-    function go(target) { page = target; paletteOpen = false; confirmOpen = false; Qt.callLater(() => keyScope.forceActiveFocus()) }
+    function close() { opened = false }
     function refresh() {
-        if (!stateProcess.running) { statusMessage = "Refreshing…"; stateProcess.running = true }
+        if (!stateProcess.running) stateProcess.running = true
+        NativeUsage.refresh()
     }
-    function refreshTitles() {
-        if (!titleRefreshProcess.running)
-            titleRefreshProcess.running = true
+    function clearSearch() {
+        results = []; searchMeta = ({}); searchState = "idle"; searchMessage = ""
     }
-    function refreshAccountState() {
-        if (!accountStatusProcess.running)
-            accountStatusProcess.running = true
+    onProjectChanged: clearSearch()
+    onModeChanged: clearSearch()
+    onQueryDraftChanged: clearSearch()
+    function search() {
+        if (searchProcess.running || !project || !queryDraft.trim()) return
+        requestedProject = project; requestedMode = mode; requestedQuery = queryDraft.trim()
+        results = []; searchMeta = ({}); searchState = "loading"; searchMessage = ""
+        searchProcess.command = ["/usr/bin/python3", helper, "search", "--project", project,
+                                 "--mode", mode, "--query=" + requestedQuery]
+        searchProcess.running = true
     }
-    function invoke(args, kind) {
-        if (actionProcess.running) { statusMessage = "Another control action is still running"; return }
-        actionKind = kind || "action"; actionOut = ""; actionErr = ""
-        actionProcess.command = [agentCommand].concat(args)
-        statusMessage = "Working…"
-        actionProcess.running = true
+    function age(timestamp) {
+        const seconds = Math.max(0, Math.floor((clock - new Date(timestamp).getTime()) / 1000))
+        if (!Number.isFinite(seconds)) return "Update time unavailable"
+        if (seconds < 60) return "Updated just now"
+        if (seconds < 3600) return "Updated " + Math.floor(seconds / 60) + "m ago"
+        if (seconds < 86400) return "Updated " + Math.floor(seconds / 3600) + "h ago"
+        return "Updated " + Math.floor(seconds / 86400) + "d ago"
     }
-    function launch(args) { Quickshell.execDetached([agentCommand].concat(args)); close() }
-    function submitPrompt() {
-        const prompt = promptDraft.trim()
-        if (!prompt) { statusMessage = "Describe the work for Quattro"; if (promptEditor) promptEditor.forceActiveFocus(); return }
-        if (actionProcess.running) { statusMessage = "Another control action is still running"; return }
-        if (!requireProject()) return
-        const project = projectPath()
-        invoke(["submit", "--agent", selectedAgent, "--directory", project, "--prompt", prompt], "submit")
+    function resetText(epoch) {
+        if (!epoch) return "Reset unavailable"
+        const seconds = Math.floor(Number(epoch) - clock / 1000)
+        if (seconds <= 0) return "Reset passed · refresh needed"
+        if (seconds < 3600) return "Resets in " + Math.ceil(seconds / 60) + "m"
+        if (seconds < 86400) return "Resets in " + Math.floor(seconds / 3600) + "h " + Math.floor(seconds % 3600 / 60) + "m"
+        return "Resets in " + Math.floor(seconds / 86400) + "d " + Math.floor(seconds % 86400 / 3600) + "h"
     }
-    function showTask(identifier) { if (identifier) invoke(["task", "show", String(identifier), "--json"], "task-show") }
-    function showApproval(approval) { selectedApproval = approval; go("approval") }
-    function resolveApproval(decision) { approvalDecision = decision; confirmOpen = true }
-    function confirmApproval() {
-        confirmOpen = false
-        if (selectedApproval && selectedApproval.approvalId) invoke(["approval", approvalDecision, selectedApproval.approvalId, "--json"], "approval")
+    function windowName(window) {
+        if (!window) return ""
+        const minutes = Number(window.windowMinutes)
+        return minutes === 300 ? "5 hours" : minutes === 10080 ? "Week"
+            : minutes === 1440 ? "Day" : minutes >= 60 ? minutes / 60 + " hours" : minutes + " minutes"
     }
-    function searchKnowledge() {
-        const query = knowledgeQuery.trim()
-        if (!query) { statusMessage = "Enter a search query"; if (knowledgeEditor) knowledgeEditor.forceActiveFocus(); return }
-        if (searchProcess.running) return
-        if (!requireProject()) return
-        const project = projectPath()
-        searchOut = ""; searchErr = ""; knowledgeResults = []; knowledgeMeta = ({})
-        searchProcess.command = knowledgeMode === "memory"
-            ? [agentCommand, "memory", "ui-search", query, "--directory", project, "--limit", "12", "--json"]
-            : [agentCommand, "retrieval", "ui-search", query, "--directory", project, "--limit", "12", "--budget", "3000"]
-        statusMessage = "Searching…"; searchProcess.running = true
+    function quotaState(account) {
+        const expired = [account.primary, account.secondary].some(window => window && window.resetAt && window.resetAt * 1000 <= clock)
+        const old = account.fetchedAt && clock - account.fetchedAt > 900000
+        return account.status === "live" && (expired || old) ? "stale" : account.status || "unavailable"
     }
-    function startMaintenance(kind) {
-        if (maintenanceProcess.running) { statusMessage = "Knowledge maintenance is already running"; return }
-        if (!requireProject()) return
-        maintenanceProcess.command = [agentCommand, "retrieval", kind, "--directory", projectPath()]
-        statusMessage = kind === "reindex" ? "Reindexing knowledge…" : "Running retrieval benchmark…"
-        maintenanceProcess.running = true
+    function tightest(account) {
+        const windows = [account.primary, account.secondary].filter(window => !!window)
+        return windows.sort((a, b) => b.usedPercent - a.usedPercent)[0] || null
     }
-    function dispatch(identifier) {
-        paletteOpen = false
-        if (identifier.indexOf("new-") === 0) { selectedAgent = identifier.replace("new-", ""); go("home"); Qt.callLater(() => { if (root.promptEditor) root.promptEditor.forceActiveFocus() }) }
-        else if (identifier === "resume") go("sessions")
-        else if (identifier === "knowledge" || identifier === "memory") { knowledgeMode = identifier === "memory" ? "memory" : "retrieval"; go("knowledge"); Qt.callLater(() => { if (root.knowledgeEditor) root.knowledgeEditor.forceActiveFocus() }) }
-        else if (identifier === "active") { const task = activeTask(); task ? showTask(task.taskId || task.id) : statusMessage = "No active task" }
-        else if (identifier === "tasks") go("tasks")
-        else if (identifier === "open" && requireProject()) invoke(["open", projectPath()], "zed")
-        else if (identifier === "diff" && requireProject()) invoke(["diff", "--directory", projectPath()], "zed")
-        else if (identifier === "system") go("system")
-        else if (identifier === "reindex" || identifier === "benchmark") startMaintenance(identifier)
-    }
-    function filteredCommands() {
-        const query = paletteQuery.text.trim().toLowerCase()
-        return commandItems.filter(item => !query || (item.label + " " + item.detail).toLowerCase().indexOf(query) >= 0)
-    }
-    function updateNotificationBaseline(next) {
-        const states = ({}); const approvals = ({})
-        for (const task of array(next.tasks)) {
-            const id = task.taskId || task.id; states[id] = task.state
-            if (notificationBaselineReady && knownTaskStates[id] && knownTaskStates[id] !== task.state && terminalStates.indexOf(task.state) >= 0)
-                Quickshell.execDetached(["notify-send", "-u", task.state === "succeeded" ? "normal" : "critical", "Quattro task " + human(task.state), task.title || shortId(id)])
-        }
-        for (const approval of array(next.approvals)) {
-            approvals[approval.approvalId] = true
-            if (notificationBaselineReady && !knownApprovals[approval.approvalId])
-                Quickshell.execDetached(["notify-send", "-u", "critical", "Quattro approval required", approval.confirmationSummary || approval.scope])
-        }
-        knownTaskStates = states; knownApprovals = approvals; notificationBaselineReady = true
+    function remaining(window) { return window ? Math.round(100 - window.usedPercent) : 0 }
+    function readingColor(window) {
+        return remaining(window) <= 10 ? QuattroTheme.Theme.danger
+            : remaining(window) <= 30 ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textStrong
     }
 
+    Connections {
+        target: PopupManager
+        function onRequested(name) { if (name === "agents") root.opened ? root.close() : root.open("knowledge") }
+    }
     IpcHandler {
         target: "agents"
-        function open(): void { root.open("home") }
+        function open(): void { root.open("knowledge") }
         function close(): void { root.close() }
-        function toggle(): void { root.opened ? root.close() : root.open("home") }
-        function newTask(): void { root.open("home") }
-        function commandPalette(): void {
-            root.open("home")
-            root.paletteOpen = true
-            root.paletteIndex = 0
-            Qt.callLater(() => paletteQuery.forceActiveFocus())
+        function toggle(): void { root.opened ? root.close() : root.open("knowledge") }
+        function search(): void { root.open("knowledge") }
+        function usage(): void { root.open("usage") }
+        function system(): void { root.open("status") }
+        function refresh(): void { root.refresh() }
+        function query(text: string): void { root.queryDraft = text; root.search() }
+        function mode(value: string): void { if (["knowledge", "context", "memory"].indexOf(value) >= 0) root.mode = value }
+        function status(): string {
+            return JSON.stringify({opened: root.opened, page: root.page, project: root.project,
+                mode: root.mode, state: root.dashboard.status, searchState: root.searchState,
+                results: root.results.length, semanticAvailable: root.dashboard.semanticAvailable})
         }
-        function refresh(): void { root.refresh(); root.refreshTitles() }
     }
-
     Process {
         id: stateProcess
-        command: [root.agentCommand, "ui-state"]
+        command: ["/usr/bin/python3", root.helper, "status"]
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
-                    const parsed = JSON.parse(text)
-                    if (parsed.schemaVersion === 1) { root.updateNotificationBaseline(parsed); root.dashboard = parsed; root.statusMessage = "Updated " + Qt.formatTime(new Date(), "HH:mm:ss") }
-                } catch (error) { root.statusMessage = "Quattro state is unavailable" }
-            }
-        }
-    }
-    Process {
-        id: titleRefreshProcess
-        command: [root.agentCommand, "recent", "refresh"]
-        onRunningChanged: {
-            if (!running)
-                root.refresh()
-        }
-    }
-    Process {
-        id: accountStatusProcess
-        command: [root.agentCommand, "account", "list"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                try {
-                    const parsed = JSON.parse(text)
-                    if (!parsed.active) return
-                    const changed = parsed.active !== root.dashboard.activeAccount
-                    const next = Object.assign({}, root.dashboard)
-                    next.activeAccount = parsed.active
-                    if (Array.isArray(parsed.accounts)) next.accounts = parsed.accounts
+                    const next = JSON.parse(text)
+                    if (next.schemaVersion !== 1) throw new Error("Invalid state")
                     root.dashboard = next
-                    if (changed) {
-                        root.refresh()
-                    }
-                } catch (error) {}
+                    if (!root.projects.some(item => item.id === root.project))
+                        root.project = root.projects.length ? root.projects[0].id : ""
+                } catch (error) {
+                    root.dashboard = ({status: "unavailable", projects: [], message: "Intelligence helper unavailable. Check the core runtime."})
+                    root.project = ""
+                }
             }
         }
-    }
-    Process {
-        id: actionProcess
-        stdout: StdioCollector { onStreamFinished: root.actionOut = text }
-        stderr: StdioCollector { onStreamFinished: root.actionErr = text }
-        onRunningChanged: {
-            if (running || !root.actionKind) return
-            if (root.actionErr.trim()) root.statusMessage = root.actionErr.trim().replace(/^quattro-agent:\s*/, "")
-            else if (root.actionKind === "task-show") {
-                try { root.selectedTaskDetails = JSON.parse(root.actionOut); root.go("task"); root.statusMessage = "Task loaded" }
-                catch (error) { root.statusMessage = "Task details were invalid" }
-            } else if (root.actionKind === "memory-show") {
-                try { root.knowledgeMeta = JSON.parse(root.actionOut); root.statusMessage = "Memory loaded" }
-                catch (error) { root.statusMessage = "Memory details were invalid" }
-            } else {
-                if (root.actionKind === "submit") {
-                    try {
-                        const submitted = JSON.parse(root.actionOut)
-                        if (submitted.schemaVersion !== 1 || !submitted.taskId) throw new Error("invalid submit response")
-                        root.promptDraft = ""
-                        if (root.promptEditor) root.promptEditor.text = ""
-                        root.statusMessage = "Task queued · " + root.shortId(submitted.taskId)
-                    } catch (error) { root.statusMessage = "Quattro did not confirm task submission" }
-                } else root.statusMessage = root.actionKind === "zed" ? "Sent to Zed" : "Action completed"
-                if (root.actionKind === "approval") root.go("home")
+        onExited: function(code, status) {
+            if (code !== 0) {
+                root.dashboard = ({status: "unavailable", projects: [], message: "Intelligence helper unavailable. Check the core runtime."})
+                root.project = ""
             }
-            root.actionKind = ""; root.refresh()
         }
     }
     Process {
         id: searchProcess
-        stdout: StdioCollector { onStreamFinished: root.searchOut = text }
-        stderr: StdioCollector { onStreamFinished: root.searchErr = text }
-        onRunningChanged: {
-            if (running) return
-            if (root.searchErr.trim()) { root.statusMessage = root.searchErr.trim().replace(/^quattro-agent:\s*/, ""); return }
-            try { const parsed = JSON.parse(root.searchOut); root.knowledgeResults = root.array(parsed.results); root.knowledgeMeta = parsed; root.statusMessage = root.knowledgeResults.length + " results" }
-            catch (error) { root.statusMessage = "Knowledge results were invalid" }
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (root.requestedProject !== root.project || root.requestedMode !== root.mode || root.requestedQuery !== root.queryDraft.trim()) return
+                try {
+                    const next = JSON.parse(text)
+                    if (next.schemaVersion !== 1) throw new Error("Invalid results")
+                    root.searchMeta = next
+                    root.results = root.array(next.results)
+                    root.searchState = next.status === "ready" ? "ready" : "error"
+                    root.searchMessage = next.message || ""
+                } catch (error) {
+                    root.searchState = "error"; root.searchMessage = "Search unavailable. Check Intelligence and retry."
+                }
+            }
+        }
+        onExited: function(code, status) {
+            if (code !== 0 && root.requestedProject === root.project && root.requestedMode === root.mode) {
+                root.searchState = "error"; root.searchMessage = "Search unavailable. Check Intelligence and retry."
+            }
         }
     }
-    Process {
-        id: maintenanceProcess
-        stderr: StdioCollector { onStreamFinished: root.actionErr = text }
-        onRunningChanged: { if (!running) { root.statusMessage = root.actionErr.trim() || "Knowledge operation completed"; root.refresh() } }
-    }
-    Timer { running: root.opened; repeat: true; interval: 15000; onTriggered: root.refresh() }
-    Timer {
-        running: root.opened
-        repeat: true
-        interval: 2000
-        onTriggered: root.refreshAccountState()
-    }
+    Timer { running: root.opened; repeat: true; interval: 60000; onTriggered: { if (!stateProcess.running) stateProcess.running = true } }
+    Timer { running: root.opened; repeat: true; interval: 2000; onTriggered: root.clock = Date.now() }
 
     TemporaryPanel {
-        id: agentsWindow
+        id: intelligenceWindow
         panelName: "agents"
-        onDismissed: root.close()
         opened: root.opened
+        onDismissed: root.close()
         anchors { top: true; bottom: true; right: true }
-        margins { top: 42; bottom: 12; right: 12 }
-        implicitWidth: 760
+        margins { top: QuattroTheme.Theme.barHeight + 12; bottom: 12; right: 12 }
+        implicitWidth: Math.min(760, (screen ? screen.width : 784) - 24)
         color: "transparent"
         Rectangle {
             anchors.fill: parent
-            color: QuattroTheme.Theme.background; border.width: 1; border.color: QuattroTheme.Theme.border
+            color: QuattroTheme.Theme.background
+            border.width: 1
+            border.color: QuattroTheme.Theme.panelBorder
             MouseArea { anchors.fill: parent }
             FocusScope {
                 id: keyScope
-                anchors.fill: parent; focus: agentsWindow.visible
+                anchors.fill: parent
+                focus: intelligenceWindow.visible
+                Shortcut { sequence: "Escape"; context: Qt.WindowShortcut; onActivated: root.close() }
+                Shortcut { sequence: "F5"; context: Qt.WindowShortcut; onActivated: root.refresh() }
                 Shortcut {
-                    sequence: "Ctrl+K"
-                    context: Qt.WindowShortcut
-                    onActivated: {
-                        root.paletteOpen = true
-                        root.paletteIndex = 0
-                        paletteQuery.text = ""
-                        Qt.callLater(() => paletteQuery.forceActiveFocus())
-                    }
+                    sequence: "Ctrl+K"; context: Qt.WindowShortcut
+                    onActivated: { root.page = "knowledge"; Qt.callLater(() => root.queryEditor ? root.queryEditor.forceActiveFocus() : undefined) }
                 }
-                Keys.onEscapePressed: {
-                    if (root.paletteOpen) root.paletteOpen = false
-                    else if (root.confirmOpen) root.confirmOpen = false
-                    else if (root.page === "task" || root.page === "approval") root.go("home")
-                    else root.close()
-                }
-                Keys.onPressed: event => {
-                    if (event.key === Qt.Key_K && (event.modifiers & Qt.ControlModifier)) { root.paletteOpen = true; root.paletteIndex = 0; paletteQuery.text = ""; Qt.callLater(() => paletteQuery.forceActiveFocus()); event.accepted = true }
-                    else if (event.key === Qt.Key_Slash && root.page === "home" && root.promptEditor) { root.promptEditor.forceActiveFocus(); event.accepted = true }
-                    else if (event.key === Qt.Key_F5) { root.refresh(); event.accepted = true }
-                }
-                RowLayout {
-                    anchors.fill: parent; anchors.margins: 14; spacing: 12
-                    Rectangle {
-                        Layout.preferredWidth: 128; Layout.fillHeight: true
-                        color: QuattroTheme.Theme.surface; border.width: 1; border.color: QuattroTheme.Theme.border
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: QuattroTheme.Theme.spaceXl
+                    spacing: QuattroTheme.Theme.spaceLg
+                    RowLayout {
+                        Layout.fillWidth: true
                         ColumnLayout {
-                            anchors.fill: parent; anchors.margins: 10; spacing: 7
-                            Text { text: "QUATTRO"
-                            color: QuattroTheme.Theme.textStrong
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 15
-                            font.bold: true }
-                            Text { text: "CONTROL CENTER"
-                            color: QuattroTheme.Theme.textMuted
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8 }
-                            Rectangle { Layout.fillWidth: true
-                            implicitHeight: 1
-                            color: QuattroTheme.Theme.border }
-                            NavButton { label: "󰋜  Home"
-                            target: "home" }
-                            NavButton { label: "󰒓  Tasks"
-                            target: "tasks" }
-                            NavButton { label: "󰔚  Sessions"
-                            target: "sessions" }
-                            NavButton { label: "󰈙  Knowledge"
-                            target: "knowledge" }
-                            NavButton { label: "󰒓  System"
-                            target: "system" }
-                            Item { Layout.fillHeight: true }
-                            ActionButton { label: "Ctrl+K Commands"
                             Layout.fillWidth: true
-                            onClicked: { root.paletteOpen = true
-                            Qt.callLater(() => paletteQuery.forceActiveFocus()) } }
-                            Text { text: "Esc close · F5 refresh"
-                            color: QuattroTheme.Theme.textDim
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 7
-                            wrapMode: Text.Wrap
-                            Layout.fillWidth: true }
+                            spacing: 4
+                            Label { text: "Intelligence"; font.pixelSize: 26; font.weight: Font.Medium; color: QuattroTheme.Theme.textStrong }
+                            Label { text: "Knowledge, context & persistent memory"; color: QuattroTheme.Theme.textMuted; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                        }
+                        DesktopButton { text: "Close"; quiet: true; onClicked: root.close() }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Repeater {
+                            model: [{id: "knowledge", title: "Knowledge"}, {id: "usage", title: "Usage limits"}, {id: "status", title: "Status"}]
+                            delegate: DesktopButton {
+                                required property var modelData
+                                text: modelData.title
+                                prominent: root.page === modelData.id
+                                quiet: root.page !== modelData.id
+                                Layout.fillWidth: true
+                                onClicked: root.page = modelData.id
+                            }
                         }
                     }
-                    ColumnLayout {
+                    Rule {}
+                    Loader {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 9
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text { text: root.page === "task" ? "Task Detail" : root.page === "approval" ? "Approval" : root.human(root.page)
-                            color: QuattroTheme.Theme.textStrong
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 18
-                            font.bold: true
-                            Layout.fillWidth: true }
-                            Text { text: root.statusMessage
-                            color: QuattroTheme.Theme.textMuted
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8
-                            elide: Text.ElideLeft
-                            Layout.maximumWidth: 250 }
-                            ActionButton { label: "Refresh"
-                            onClicked: { root.refresh(); root.refreshTitles() } }
-                        }
-                        Rectangle { Layout.fillWidth: true
-                        implicitHeight: 1
-                        color: QuattroTheme.Theme.border }
-                        Loader {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            sourceComponent: root.page === "home" ? homePage : root.page === "tasks" ? tasksPage : root.page === "sessions" ? sessionsPage : root.page === "knowledge" ? knowledgePage : root.page === "system" ? systemPage : root.page === "task" ? taskPage : approvalPage
-                        }
+                        sourceComponent: root.page === "usage" ? usagePage : root.page === "status" ? statusPage : knowledgePage
                     }
-                }
-                Rectangle {
-                    visible: root.paletteOpen
-                    anchors.fill: parent
-                    color: QuattroTheme.Theme.overlay
-                    z: 20
-                    MouseArea { anchors.fill: parent
-                    onClicked: root.paletteOpen = false }
-                    Rectangle {
-                        anchors { top: parent.top
-                        horizontalCenter: parent.horizontalCenter
-                        topMargin: 54 }
-                        width: 500
-                        height: 480
-                        color: QuattroTheme.Theme.background
-                        border.width: 1
-                        border.color: QuattroTheme.Theme.borderStrong
-                        MouseArea { anchors.fill: parent }
-                        ColumnLayout {
-                            id: paletteColumn
-                            anchors.fill: parent
-                            anchors.margins: 12
-                            spacing: 8
-                            Text { text: "QUATTRO COMMANDS"
-                            color: QuattroTheme.Theme.textStrong
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 11
-                            font.bold: true }
-                            Field {
-                                id: paletteQuery
-                                placeholder: "Search actions…"
-                                onTextChanged: root.paletteIndex = 0
-                                Keys.onPressed: event => {
-                                    const rows = root.filteredCommands()
-                                    if (event.key === Qt.Key_Down && rows.length) { root.paletteIndex = Math.min(rows.length - 1, root.paletteIndex + 1)
-                                    event.accepted = true }
-                                    else if (event.key === Qt.Key_Up && rows.length) { root.paletteIndex = Math.max(0, root.paletteIndex - 1)
-                                    event.accepted = true }
-                                    else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && rows.length) { root.dispatch(rows[root.paletteIndex].id)
-                                    event.accepted = true }
-                                }
-                            }
-                            Flickable {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Math.min(420, paletteRows.implicitHeight)
-                                contentWidth: width
-                                contentHeight: paletteRows.implicitHeight
-                                clip: true
-                                ColumnLayout {
-                                    id: paletteRows
-                                    width: parent.width
-                                    Repeater {
-                                        model: root.filteredCommands()
-                                        delegate: ResultRow { required property var modelData
-                                        required property int index
-                                        title: (index === root.paletteIndex ? "› " : "") + modelData.label
-                                        detail: modelData.detail
-                                        onActivated: root.dispatch(modelData.id) }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Rectangle {
-                    visible: root.confirmOpen
-                    anchors.fill: parent
-                    color: QuattroTheme.Theme.overlay
-                    z: 25
-                    MouseArea { anchors.fill: parent
-                    onClicked: {} }
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: 430
-                        implicitHeight: confirmColumn.implicitHeight + 28
-                        color: QuattroTheme.Theme.background
-                        border.width: 1
-                        border.color: root.approvalDecision === "approve" ? QuattroTheme.Theme.warning : QuattroTheme.Theme.danger
-                        ColumnLayout {
-                            id: confirmColumn
-                            anchors { left: parent.left
-                            right: parent.right
-                            top: parent.top
-                            margins: 14 }
-                            spacing: 10
-                            Text { text: root.approvalDecision === "approve" ? "Confirm approval" : "Confirm rejection"
-                            color: QuattroTheme.Theme.textStrong
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 14
-                            font.bold: true }
-                            Text { text: root.selectedApproval ? root.selectedApproval.confirmationSummary : ""
-                            color: QuattroTheme.Theme.text
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 10
-                            wrapMode: Text.Wrap
-                            Layout.fillWidth: true }
-                            Text { text: "This resolves the durable Quattro approval. It does not bypass policy."
-                            color: QuattroTheme.Theme.textMuted
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8
-                            wrapMode: Text.Wrap
-                            Layout.fillWidth: true }
-                            RowLayout { ActionButton { label: "Confirm"
-                            accent: true
-                            onClicked: root.confirmApproval() }
-                            ActionButton { label: "Cancel"
-                            onClicked: root.confirmOpen = false }
-                            Item { Layout.fillWidth: true } }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Component {
-        id: homePage
-        Flickable {
-            contentWidth: width
-            contentHeight: homeColumn.implicitHeight
-            clip: true
-            ColumnLayout {
-                id: homeColumn
-                width: parent.width
-                spacing: 10
-                SectionLabel { text: "QUICK PROMPT" }
-                Card {
-                    implicitHeight: promptColumn.implicitHeight + 22
-                    ColumnLayout {
-                        id: promptColumn
-                        anchors.fill: parent
-                        anchors.margins: 11
-                        spacing: 8
-                        RowLayout { ActionButton { label: "AUTO"
-                        accent: root.selectedAgent === "auto"
-                        onClicked: root.selectedAgent = "auto" }
-                        ActionButton { label: "CODEX"
-                        accent: root.selectedAgent === "codex"
-                        onClicked: root.selectedAgent = "codex" }
-                        ActionButton { label: "PI"
-                        accent: root.selectedAgent === "pi"
-                        onClicked: root.selectedAgent = "pi" }
-                        Item { Layout.fillWidth: true }
-                        Text { text: root.object(root.dashboard.project).name || "Current project"
-                        color: QuattroTheme.Theme.textMuted
-                        font.family: "JetBrainsMono Nerd Font"
-                        font.pixelSize: 8 } }
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 102
-                            color: QuattroTheme.Theme.surfaceRaised
-                            border.width: promptInput.activeFocus ? 1 : 0
-                            border.color: QuattroTheme.Theme.accent
-                            TextEdit {
-                                id: promptInput
-                                Component.onCompleted: root.promptEditor = promptInput
-                                Component.onDestruction: { if (root.promptEditor === promptInput) root.promptEditor = null }
-                                text: root.promptDraft
-                                onTextChanged: { if (root.promptDraft !== text) root.promptDraft = text }
-                                anchors.fill: parent
-                                anchors.margins: 10
-                                color: QuattroTheme.Theme.textStrong
-                                selectionColor: QuattroTheme.Theme.accentMuted
-                                font.family: "JetBrainsMono Nerd Font"
-                                font.pixelSize: 11
-                                wrapMode: TextEdit.Wrap
-                                Keys.onPressed: event => { if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !(event.modifiers & Qt.ShiftModifier)) { root.submitPrompt()
-                                event.accepted = true } }
-                            }
-                            Text { visible: !promptInput.text.length
-                            anchors { left: parent.left
-                            top: parent.top
-                            margins: 10 }
-                            text: "Ask Quattro to implement, inspect, repair, or continue…\nEnter submits · Shift+Enter adds a line"
-                            color: QuattroTheme.Theme.textDim
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 9 }
-                        }
-                        RowLayout { ActionButton { label: "Submit"
-                        accent: true
-                        enabled: !actionProcess.running
-                        onClicked: root.submitPrompt() }
-                        Text { text: "AUTO is resolved by Quattro."
-                        color: QuattroTheme.Theme.textMuted
-                        font.family: "JetBrainsMono Nerd Font"
-                        font.pixelSize: 8 }
-                        Item { Layout.fillWidth: true } }
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 10
-                    Card {
+                    Rule {}
+                    RowLayout {
                         Layout.fillWidth: true
-                        implicitHeight: agentColumn.implicitHeight + 22
-                        ColumnLayout { id: agentColumn
-                        anchors.fill: parent
-                        anchors.margins: 11
-                        spacing: 7
-                        SectionLabel { text: "AGENT STATUS" }
-                        AgentRow { name: "Codex"
-                        state: root.agentState("codex") }
-                        AgentRow { name: "Pi"
-                        state: root.agentState("pi") } }
-                    }
-                    Card {
-                        Layout.fillWidth: true
-                        implicitHeight: projectColumn.implicitHeight + 22
-                        ColumnLayout {
-                            id: projectColumn
-                            anchors.fill: parent
-                            anchors.margins: 11
-                            spacing: 5
-                            SectionLabel { text: "CURRENT PROJECT" }
-                            Text { text: root.object(root.dashboard.project).name || "Unavailable"
-                            color: QuattroTheme.Theme.textStrong
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 11
-                            font.bold: true }
-                            Text { text: (root.object(root.dashboard.project).branch || "detached") + " · " + root.shortId(root.object(root.dashboard.project).commitSha)
-                            color: QuattroTheme.Theme.textMuted
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8 }
-                            Text { text: root.object(root.dashboard.project).dirty ? root.object(root.dashboard.project).changedFileCount + " changed files" : "Working tree clean"
-                            color: root.object(root.dashboard.project).dirty ? QuattroTheme.Theme.warning : QuattroTheme.Theme.success
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8 }
-                            RowLayout { ActionButton { label: "Open in Zed"
-                            enabled: root.object(root.dashboard.project).zedAvailable === true
-                            onClicked: root.invoke(["open", root.object(root.dashboard.project).repository], "zed") }
-                            ActionButton { label: "Review Diff"
-                            enabled: root.object(root.dashboard.project).dirty === true && root.object(root.dashboard.project).zedAvailable === true
-                            onClicked: root.invoke(["diff", "--directory", root.object(root.dashboard.project).repository], "zed") } }
-                        }
+                        Label { text: root.dashboard.status === "ready" ? "Local Intelligence · " + root.dashboard.retrievalMode : stateProcess.running ? "Loading Intelligence…" : "Intelligence unavailable"; color: root.dashboard.status === "ready" ? QuattroTheme.Theme.textMuted : QuattroTheme.Theme.warning; Layout.fillWidth: true; elide: Text.ElideRight }
+                        Label { text: "Ctrl+K search · F5 refresh"; visible: !root.compact; color: QuattroTheme.Theme.textMuted }
                     }
                 }
-                SectionLabel { text: "CODEX ACCOUNTS & NATIVE OMP LIMITS" }
-                Card {
-                    implicitHeight: accountLimitsColumn.implicitHeight + 22
-                    ColumnLayout {
-                        id: accountLimitsColumn
-                        anchors.fill: parent
-                        anchors.margins: 11
-                        spacing: 7
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Repeater {
-                                model: root.array(root.dashboard.accounts)
-                                delegate: ActionButton {
-                                    required property var modelData
-                                    label: modelData.alias + (modelData.authenticated ? "" : " · auth required")
-                                    accent: modelData.id === root.dashboard.activeAccount
-                                    enabled: modelData.enabled && modelData.available && modelData.authenticated && !actionProcess.running
-                                    onClicked: root.invoke(["account", "set", modelData.id], "account")
-                                }
-                            }
-                            Item { Layout.fillWidth: true }
-                            ActionButton {
-                                label: NativeUsage.loading ? "Refreshing…" : "Refresh native limits"
-                                enabled: !NativeUsage.loading
-                                onClicked: NativeUsage.refresh()
-                            }
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text {
-                                text: (root.nativeUsage.alias || "omp · Codex")
-                                      + " · " + (root.nativeUsage.plan || "plan unavailable")
-                                color: QuattroTheme.Theme.textStrong
-                                font.family: "JetBrainsMono Nerd Font"
-                                font.pixelSize: 9
-                                font.bold: true
-                                Layout.fillWidth: true
-                            }
-                            Text {
-                                text: root.nativeUsage.status === "live" ? "LIVE"
-                                    : root.nativeUsage.status === "stale" ? "SAVED" : "UNAVAILABLE"
-                                color: root.nativeUsage.status === "live" ? QuattroTheme.Theme.success : QuattroTheme.Theme.warning
-                                font.family: "JetBrainsMono Nerd Font"
-                                font.pixelSize: 7
-                                font.bold: true
-                            }
-                        }
-                        UsageMeter {
-                            label: root.object(root.nativeUsage.primary).label || "Primary"
-                            window: root.nativeUsage.primary || null
-                            visible: !!window
-                        }
-                        UsageMeter {
-                            label: root.object(root.nativeUsage.secondary).label || "Secondary"
-                            window: root.nativeUsage.secondary || null
-                            visible: !!window
-                        }
-                        Text {
-                            visible: text.length > 0
-                            text: {
-                                const usage = root.nativeUsage
-                                const message = usage.message || ""
-                                return message + (usage.stale && usage.lastSuccessfulRefresh
-                                    ? " Last updated " + root.age(usage.lastSuccessfulRefresh) + " ago." : "")
-                            }
-                            color: QuattroTheme.Theme.textMuted
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8
-                            wrapMode: Text.Wrap
-                            Layout.fillWidth: true
-                        }
-                    }
-                }
-                SectionLabel { text: "ACTIVE TASK" }
-                TaskSummary { task: root.activeTask() }
-                SectionLabel { text: "PENDING APPROVALS  ·  " + root.array(root.dashboard.approvals).length }
-                Repeater { model: root.array(root.dashboard.approvals).slice(0, 3)
-                delegate: ApprovalRow { required property var modelData
-                approval: modelData } }
-                EmptyState { visible: root.array(root.dashboard.approvals).length === 0
-                title: "No pending approvals"
-                detail: "Approval-bound actions will appear here." }
-                SectionLabel { text: "RECENT TASKS" }
-                Repeater { model: root.array(root.dashboard.tasks).slice(0, 5)
-                delegate: TaskRow { required property var modelData
-                task: modelData } }
-                EmptyState { visible: root.array(root.dashboard.tasks).length === 0
-                title: "No recent tasks"
-                detail: "Start work from Quick Prompt." }
-            }
-        }
-    }
-
-    Component {
-        id: tasksPage
-        Flickable {
-            contentWidth: width
-            contentHeight: taskRows.implicitHeight
-            clip: true
-            ColumnLayout { id: taskRows
-            width: parent.width
-            spacing: 8
-            Text { text: "Durable state and backend-provided capabilities."
-            color: QuattroTheme.Theme.textMuted
-            font.family: "JetBrainsMono Nerd Font"
-            font.pixelSize: 8 }
-            Repeater { model: root.array(root.dashboard.tasks)
-            delegate: TaskRow { required property var modelData
-            task: modelData } }
-            EmptyState { visible: root.array(root.dashboard.tasks).length === 0
-            title: "No durable tasks"
-            detail: "Submit a prompt to create one." } }
-        }
-    }
-
-    Component {
-        id: sessionsPage
-        Flickable {
-            contentWidth: width
-            contentHeight: sessionsColumn.implicitHeight
-            clip: true
-            ColumnLayout {
-                id: sessionsColumn
-                width: parent.width
-                spacing: 8
-                Field {
-                    id: sessionSearch
-                    Component.onCompleted: root.sessionEditor = sessionSearch
-                    Component.onDestruction: { if (root.sessionEditor === sessionSearch) root.sessionEditor = null }
-                    text: root.sessionQuery
-                    onTextChanged: { if (root.sessionQuery !== text) root.sessionQuery = text }
-                    placeholder: "Search title, project, q-session, task, agent…"
-                    onAccepted: {}
-                }
-                SectionLabel { text: "LOGICAL SESSIONS" }
-                Repeater {
-                    model: root.filteredSessions(root.dashboard.logicalSessions)
-                    delegate: Card {
-                        required property var modelData
-                        implicitHeight: logicalColumn.implicitHeight + 20
-                        ColumnLayout {
-                            id: logicalColumn
-                            anchors.fill: parent
-                            anchors.margins: 10
-                            spacing: 4
-                            RowLayout { Layout.fillWidth: true
-                            Text { text: modelData.title || "Agent session"
-                            color: QuattroTheme.Theme.textStrong
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 10
-                            font.bold: true
-                            Layout.fillWidth: true }
-                            StatePill { state: modelData.recoveryState || modelData.sessionHealth || "unknown" } }
-                            Text { text: modelData.repository || modelData.workingDirectory || "Unknown project"
-                            color: QuattroTheme.Theme.textMuted
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8
-                            elide: Text.ElideMiddle
-                            Layout.fillWidth: true }
-                            Text { text: root.shortId(modelData.quattroSessionId) + " · Last active " + (modelData.updatedAt || "unknown") + " · " + (modelData.currentCheckpointId ? "checkpoint available" : "no checkpoint")
-                            color: QuattroTheme.Theme.textDim
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8 }
-                            RowLayout { ActionButton { label: "Resume"
-                            enabled: !!modelData.currentCheckpointId
-                            onClicked: root.launch(["resume", modelData.quattroSessionId]) }
-                            ActionButton { label: "Open Project"
-                            enabled: root.object(root.dashboard.project).zedAvailable === true
-                            onClicked: root.invoke(["open", modelData.repository], "zed") }
-                            Item { Layout.fillWidth: true } }
-                        }
-                    }
-                }
-                EmptyState { visible: root.filteredSessions(root.dashboard.logicalSessions).length === 0
-                title: "No recoverable sessions"
-                detail: root.sessionQuery.length ? "No logical session matches this search." : "Start a new Quattro task." }
-                SectionLabel { text: "RUNNING  ·  " + root.filteredSessions(root.dashboard.sessions).length }
-                Repeater {
-                    model: root.filteredSessions(root.dashboard.sessions)
-                    delegate: Card {
-                        required property var modelData
-                        implicitHeight: 58
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.margins: 9
-                            spacing: 8
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 2
-                                Text { text: modelData.title || ((modelData.agent || "agent").toUpperCase() + " · " + (modelData.projectName || "project"))
-                                color: QuattroTheme.Theme.textStrong
-                                font.family: "JetBrainsMono Nerd Font"
-                                font.pixelSize: 9
-                                font.bold: true
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true }
-                                Text { text: (modelData.agent || "agent").toUpperCase() + " · " + (modelData.projectName || "project") + " · PID " + (modelData.pid || "—")
-                                color: QuattroTheme.Theme.textMuted
-                                font.family: "JetBrainsMono Nerd Font"
-                                font.pixelSize: 7
-                                elide: Text.ElideMiddle
-                                Layout.fillWidth: true }
-                                Text { text: modelData.coordinationSessionId || modelData.quattroSessionId || modelData.sessionId || ""
-                                color: QuattroTheme.Theme.textDim
-                                font.family: "JetBrainsMono Nerd Font"
-                                font.pixelSize: 7
-                                elide: Text.ElideMiddle
-                                Layout.fillWidth: true }
-                            }
-                            ActionButton { label: "Open"
-                            onClicked: root.launch(["sessions", "open", modelData.coordinationSessionId || modelData.sessionId || modelData.taskId]) }
-                            ActionButton { label: "Stop"
-                            enabled: modelData.stoppable === true
-                            onClicked: root.invoke(["sessions", "stop", modelData.coordinationSessionId || modelData.sessionId || modelData.taskId], "session-stop") }
-                        }
-                    }
-                }
-                EmptyState { visible: root.filteredSessions(root.dashboard.sessions).length === 0
-                title: root.sessionQuery.length ? "No running session matches" : "No sessions are running"
-                detail: root.sessionQuery.length ? "Try a title, project, q-session, task, or agent." : "Stopped sessions remain resumable from Logical Sessions." }
             }
         }
     }
 
     Component {
         id: knowledgePage
-        ColumnLayout {
-            spacing: 9
-            RowLayout { ActionButton { label: "Retrieval"
-            accent: root.knowledgeMode === "retrieval"
-            onClicked: root.knowledgeMode = "retrieval" }
-            ActionButton { label: "Memory"
-            accent: root.knowledgeMode === "memory"
-            onClicked: root.knowledgeMode = "memory" }
-            Item { Layout.fillWidth: true } }
-            RowLayout { Layout.fillWidth: true
-            Field { id: knowledgeInput
-            Component.onCompleted: root.knowledgeEditor = knowledgeInput
-            Component.onDestruction: { if (root.knowledgeEditor === knowledgeInput) root.knowledgeEditor = null }
-            text: root.knowledgeQuery
-            onTextChanged: { if (root.knowledgeQuery !== text) root.knowledgeQuery = text }
-            placeholder: root.knowledgeMode === "memory" ? "Search project memory…" : "Search code, symbols, architecture, decisions…"
-            Layout.fillWidth: true
-            onAccepted: root.searchKnowledge() }
-            ActionButton { label: searchProcess.running ? "Searching…" : "Search"
-            accent: true
-            enabled: !searchProcess.running
-            onClicked: root.searchKnowledge() } }
-            Text { text: root.knowledgeMode === "memory" ? "Project-scoped memory evidence only." : "Authority-scoped retrieval
-            hidden context and embeddings stay private."
-            color: QuattroTheme.Theme.textMuted
-            font.family: "JetBrainsMono Nerd Font"
-            font.pixelSize: 8
-            wrapMode: Text.Wrap
-            Layout.fillWidth: true }
-            Flickable {
+        Flickable {
+            contentWidth: width
+            contentHeight: knowledgeContent.implicitHeight
+            clip: true
+            ScrollBar.vertical: ScrollBar {}
+            ColumnLayout {
+            id: knowledgeContent
+            width: parent.width
+            spacing: QuattroTheme.Theme.spaceLg
+            GridLayout {
                 Layout.fillWidth: true
-                Layout.fillHeight: true
-                contentWidth: width
-                contentHeight: knowledgeRows.implicitHeight
-                clip: true
-                ColumnLayout {
-                    id: knowledgeRows
-                    width: parent.width
-                    spacing: 7
+                columns: root.compact ? 1 : 3
+                uniformCellWidths: true
+                columnSpacing: 16
+                rowSpacing: 8
+                Repeater {
+                    model: root.accounts
+                    delegate: ColumnLayout {
+                        required property var modelData
+                        property var window: root.tightest(modelData)
+                        Layout.fillWidth: true
+                        spacing: 4
+                        Label { text: parent.modelData.alias; color: QuattroTheme.Theme.textMuted }
+                        Label { text: parent.window ? root.remaining(parent.window) + "% remaining" : "Unavailable"; font.pixelSize: QuattroTheme.Theme.typeTitle; color: parent.window ? root.readingColor(parent.window) : QuattroTheme.Theme.textMuted }
+                        Label { text: (parent.window ? root.windowName(parent.window) + " · " : "") + (root.quotaState(parent.modelData) === "live" ? "Live" : root.quotaState(parent.modelData) === "stale" ? "Saved" : "Check omp /usage"); color: QuattroTheme.Theme.textMuted; font.pixelSize: QuattroTheme.Theme.typeMeta }
+                    }
+                }
+            }
+            Rule {}
+            GridLayout {
+                Layout.fillWidth: true
+                columns: root.compact ? 1 : 2
+                columnSpacing: 12
+                rowSpacing: 12
+                DesktopCombo {
+                    Layout.fillWidth: true
+                    model: root.projects.map(item => item.id)
+                    currentIndex: Math.max(0, root.projects.findIndex(item => item.id === root.project))
+                    enabled: root.projects.length > 0 && !searchProcess.running
+                    displayText: root.project ? "Project: " + root.project : "No configured project"
+                    Accessible.name: "Intelligence project"
+                    onActivated: root.project = root.projects[currentIndex].id
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
                     Repeater {
-                        model: root.knowledgeResults
-                        delegate: ResultRow {
+                        model: [{id: "knowledge", title: "Evidence"}, {id: "context", title: "Context"}, {id: "memory", title: "Memory"}]
+                        delegate: DesktopButton {
                             required property var modelData
-                            title: modelData.title || modelData.symbol || modelData.source_type || modelData.sourceType || "Evidence"
-                            detail: (modelData.path || modelData.repository || modelData.origin || "") + (modelData.startLine ? ":" + modelData.startLine : "")
-                            body: modelData.content || modelData.snippet || ""
-                            actionLabel: modelData.origin === "repository" ? "Open" : "Inspect"
-                            onActivated: modelData.origin === "repository" && root.requireProject()
-                                ? root.invoke(["retrieval", "open", modelData.id, "--directory", root.projectPath()], "zed")
-                                : root.requireProject() ? root.invoke(["memory", "inspect", modelData.id, "--directory", root.projectPath(), "--json"], "memory-show") : undefined
+                            text: modelData.title
+                            prominent: root.mode === modelData.id
+                            quiet: root.mode !== modelData.id
+                            Layout.fillWidth: true
+                            onClicked: root.mode = modelData.id
                         }
-                    }
-                    EmptyState { visible: root.knowledgeResults.length === 0 && !searchProcess.running
-                    title: "No matching knowledge found"
-                    detail: "Try a filename, symbol, architecture concept, or decision." }
-                    Card {
-                        visible: root.knowledgeMode === "retrieval" && root.object(root.knowledgeMeta).trace !== undefined
-                        implicitHeight: diagnosticsColumn.implicitHeight + 20
-                        ColumnLayout {
-                            id: diagnosticsColumn
-                            anchors.fill: parent
-                            anchors.margins: 10
-                            spacing: 3
-                            SectionLabel { text: "WHY THESE RESULTS" }
-                            Text { text: "Route " + (root.object(root.knowledgeMeta.route).intent || "unknown") + " · semantic " + (root.object(root.knowledgeMeta.route).use_semantic ? "used" : "skipped") + " · graph " + (root.object(root.knowledgeMeta.route).use_graph ? "used" : "skipped")
-                            color: QuattroTheme.Theme.text
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8
-                            wrapMode: Text.Wrap
-                            Layout.fillWidth: true }
-                            Text { text: "Selected " + root.knowledgeResults.length + " · latency " + (root.object(root.knowledgeMeta.trace).latencyMs || root.object(root.knowledgeMeta.trace).latency_ms || "—") + " ms"
-                            color: QuattroTheme.Theme.textMuted
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8 }
-                        }
-                    }
-                    Card {
-                        visible: root.knowledgeMode === "memory" && !!root.object(root.knowledgeMeta).id
-                        implicitHeight: memoryInspectColumn.implicitHeight + 20
-                        ColumnLayout {
-                            id: memoryInspectColumn
-                            anchors.fill: parent
-                            anchors.margins: 10
-                            spacing: 4
-                            SectionLabel { text: "MEMORY DETAIL" }
-                            Text { text: root.object(root.knowledgeMeta).source_type || root.object(root.knowledgeMeta).sourceType || "Memory"
-                            color: QuattroTheme.Theme.accent
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8
-                            font.bold: true }
-                            Text { text: root.object(root.knowledgeMeta).content || "No displayable content."
-                            color: QuattroTheme.Theme.text
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 8
-                            wrapMode: Text.Wrap
-                            Layout.fillWidth: true }
-                            Text { text: root.shortId(root.object(root.knowledgeMeta).id)
-                            color: QuattroTheme.Theme.textDim
-                            font.family: "JetBrainsMono Nerd Font"
-                            font.pixelSize: 7 }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Component {
-        id: systemPage
-        Flickable {
-            contentWidth: width
-            contentHeight: systemColumn.implicitHeight
-            clip: true
-            ColumnLayout {
-                id: systemColumn
-                width: parent.width
-                spacing: 9
-                SectionLabel { text: "AGENTS" }
-                Card { implicitHeight: 58
-                RowLayout { anchors.fill: parent
-                anchors.margins: 11
-                AgentRow { name: "Codex"
-                state: root.agentState("codex")
-                Layout.fillWidth: true }
-                AgentRow { name: "Pi"
-                state: root.agentState("pi")
-                Layout.fillWidth: true } } }
-                SectionLabel { text: "RETRIEVAL" }
-                Card {
-                    implicitHeight: metrics.implicitHeight + 22
-                    GridLayout {
-                        id: metrics
-                        anchors.fill: parent
-                        anchors.margins: 11
-                        columns: 2
-                        columnSpacing: 20
-                        rowSpacing: 5
-                        Metric { label: "Embedding"
-                        value: root.object(root.dashboard.retrieval).embeddingBackend || root.object(root.dashboard.retrieval).embedding_backend || "quattro-feature-hash-v1" }
-                        Metric { label: "Documents"
-                        value: String(root.object(root.dashboard.retrieval).documents || root.object(root.dashboard.retrieval).documentCount || 0) }
-                        Metric { label: "Indexed files"
-                        value: String(root.object(root.dashboard.retrieval).indexedFiles || root.object(root.dashboard.retrieval).files || "—") }
-                        Metric { label: "Graph edges"
-                        value: String(root.object(root.dashboard.retrieval).graphEdges || root.object(root.dashboard.retrieval).edges || "—") }
-                        Metric { label: "Database"
-                        value: String(root.object(root.dashboard.retrieval).databaseBytes || root.object(root.dashboard.retrieval).databaseSize || "—") }
-                        Metric { label: "Cache hits"
-                        value: String(root.object(root.dashboard.retrieval).cacheHits || root.object(root.dashboard.retrieval).cache_hits || "—") }
-                    }
-                }
-                RowLayout { ActionButton { label: maintenanceProcess.running ? "Maintenance running…" : "Reindex Knowledge"
-                enabled: !maintenanceProcess.running
-                onClicked: root.startMaintenance("reindex") }
-                ActionButton { label: "Run Retrieval Benchmark"
-                enabled: !maintenanceProcess.running
-                onClicked: root.startMaintenance("benchmark") }
-                Item { Layout.fillWidth: true } }
-                Text { text: "Maintenance never runs automatically. Production embedding remains quattro-feature-hash-v1."
-                color: QuattroTheme.Theme.textMuted
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 8
-                wrapMode: Text.Wrap
-                Layout.fillWidth: true }
-                SectionLabel { text: "MEMORY" }
-                Card { implicitHeight: 58
-                RowLayout { anchors.fill: parent
-                anchors.margins: 11
-                StatePill { state: root.object(root.dashboard.memory).status === "ok" ? "Healthy" : root.object(root.dashboard.memory).status || "Unavailable" }
-                Text { text: "Display-safe institutional and project memory projections only."
-                color: QuattroTheme.Theme.textMuted
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 8
-                Layout.fillWidth: true } } }
-                SectionLabel { text: "ZED" }
-                Card { implicitHeight: 58
-                RowLayout { anchors.fill: parent
-                anchors.margins: 11
-                StatePill { state: root.object(root.dashboard.project).zedAvailable ? "Ready" : "Unavailable" }
-                Text { text: root.object(root.dashboard.project).zedAvailable ? "Quattro wrappers enforce project and file restrictions." : "Zed is not installed and will not be installed automatically."
-                color: QuattroTheme.Theme.textMuted
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 8
-                Layout.fillWidth: true } } }
-            }
-        }
-    }
-
-    Component {
-        id: taskPage
-        Flickable {
-            contentWidth: width
-            contentHeight: taskDetail.implicitHeight
-            clip: true
-            ColumnLayout {
-                id: taskDetail
-                width: parent.width
-                spacing: 9
-                property var task: root.object(root.object(root.selectedTaskDetails).task)
-                property var caps: root.object(task.capabilities)
-                Card {
-                    implicitHeight: summary.implicitHeight + 22
-                    ColumnLayout {
-                        id: summary
-                        anchors.fill: parent
-                        anchors.margins: 11
-                        spacing: 5
-                        RowLayout { Layout.fillWidth: true
-                        Text { text: taskDetail.task.title || "Untitled task"
-                        color: QuattroTheme.Theme.textStrong
-                        font.family: "JetBrainsMono Nerd Font"
-                        font.pixelSize: 13
-                        font.bold: true
-                        wrapMode: Text.Wrap
-                        Layout.fillWidth: true }
-                        StatePill { state: taskDetail.task.state || "unknown" } }
-                        Text { text: (taskDetail.task.agent || "agent") + " · " + (taskDetail.task.projectName || "project") + " · " + root.age(taskDetail.task.createdAt)
-                        color: QuattroTheme.Theme.textMuted
-                        font.family: "JetBrainsMono Nerd Font"
-                        font.pixelSize: 8 }
-                        Text { text: taskDetail.task.terminalSummary || "Current step: " + (taskDetail.task.phase || taskDetail.task.state || "unknown")
-                        color: QuattroTheme.Theme.text
-                        font.family: "JetBrainsMono Nerd Font"
-                        font.pixelSize: 9
-                        wrapMode: Text.Wrap
-                        Layout.fillWidth: true }
-                        Text { text: "Validation " + (root.object(taskDetail.task.validation).status || taskDetail.task.validation || "Not Run") + " · session " + root.shortId(taskDetail.task.quattroSessionId)
-                        color: QuattroTheme.Theme.accent
-                        font.family: "JetBrainsMono Nerd Font"
-                        font.pixelSize: 8 }
                     }
                 }
                 RowLayout {
                     Layout.fillWidth: true
-                    ActionButton { label: "Open Project"
-                    enabled: taskDetail.caps.openProject && root.object(root.dashboard.project).zedAvailable
-                    onClicked: root.invoke(["open", taskDetail.task.projectPath], "zed") }
-                    ActionButton { label: "Changed Files"
-                    enabled: taskDetail.caps.openChangedFiles && root.object(root.dashboard.project).zedAvailable
-                    onClicked: root.invoke(["task", "open", taskDetail.task.taskId], "zed") }
-                    ActionButton { label: "Checkpoint"
-                    enabled: taskDetail.caps.checkpoint
-                    onClicked: root.invoke(["checkpoint", taskDetail.task.quattroSessionId, "--task", taskDetail.task.taskId], "checkpoint") }
-                    ActionButton { label: "Resume"
-                    enabled: taskDetail.caps.resume
-                    onClicked: root.launch(["resume", taskDetail.task.quattroSessionId]) }
-                    ActionButton { label: "Retry"
-                    enabled: taskDetail.caps.retry
-                    onClicked: root.invoke(["task", "retry", taskDetail.task.taskId, "--json"], "retry") }
-                    ActionButton { label: "Cancel"
-                    enabled: taskDetail.caps.cancel
-                    onClicked: root.invoke(["task", "cancel", taskDetail.task.taskId, "--json"], "cancel") }
+                    Layout.columnSpan: root.compact ? 1 : 2
+                    spacing: 12
+                    DesktopField {
+                        id: queryInput
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: QuattroTheme.Theme.primaryTarget
+                        text: root.queryDraft
+                        placeholderText: root.mode === "memory" ? "Recall project memory…" : "Search code, concepts, decisions…"
+                        Accessible.name: "Search Intelligence"
+                        maximumLength: 4096
+                        onTextChanged: { if (root.queryDraft !== text) root.queryDraft = text }
+                        onAccepted: root.search()
+                        Component.onCompleted: root.queryEditor = queryInput
+                        Component.onDestruction: { if (root.queryEditor === queryInput) root.queryEditor = null }
+                    }
+                    DesktopButton {
+                        text: searchProcess.running ? "Searching…" : "Search"
+                        prominent: true
+                        Layout.preferredWidth: 116
+                        Layout.preferredHeight: QuattroTheme.Theme.primaryTarget
+                        enabled: !searchProcess.running && !!root.project && !!root.queryDraft.trim()
+                        onClicked: root.search()
+                    }
                 }
-                SectionLabel { text: "WORKFLOW" }
-                Card { visible: !!taskDetail.task.workflow
-                implicitHeight: 54
-                RowLayout { anchors.fill: parent
-                anchors.margins: 11
-                Text { text: taskDetail.task.workflow || "Single task"
-                color: QuattroTheme.Theme.textStrong
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 9
-                Layout.fillWidth: true }
-                Text { text: root.object(taskDetail.task.children).completed + "/" + root.object(taskDetail.task.children).total + " stages"
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: root.dashboard.status !== "ready" ? root.dashboard.message || "Loading the local core…"
+                    : root.retrievalInfo.semanticAvailable ? "Hybrid RAG · lexical + semantic retrieval"
+                    : "Lexical RAG · semantic retrieval unavailable for this search"
+                color: root.dashboard.status === "unavailable" ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
+            }
+            Label {
+                visible: root.mode === "context" && root.searchState === "ready"
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: "Cited context · " + (root.searchMeta.budget ? root.searchMeta.budget.estimated_used || 0 : 0)
+                    + " / 3000 bytes · " + (root.searchMeta.conflicts || 0) + " conflicts · " + (root.searchMeta.outdated || 0) + " outdated"
                 color: QuattroTheme.Theme.textMuted
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 8 } } }
-                Repeater { model: root.array(root.object(root.selectedTaskDetails).children)
-                delegate: ResultRow { required property var modelData
-                title: modelData.title || root.object(modelData.metadata).role || "Workflow stage"
-                detail: (modelData.agent || "agent") + " · " + root.human(modelData.state)
-                actionLabel: "View"
-                onActivated: root.showTask(modelData.taskId || modelData.id) } }
-                SectionLabel { text: "RECENT EVENTS" }
-                Repeater { model: root.array(root.object(root.selectedTaskDetails).events).slice(-12).reverse()
-                delegate: ResultRow { required property var modelData
-                title: root.human(modelData.type)
-                detail: modelData.createdAt || ""
-                body: root.object(modelData.payload).summary || root.object(modelData.payload).code || ""
-                actionLabel: "" } }
-                EmptyState { visible: root.array(root.object(root.selectedTaskDetails).events).length === 0
-                title: "No recent events"
-                detail: "No display-safe events have been emitted." }
+            }
+                ColumnLayout {
+                    id: evidenceRows
+                    Layout.fillWidth: true
+                    spacing: 16
+                    Label {
+                        Layout.fillWidth: true
+                        visible: root.results.length === 0
+                        wrapMode: Text.Wrap
+                        text: root.searchState === "loading" ? "Searching registered project sources…"
+                            : root.searchState === "error" ? root.searchMessage
+                            : root.searchState === "ready" ? "No matching evidence. Try a filename, symbol or a more specific query."
+                            : root.mode === "context" ? "Build a cited context from project evidence and prior memory within a 3000-byte budget."
+                            : root.mode === "memory" ? "Recall explicitly saved project memories. Verification stays attached to each record."
+                            : "Search registered project knowledge. Results include source paths and citations; nothing here launches an agent."
+                        color: root.searchState === "error" ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
+                    }
+                    Repeater {
+                        model: root.results
+                        delegate: ColumnLayout {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Label { text: parent.modelData.title; font.pixelSize: QuattroTheme.Theme.typeLabel; font.bold: true; color: QuattroTheme.Theme.textStrong; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                text: parent.modelData.path ? parent.modelData.source + " · " + parent.modelData.path
+                                    + (parent.modelData.line ? ":" + parent.modelData.line + (parent.modelData.endLine ? "–" + parent.modelData.endLine : "") : "")
+                                    + " · " + parent.modelData.provenance
+                                    : "Memory · " + (parent.modelData.verification || "Unverified")
+                                color: QuattroTheme.Theme.textMuted
+                                font.pixelSize: QuattroTheme.Theme.typeMeta
+                            }
+                            TextEdit {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: contentHeight
+                                text: parent.modelData.content
+                                readOnly: true
+                                selectByMouse: true
+                                wrapMode: TextEdit.Wrap
+                                textFormat: TextEdit.PlainText
+                                color: QuattroTheme.Theme.text
+                                selectionColor: QuattroTheme.Theme.hover
+                                selectedTextColor: QuattroTheme.Theme.textStrong
+                                font.family: QuattroTheme.Theme.fontFamily
+                                font.pixelSize: QuattroTheme.Theme.typeBody
+                                Accessible.name: "Evidence content"
+                            }
+                            Label { visible: parent.modelData.commit.length > 0; text: "Commit " + parent.modelData.commit.slice(0, 12); color: QuattroTheme.Theme.textMuted; font.pixelSize: QuattroTheme.Theme.typeMeta }
+                            Label { visible: parent.modelData.references.length > 0; text: parent.modelData.references.join(" · "); Layout.fillWidth: true; wrapMode: Text.Wrap; color: QuattroTheme.Theme.textMuted; font.pixelSize: QuattroTheme.Theme.typeMeta }
+                            Rule {}
+                        }
+                    }
+                }
+        }
+        }
+    }
+
+    Component {
+        id: usagePage
+        Flickable {
+            contentWidth: width
+            contentHeight: usageRows.implicitHeight
+            clip: true
+            ScrollBar.vertical: ScrollBar {}
+            ColumnLayout {
+                id: usageRows
+                width: parent.width
+                spacing: QuattroTheme.Theme.spaceXl
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: "OpenAI Codex · omp"; font.pixelSize: QuattroTheme.Theme.typeTitle; color: QuattroTheme.Theme.textStrong; Layout.fillWidth: true }
+                    DesktopButton { text: NativeUsage.loading ? "Refreshing…" : "Refresh"; enabled: !NativeUsage.loading; onClicked: NativeUsage.refresh() }
+                }
+                Label { text: "Read-only limits. Your active login stays unchanged."; color: QuattroTheme.Theme.textMuted; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                Repeater {
+                    model: root.accounts
+                    delegate: ColumnLayout {
+                        id: accountRow
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 12
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: accountRow.modelData.alias; font.pixelSize: QuattroTheme.Theme.typeTitle; color: QuattroTheme.Theme.textStrong }
+                            Label { text: accountRow.modelData.plan || "Plan unavailable"; color: QuattroTheme.Theme.textMuted; Layout.fillWidth: true }
+                            Label { text: root.quotaState(accountRow.modelData) === "live" ? "Live" : root.quotaState(accountRow.modelData) === "stale" ? "Saved" : "Unavailable"; color: root.quotaState(accountRow.modelData) === "live" ? QuattroTheme.Theme.textMuted : QuattroTheme.Theme.warning }
+                        }
+                        Repeater {
+                            model: [accountRow.modelData.primary, accountRow.modelData.secondary].filter(window => !!window)
+                            delegate: UsageMeter { required property var modelData; window: modelData }
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            text: accountRow.modelData.primary ? root.age(accountRow.modelData.lastSuccessfulRefresh)
+                                + (root.quotaState(accountRow.modelData) === "stale" ? " · saved limits, refresh in omp /usage" : "")
+                                : "No quota reported. Check omp /usage and /login " + accountRow.modelData.provider + "."
+                            color: QuattroTheme.Theme.textMuted
+                            font.pixelSize: QuattroTheme.Theme.typeMeta
+                        }
+                        Rule {}
+                    }
+                }
+                Label { visible: root.accounts.length === 0; text: NativeUsage.loading ? "Loading native account limits…" : "Native usage unavailable. Refresh or check omp /usage."; color: QuattroTheme.Theme.textMuted; Layout.fillWidth: true; wrapMode: Text.Wrap }
             }
         }
     }
 
     Component {
-        id: approvalPage
-        ColumnLayout {
-            spacing: 10
-            Card {
-                implicitHeight: approvalDetail.implicitHeight + 24
-                ColumnLayout { id: approvalDetail
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 7
-                Text { text: root.selectedApproval ? root.human(root.selectedApproval.scope) : "Approval"
-                color: QuattroTheme.Theme.warning
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 14
-                font.bold: true }
-                Text { text: root.selectedApproval ? root.selectedApproval.confirmationSummary : "Approval details unavailable"
-                color: QuattroTheme.Theme.textStrong
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 10
-                wrapMode: Text.Wrap
-                Layout.fillWidth: true }
-                Text { text: root.selectedApproval ? "Task " + root.shortId(root.selectedApproval.taskId) + " · requested " + root.selectedApproval.requestedAt : ""
-                color: QuattroTheme.Theme.textMuted
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 8 } }
+        id: statusPage
+        Flickable {
+            contentWidth: width
+            contentHeight: statusRows.implicitHeight
+            clip: true
+            ScrollBar.vertical: ScrollBar {}
+            ColumnLayout {
+                id: statusRows
+                width: parent.width
+                spacing: 16
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: "Local core"; font.pixelSize: QuattroTheme.Theme.typeTitle; color: QuattroTheme.Theme.textStrong; Layout.fillWidth: true }
+                    DesktopButton { text: stateProcess.running ? "Refreshing…" : "Refresh"; enabled: !stateProcess.running; onClicked: root.refresh() }
+                }
+                Label { visible: root.dashboard.status !== "ready"; text: root.dashboard.message || "Loading local Intelligence…"; Layout.fillWidth: true; wrapMode: Text.Wrap; color: QuattroTheme.Theme.warning }
+                Metric { label: "Retrieval"; value: root.dashboard.retrievalMode || "Unavailable" }
+                Metric { label: "Semantic backend"; value: root.dashboard.embeddingBackend || "Unavailable" }
+                Metric { label: "Knowledge storage"; value: root.dashboard.database || "Unavailable" }
+                Metric { label: "Memory storage"; value: root.dashboard.memoryDatabase || "Unavailable" }
+                Rule {}
+                Repeater {
+                    model: root.projects
+                    delegate: ColumnLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 12
+                        Label { text: parent.modelData.id; font.pixelSize: QuattroTheme.Theme.typeTitle; color: QuattroTheme.Theme.textStrong }
+                        Metric { label: "Indexed files"; value: String(parent.modelData.files === null ? "—" : parent.modelData.files) }
+                        Metric { label: "Documents"; value: String(parent.modelData.documents === null ? "—" : parent.modelData.documents) }
+                        Metric { label: "Saved memories"; value: String(parent.modelData.memories === null ? "—" : parent.modelData.memories) }
+                        Repeater {
+                            model: parent.modelData.sources
+                            delegate: Label { required property var modelData; text: modelData.id + " · " + root.age(modelData.indexedAt); Layout.fillWidth: true; wrapMode: Text.Wrap; color: QuattroTheme.Theme.textMuted }
+                        }
+                        Rule {}
+                    }
+                }
+                Label { text: "Only registered project sources are searched. Indexing and memory writes remain explicit core operations; this panel does not execute or route agents."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: QuattroTheme.Theme.textMuted }
             }
-            RowLayout { ActionButton { label: "Approve"
-            accent: true
-            enabled: root.selectedApproval && root.object(root.selectedApproval.capabilities).approve
-            onClicked: root.resolveApproval("approve") }
-            ActionButton { label: "Reject"
-            enabled: root.selectedApproval && root.object(root.selectedApproval.capabilities).reject
-            onClicked: root.resolveApproval("reject") }
-            ActionButton { label: "View Task"
-            onClicked: { if (root.selectedApproval) root.showTask(root.selectedApproval.taskId) } }
-            Item { Layout.fillWidth: true } }
-            Text { text: "Resolution goes through Quattro's durable approval lifecycle and cannot bypass policy."
-            color: QuattroTheme.Theme.textMuted
-            font.family: "JetBrainsMono Nerd Font"
-            font.pixelSize: 8
-            wrapMode: Text.Wrap
-            Layout.fillWidth: true }
-            Item { Layout.fillHeight: true }
         }
     }
 
-    component SectionLabel: Text { color: QuattroTheme.Theme.textMuted
-    font.family: "JetBrainsMono Nerd Font"
-    font.pixelSize: 8
-    font.bold: true
-    Layout.fillWidth: true }
-    component Card: Rectangle { Layout.fillWidth: true
-    implicitHeight: 48
-    color: QuattroTheme.Theme.surface
-    border.width: 1
-    border.color: QuattroTheme.Theme.border }
-    component ActionButton: Rectangle {
-        id: button
-        required property string label
-        property bool accent: false
-        signal clicked()
-        implicitWidth: Math.max(62, buttonText.implicitWidth + 18)
-        implicitHeight: 28
-        color: accent ? QuattroTheme.Theme.accent : buttonMouse.containsMouse ? QuattroTheme.Theme.hover : QuattroTheme.Theme.border
-        opacity: enabled ? 1 : 0.35
-        Text { id: buttonText
-        anchors.centerIn: parent
-        text: button.label
-        color: button.accent ? QuattroTheme.Theme.background : QuattroTheme.Theme.text
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 8
-        font.bold: button.accent }
-        MouseArea { id: buttonMouse
-        anchors.fill: parent
-        enabled: button.enabled
-        hoverEnabled: true
-        cursorShape: button.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-        onClicked: button.clicked() }
+    component Label: Text {
+        textFormat: Text.PlainText
+        font.family: QuattroTheme.Theme.fontFamily
+        font.pixelSize: QuattroTheme.Theme.typeBody
     }
-    component NavButton: Rectangle {
-        id: nav
-        required property string label
-        required property string target
+    component Rule: Rectangle {
         Layout.fillWidth: true
-        implicitHeight: 34
-        color: root.page === target ? QuattroTheme.Theme.accentMuted : navMouse.containsMouse ? QuattroTheme.Theme.hover : "transparent"
-        Rectangle { visible: root.page === target
-        anchors { left: parent.left
-        top: parent.top
-        bottom: parent.bottom }
-        width: 2
-        color: QuattroTheme.Theme.accent }
-        Text { anchors { left: parent.left
-        leftMargin: 9
-        verticalCenter: parent.verticalCenter }
-        text: nav.label
-        color: root.page === target ? QuattroTheme.Theme.textStrong : QuattroTheme.Theme.textMuted
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 9
-        font.bold: root.page === target }
-        MouseArea { id: navMouse
-        anchors.fill: parent
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: root.go(nav.target) }
+        implicitHeight: 1
+        color: QuattroTheme.Theme.border
     }
-    component Field: Rectangle {
-        id: field
-        property alias text: input.text
-        required property string placeholder
-        signal accepted()
-        Layout.fillWidth: true
-        implicitHeight: 36
-        color: QuattroTheme.Theme.surfaceRaised
-        border.width: input.activeFocus ? 1 : 0
-        border.color: QuattroTheme.Theme.accent
-        TextInput { id: input
-        anchors.fill: parent
-        anchors.leftMargin: 10
-        anchors.rightMargin: 10
-        verticalAlignment: TextInput.AlignVCenter
-        color: QuattroTheme.Theme.textStrong
-        selectionColor: QuattroTheme.Theme.accentMuted
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 10
-        onAccepted: field.accepted() }
-        Text { visible: !input.text.length
-        anchors { left: parent.left
-        leftMargin: 10
-        verticalCenter: parent.verticalCenter }
-        text: field.placeholder
-        color: QuattroTheme.Theme.textDim
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 9 }
-        function forceActiveFocus() { input.forceActiveFocus() }
-    }
-    component StatePill: Rectangle {
-        id: pill
-        required property string state
-        implicitWidth: pillText.implicitWidth + 14
-        implicitHeight: 22
-        color: root.stateColor(state)
-        Text { id: pillText
-        anchors.centerIn: parent
-        text: root.human(pill.state)
-        color: QuattroTheme.Theme.background
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 7
-        font.bold: true }
-    }
-    component AgentRow: RowLayout {
-        required property string name
-        required property string state
-        spacing: 7
-        Rectangle { width: 7
-        height: 7
-        color: root.stateColor(parent.state) }
-        Text { text: parent.name
-        color: QuattroTheme.Theme.textStrong
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 10
-        Layout.fillWidth: true }
-        Text { text: parent.state
-        color: root.stateColor(parent.state)
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 8 }
-    }
-    component Metric: ColumnLayout {
+    component Metric: RowLayout {
+        id: metric
         required property string label
         required property string value
         Layout.fillWidth: true
-        spacing: 1
-        Text { text: parent.label
-        color: QuattroTheme.Theme.textMuted
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 7 }
-        Text { text: parent.value
-        color: QuattroTheme.Theme.textStrong
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 9
-        elide: Text.ElideRight
-        Layout.fillWidth: true }
+        Label { text: metric.label; Layout.fillWidth: true; color: QuattroTheme.Theme.textMuted }
+        Label { text: metric.value; color: QuattroTheme.Theme.textStrong }
     }
     component UsageMeter: ColumnLayout {
-        required property string label
+        id: meter
         required property var window
-        property real remaining: window ? Math.max(0, Math.min(100, 100 - Number(window.usedPercent || 0))) : 0
         Layout.fillWidth: true
-        spacing: 3
+        spacing: 8
         RowLayout {
             Layout.fillWidth: true
-            Text {
-                text: parent.parent.label
-                color: QuattroTheme.Theme.text
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 8
-                Layout.fillWidth: true
-            }
-            Text {
-                text: Math.round(parent.parent.remaining) + "% remaining · " + root.resetText(parent.parent.window ? parent.parent.window.resetAt : 0)
-                color: parent.parent.remaining <= 10 ? QuattroTheme.Theme.danger : parent.parent.remaining <= 30 ? QuattroTheme.Theme.warning : QuattroTheme.Theme.textMuted
-                font.family: "JetBrainsMono Nerd Font"
-                font.pixelSize: 8
-            }
+            Label { text: root.windowName(meter.window); Layout.fillWidth: true; color: QuattroTheme.Theme.text }
+            Label { text: root.remaining(meter.window) + "% remaining"; font.pixelSize: QuattroTheme.Theme.typeTitle; color: root.readingColor(meter.window) }
         }
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 5
+            implicitHeight: 6
             color: QuattroTheme.Theme.border
-            Rectangle {
-                width: parent.width * parent.parent.remaining / 100
-                height: parent.height
-                color: parent.parent.remaining <= 10 ? QuattroTheme.Theme.danger : parent.parent.remaining <= 30 ? QuattroTheme.Theme.warning : QuattroTheme.Theme.accent
-            }
+            Rectangle { height: parent.height; width: parent.width * Math.max(0, Math.min(100, root.remaining(meter.window))) / 100; color: root.readingColor(meter.window) }
         }
-    }
-    component EmptyState: Rectangle {
-        id: empty
-        required property string title
-        required property string detail
-        Layout.fillWidth: true
-        implicitHeight: 64
-        color: QuattroTheme.Theme.surface
-        border.width: 1
-        border.color: QuattroTheme.Theme.border
-        Column { anchors.centerIn: parent
-        spacing: 3
-        Text { anchors.horizontalCenter: parent.horizontalCenter
-        text: empty.title
-        color: QuattroTheme.Theme.text
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 9
-        font.bold: true }
-        Text { anchors.horizontalCenter: parent.horizontalCenter
-        text: empty.detail
-        color: QuattroTheme.Theme.textMuted
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 8 } }
-    }
-    component ResultRow: Rectangle {
-        id: result
-        required property string title
-        required property string detail
-        property string body: ""
-        property string actionLabel: "Open"
-        signal activated()
-        Layout.fillWidth: true
-        implicitHeight: resultBody.visible ? 70 : 50
-        color: resultMouse.containsMouse ? QuattroTheme.Theme.hover : QuattroTheme.Theme.surface
-        border.width: 1
-        border.color: QuattroTheme.Theme.border
-        Column { anchors { left: parent.left
-        right: actionText.left
-        leftMargin: 10
-        rightMargin: 8
-        verticalCenter: parent.verticalCenter }
-        spacing: 2
-        Text { text: result.title
-        color: QuattroTheme.Theme.textStrong
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 9
-        font.bold: true
-        elide: Text.ElideRight
-        width: parent.width }
-        Text { text: result.detail
-        color: QuattroTheme.Theme.textMuted
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 7
-        elide: Text.ElideMiddle
-        width: parent.width }
-        Text { id: resultBody
-        visible: result.body.length > 0
-        text: result.body
-        color: QuattroTheme.Theme.textDim
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 7
-        elide: Text.ElideRight
-        width: parent.width } }
-        Text { id: actionText
-        anchors { right: parent.right
-        rightMargin: 10
-        verticalCenter: parent.verticalCenter }
-        text: result.actionLabel
-        color: QuattroTheme.Theme.accent
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 8 }
-        MouseArea { id: resultMouse
-        anchors.fill: parent
-        enabled: result.actionLabel.length > 0
-        hoverEnabled: true
-        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-        onClicked: result.activated() }
-    }
-    component TaskRow: Rectangle {
-        id: taskRow
-        required property var task
-        Layout.fillWidth: true
-        implicitHeight: 58
-        color: taskMouse.containsMouse ? QuattroTheme.Theme.hover : QuattroTheme.Theme.surface
-        border.width: 1
-        border.color: QuattroTheme.Theme.border
-        Column { anchors { left: parent.left
-        right: taskState.left
-        leftMargin: 10
-        rightMargin: 8
-        verticalCenter: parent.verticalCenter }
-        spacing: 3
-        Text { text: taskRow.task.title || "Task"
-        color: QuattroTheme.Theme.textStrong
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 9
-        font.bold: true
-        elide: Text.ElideRight
-        width: parent.width }
-        Text { text: (taskRow.task.agent || "agent") + " · " + (taskRow.task.projectName || "project") + " · " + root.age(taskRow.task.updatedAt || taskRow.task.createdAt)
-        color: QuattroTheme.Theme.textMuted
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 7
-        elide: Text.ElideRight
-        width: parent.width } }
-        StatePill { id: taskState
-        anchors { right: parent.right
-        rightMargin: 10
-        verticalCenter: parent.verticalCenter }
-        state: taskRow.task.state || "unknown" }
-        MouseArea { id: taskMouse
-        anchors.fill: parent
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: root.showTask(taskRow.task.taskId || taskRow.task.id) }
-    }
-    component ApprovalRow: Rectangle {
-        id: approvalRow
-        required property var approval
-        Layout.fillWidth: true
-        implicitHeight: 60
-        color: QuattroTheme.Theme.surface
-        border.width: 1
-        border.color: QuattroTheme.Theme.warning
-        Column { anchors { left: parent.left
-        right: inspectText.left
-        leftMargin: 10
-        rightMargin: 8
-        verticalCenter: parent.verticalCenter }
-        spacing: 3
-        Text { text: root.human(approvalRow.approval.scope)
-        color: QuattroTheme.Theme.warning
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 8
-        font.bold: true }
-        Text { text: approvalRow.approval.confirmationSummary
-        color: QuattroTheme.Theme.textStrong
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 8
-        elide: Text.ElideRight
-        width: parent.width } }
-        Text { id: inspectText
-        anchors { right: parent.right
-        rightMargin: 10
-        verticalCenter: parent.verticalCenter }
-        text: "Inspect"
-        color: QuattroTheme.Theme.accent
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 8 }
-        MouseArea { anchors.fill: parent
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: root.showApproval(approvalRow.approval) }
-    }
-    component TaskSummary: Card {
-        id: activeCard
-        required property var task
-        implicitHeight: task ? activeColumn.implicitHeight + 22 : 64
-        ColumnLayout { id: activeColumn
-        visible: !!activeCard.task
-        anchors.fill: parent
-        anchors.margins: 11
-        spacing: 5
-        RowLayout { Layout.fillWidth: true
-        Text { text: activeCard.task ? activeCard.task.title : ""
-        color: QuattroTheme.Theme.textStrong
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 11
-        font.bold: true
-        Layout.fillWidth: true }
-        StatePill { state: activeCard.task ? activeCard.task.state : "idle" } }
-        Text { text: activeCard.task ? (activeCard.task.agent || "agent") + " · " + (activeCard.task.projectName || "project") + " · " + root.age(activeCard.task.createdAt) : ""
-        color: QuattroTheme.Theme.textMuted
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 8 }
-        RowLayout { ActionButton { label: "View"
-        onClicked: root.showTask(activeCard.task.taskId || activeCard.task.id) }
-        ActionButton { label: "Open Code"
-        enabled: root.object(root.dashboard.project).zedAvailable === true
-        onClicked: root.invoke(["task", "open", activeCard.task.taskId || activeCard.task.id], "zed") }
-        Item { Layout.fillWidth: true } } }
-        Text { visible: !activeCard.task
-        anchors.centerIn: parent
-        text: "Quattro is idle. Start a task from Quick Prompt."
-        color: QuattroTheme.Theme.textMuted
-        font.family: "JetBrainsMono Nerd Font"
-        font.pixelSize: 9 }
+        Label { text: root.resetText(meter.window.resetAt); font.pixelSize: QuattroTheme.Theme.typeMeta; color: QuattroTheme.Theme.textMuted; Layout.fillWidth: true; wrapMode: Text.Wrap }
     }
 }

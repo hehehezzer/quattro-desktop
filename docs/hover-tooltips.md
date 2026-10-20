@@ -1,5 +1,7 @@
 # Hover hints
 
+> Retained historical desktop component. Excluded from the Intelligence Core package; no desktop runtime or visual surface was changed by the intelligence rebuild.
+
 `components/shared/HoverTooltip.qml` presents passive hints in the source control’s monitor. It uses a `PanelWindow` with an empty `Region` input mask, no keyboard focus, overlay layer, and ignored exclusive zone. It never owns pointer actions. The source retains clicks, keyboard commands, and Accessible labels.
 
 Text is plain, wraps within the selected monitor, and follows current Theme body/font/surface/border tokens. No transition animation is used. The hint opens after the hover delay, opens immediately on focus, closes on leaving the target/focus or disabling/hiding it, and dismisses on Escape while its source window has keyboard focus. Placement leaves 16 logical pixels around the pointer and avoids the full source target; it tries below, above, right, left with an 8 pixel screen inset. It hides when no safe position exists. Layer surfaces resolve documented panel anchors/margins plus window-local item coordinates; Qt global mapping does not reliably expose a Wayland layer’s position. Floating-window sources use global mapping. Multiple hints share arbitration in TooltipPlacement.js. Only displayed hints sample position, every 50 ms, for scrolling and window movement.

@@ -11,8 +11,6 @@ Scope {
     id: root
 
     property string page: "main"
-    property string agentCommand: Quickshell.env("QUATTRO_AGENT_COMMAND") || "quattro-agent"
-    property string projectsOMPCommand: Quickshell.env("QUATTRO_PROJECTS_OMP_COMMAND") || "quattro-projects-omp"
     property string menuCommand: Quickshell.env("QUATTRO_MENU_COMMAND") || "quattro-menu"
     property string themeCommand: Quickshell.env("QUATTRO_THEME_COMMAND") || "quattro-theme"
     property string pointerCommand: Quickshell.env("QUATTRO_POINTER_COMMAND") || "quattro-pointer"
@@ -114,7 +112,7 @@ Scope {
         const destinations = [
             { "label": "Monitoring", "detail": "Live CPU, memory, network and sensors", "icon": "󰄧", "page": "monitoring" },
             { "label": "Apps", "detail": "Browse installed applications", "icon": "󰀻", "page": "apps" },
-            { "label": "AI / Agents", "detail": "Agents and AI tasks", "icon": "󰚩", "page": "ai" },
+            { "label": "Intelligence", "detail": "Knowledge and persistent memory", "icon": "󰚩", "page": "ai" },
             { "label": "Style", "detail": "Desktop themes", "icon": "󰏘", "page": "style" },
             { "label": "Setup", "detail": "Desktop configuration", "icon": "", "page": "setup" },
             { "label": "Install", "detail": "Official Arch packages", "icon": "󰏔", "page": "install" },
@@ -428,7 +426,7 @@ Scope {
 
                     MenuRow {
                         icon: "󰚩"
-                        label: "AI / Agents"
+                        label: "Intelligence"
                         arrow: true
 
                         onClicked:
@@ -578,7 +576,7 @@ Scope {
 
 
                 // ============================
-                // AI / AGENTS
+                // INTELLIGENCE (read-only desktop projection)
                 // ============================
 
                 ColumnLayout {
@@ -588,7 +586,7 @@ Scope {
 
                     MenuRow {
                         icon: "󰚩"
-                        label: "Agents"
+                        label: "Intelligence"
 
                         onClicked: {
                             Quickshell.execDetached(["qs", "ipc", "call", "agents", "open"])
@@ -598,53 +596,14 @@ Scope {
 
                     MenuRow {
                         icon: "󰆍"
-                        label: "New AI Task"
+                        label: "Search Knowledge"
 
                         onClicked: {
-                            Quickshell.execDetached(["qs", "ipc", "call", "agents", "newTask"])
+                            Quickshell.execDetached(["qs", "ipc", "call", "agents", "search"])
                             root.close()
                         }
                     }
 
-                    MenuRow {
-                        icon: "󰚩"
-                        label: "Codex"
-
-                        onClicked: {
-                            Quickshell.execDetached([root.agentCommand, "launch", "codex"])
-                            root.close()
-                        }
-                    }
-
-                    MenuRow {
-                        icon: "󰚩"
-                        label: "OMP"
-
-                        onClicked: {
-                            Quickshell.execDetached([root.projectsOMPCommand, "--choose-project"])
-                            root.close()
-                        }
-                    }
-
-                    MenuRow {
-                        icon: "󰭹"
-                        label: "ChatGPT"
-
-                        onClicked: {
-                            Quickshell.execDetached([root.agentCommand, "chatgpt"])
-                            root.close()
-                        }
-                    }
-
-                    MenuRow {
-                        icon: "󰠮"
-                        label: "Memory Vault"
-
-                        onClicked: {
-                            Quickshell.execDetached([root.agentCommand, "memory", "open"])
-                            root.close()
-                        }
-                    }
                 }
 
 
@@ -893,12 +852,6 @@ Scope {
                         onClicked: root.editConfig("bindings", "Keybindings")
                     }
 
-                    MenuRow {
-                        icon: "󰚩"
-                        label: "AI Preferences"
-                        detail: "Edit display-safe agent configuration"
-                        onClicked: root.editConfig("ai", "AI Preferences")
-                    }
 
                     MenuRow {
                         icon: "󰉋"
@@ -1122,23 +1075,14 @@ Scope {
 
                     KeyRow {
                         keys: "SUPER + SHIFT + CTRL + A"
-                        action: "Agents panel"
+                        action: "Intelligence panel"
                     }
 
                     KeyRow {
                         keys: "SUPER + SHIFT + CTRL + SPACE"
-                        action: "New AI task"
+                        action: "Search knowledge"
                     }
 
-                    KeyRow {
-                        keys: "SUPER + CTRL + G"
-                        action: "ChatGPT"
-                    }
-
-                    KeyRow {
-                        keys: "SUPER + CTRL + X"
-                        action: "Dictation"
-                    }
 
                     KeyRow {
                         keys: "SUPER + SHIFT + CTRL + T"

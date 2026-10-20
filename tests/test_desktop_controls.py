@@ -217,11 +217,6 @@ class DesktopControlsTests(unittest.TestCase):
             run.assert_not_called()
             self.assertFalse((desktop.CONFIG / "weather.json").exists())
 
-    def test_hyprland_starts_graphical_polkit_agent_before_quickshell(self):
-        config = (Path(__file__).parents[1] / "src/hypr/hyprland.lua").read_text()
-        agent = config.index('hl.exec_cmd("systemctl --user start plasma-polkit-agent.service")')
-        quickshell = config.index('hl.exec_cmd("quickshell -p ~/.config/quickshell/shell.qml")')
-        self.assertLess(agent, quickshell)
 
     def test_surfshark_startup_chooses_lowest_load_manila_timezone_exit(self):
         rows = [
@@ -243,14 +238,6 @@ class DesktopControlsTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[1].args[0], ["systemctl", "--user", "kill",
             "--kill-whom=main", "--signal=SIGKILL", "quattro-surfshark.service"])
 
-    def test_surfshark_service_is_started_with_the_desktop(self):
-        config = (Path(__file__).parents[1] / "src/hypr/hyprland.lua").read_text()
-        setup = config.index("surfshark-startup")
-        start = config.index("systemctl --user start quattro-surfshark.service")
-        self.assertLess(setup, start)
-        self.assertIn('systemctl --user start quattro-surfshark.service', config)
-        unit = (Path(__file__).parents[1] / "src/systemd/quattro-surfshark.service").read_text()
-        self.assertIn("/opt/Surfshark/surfshark --hidden", unit)
 
     def test_place_metadata_is_bounded_and_not_trusted_html(self):
         for value in [None, {**desktop.DEFAULT_LOCATION, "name": "x" * 161}, {**desktop.DEFAULT_LOCATION, "timezone": "Asia/Manila?bad"}]:

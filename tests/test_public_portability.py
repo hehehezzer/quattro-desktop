@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import os
 import pathlib
 import re
 import subprocess
@@ -16,10 +15,6 @@ SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from quattro_agent.cli import starter_config, tool_environment  # noqa: E402
-from quattro_agent.config import validate_ai_config  # noqa: E402
-from quattro_agent.paths import codex_account_root, omniroute_base_url  # noqa: E402
-from quattro_agent.containment import bubblewrap_path, build_bwrap_command  # noqa: E402
 import check_public_history as public_history  # noqa: E402
 
 
@@ -96,6 +91,73 @@ class PublicPortabilityTests(unittest.TestCase):
         })
         self.assertNotEqual(mixed.returncode, 0)
 
+    def test_public_history_fails_closed_on_marker_only_process_errors(self):
+        for returncode in (2, 128, -15):
+            with self.subTest(returncode=returncode):
+                def scan(command, **kwargs):
+                    failed_marker = (
+                        "-F" in command
+                        and command[command.index("-e") + 1] == public_history.MARKERS[0]
+                    )
+                    return subprocess.CompletedProcess(
+                        command, returncode if failed_marker else 1, stdout=""
+                    )
+
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with (
+                    mock.patch.object(public_history, "run", side_effect=["abc123\n", ""]),
+                    mock.patch.object(public_history.subprocess, "run", side_effect=scan),
+                    mock.patch("sys.stdout", stdout),
+                    mock.patch("sys.stderr", stderr),
+                ):
+                    result = public_history.main()
+                self.assertEqual(result, 1)
+                self.assertIn("private marker scan failed", stderr.getvalue())
+                self.assertNotIn("PASS", stdout.getvalue())
+                self.assertNotIn("credential scan failed", stderr.getvalue())
+
+    def test_public_history_rejects_real_marker_scan_revision_failure(self):
+        actual_run = subprocess.run
+        with tempfile.TemporaryDirectory() as directory:
+            repository = pathlib.Path(directory)
+            actual_run(["git", "init", "-q", "-b", "main"], cwd=repository, check=True)
+            (repository / "sample.txt").write_text(
+                public_history.MARKERS[0] + "operator\n", encoding="utf-8"
+            )
+            actual_run(["git", "add", "sample.txt"], cwd=repository, check=True)
+            actual_run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                 "commit", "-qm", "fixture"],
+                cwd=repository, check=True,
+            )
+            scan_errors = []
+
+            def scan(command, *args, **kwargs):
+                command = list(command)
+                failed_marker = (
+                    command[:2] == ["git", "grep"]
+                    and "-F" in command
+                    and command[command.index("-e") + 1] == public_history.MARKERS[0]
+                )
+                if failed_marker:
+                    command[-2] = "nonexistent-scan-revision"
+                result = actual_run(command, *args, cwd=repository, **kwargs)
+                if failed_marker:
+                    scan_errors.append(result.returncode)
+                return result
+
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with (
+                mock.patch.object(public_history.subprocess, "run", side_effect=scan),
+                mock.patch("sys.stdout", stdout),
+                mock.patch("sys.stderr", stderr),
+            ):
+                result = public_history.main()
+            self.assertEqual(scan_errors, [128])
+            self.assertEqual(result, 1)
+            self.assertIn("private marker scan failed", stderr.getvalue())
+            self.assertNotIn("PASS", stdout.getvalue())
+
     def test_public_history_reports_git_grep_execution_errors(self):
         failed = subprocess.CompletedProcess(
             args=["git", "grep"], returncode=128, stdout="", stderr="invalid regex"
@@ -110,114 +172,56 @@ class PublicPortabilityTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("credential scan failed", stderr.getvalue())
 
-    def test_starter_config_is_memory_off_and_credential_free(self):
-        config = starter_config()
-        validated = validate_ai_config(config)
-        self.assertFalse(validated["memory"]["enabled"])
-        self.assertFalse(validated["memory"]["enforceOnLaunch"])
-        self.assertTrue(validated["fullAccessRequiresConfirmation"])
-        self.assertNotIn("auth.json", repr(config))
-        self.assertNotIn("maintainer-only-path", repr(config))
+    def test_history_acknowledgment_is_immutable_and_never_exempts_credentials(self):
+        scanner = str(ROOT / "scripts")
+        launch = (
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "import check_public_history as gate; "
+            "gate.ACKNOWLEDGED_HOME_PATH = (sys.argv[2], 'restart', sys.argv[3], 1); "
+            "raise SystemExit(gate.main())"
+        )
+        for case in ("approved", "different-commit", "different-blob", "extra-match",
+                     "different-marker", "credential"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                repository = pathlib.Path(directory)
 
-    def test_xdg_and_quattro_overrides_are_resolved_without_home_assumptions(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
-            with mock.patch.dict(os.environ, {
-                "XDG_DATA_HOME": str(root / "data"),
-                "XDG_CONFIG_HOME": str(root / "config"),
-                "XDG_STATE_HOME": str(root / "state"),
-                "QUATTRO_CODEX_DATA_DIR": str(root / "codex"),
-            }, clear=False):
-                self.assertEqual(codex_account_root(), root / "codex/accounts")
-                config = starter_config()
-                self.assertTrue(config["accounts"][0]["codexHome"].endswith("codex/accounts/default"))
+                def git(*arguments):
+                    return subprocess.check_output(
+                        ["git", "-C", str(repository), *arguments], text=True
+                    ).strip()
 
-    def test_omniroute_endpoint_is_explicitly_configurable(self):
-        with mock.patch.dict(os.environ, {
-            "QUATTRO_OMNIROUTE_BASE_URL": "http://127.0.0.1:23000/api/v1",
-        }, clear=False):
-            self.assertEqual(omniroute_base_url(), "http://127.0.0.1:23000/api/v1")
-
-    def test_child_environment_excludes_arbitrary_parent_values(self):
-        with mock.patch.dict(os.environ, {
-            "PATH": "/usr/bin",
-            "HOME": "/tmp/example-home",
-            "WAYLAND_DISPLAY": "wayland-example",
-            "QUATTRO_TEST_SECRET": "must-not-cross",
-            "OPENAI_API_KEY": "must-not-cross",
-            "GH_TOKEN": "must-not-cross",
-        }, clear=True), mock.patch(
-            "quattro_agent.cli.command_path", return_value="/usr/bin/codex"
-        ):
-            environment = tool_environment("codex")
-        self.assertEqual(environment["PATH"], "/usr/bin")
-        self.assertEqual(environment["HOME"], "/tmp/example-home")
-        self.assertEqual(environment["WAYLAND_DISPLAY"], "wayland-example")
-        self.assertNotIn("QUATTRO_TEST_SECRET", environment)
-        self.assertNotIn("OPENAI_API_KEY", environment)
-        self.assertNotIn("GH_TOKEN", environment)
-
-    def test_source_checkout_can_initialize_a_clean_config(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
-            environment = os.environ.copy()
-            environment.update({
-                "PYTHONPATH": str(SRC),
-                "XDG_CONFIG_HOME": str(root / "config"),
-                "XDG_DATA_HOME": str(root / "data"),
-                "XDG_STATE_HOME": str(root / "state"),
-            })
-            result = subprocess.run(
-                [sys.executable, str(SRC / "quattro-agent"), "config", "init"],
-                cwd=ROOT, env=environment, check=False,
-                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            config = root / "config/quattro/ai.json"
-            self.assertTrue(config.is_file())
-            self.assertEqual(config.stat().st_mode & 0o777, 0o600)
-
-    @unittest.skipUnless(bubblewrap_path(), "bubblewrap is unavailable")
-    def test_containment_does_not_expose_an_outside_canary(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
-            project = root / "project"
-            runtime = root / "runtime"
-            report = root / "report"
-            outside = root / "outside"
-            for path in (project, runtime, report, outside):
-                path.mkdir()
-            canary = outside / "canary.txt"
-            canary.write_text("outside-secret", encoding="utf-8")
-            command, environment, _ = build_bwrap_command(
-                [sys.executable, "-c", "from pathlib import Path; print(Path('/outside/canary.txt').read_text())"],
-                project_root=project, runtime_root=runtime, report_root=report,
-                environment={"HOME": str(runtime), "PATH": os.environ.get("PATH", "")},
-            )
-            result = subprocess.run(command, env=environment, check=False,
-                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertNotIn("outside-secret", result.stdout + result.stderr)
-
-    def test_containment_path_uses_mapped_user_runtime_bin(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
-            project = root / "project"
-            runtime = root / "runtime"
-            report = root / "report"
-            binary = root / ".nvm/versions/node/v24/bin/codex"
-            for path in (project, runtime, report, binary.parent):
-                path.mkdir(parents=True, exist_ok=True)
-            binary.write_text("#!/usr/bin/env node\n", encoding="utf-8")
-            with mock.patch("quattro_agent.containment.bubblewrap_path", return_value="/usr/bin/bwrap"):
-                _, environment, _ = build_bwrap_command(
-                    [str(binary), "exec"], project_root=project,
-                    runtime_root=runtime, report_root=report,
-                    environment={"HOME": str(runtime)},
+                git("init", "-q", "-b", "main")
+                git("config", "user.name", "Test")
+                git("config", "user.email", "test@example.invalid")
+                content = public_history.MARKERS[0] + "operator\n"
+                if case == "extra-match":
+                    content += public_history.MARKERS[0] + "second\n"
+                if case == "different-marker":
+                    content += public_history.MARKERS[1] + "\n"
+                if case == "credential":
+                    content += "s" + "k-" + "livecredentialvalue123\n"
+                (repository / "restart").write_text(content)
+                git("add", "restart")
+                git("commit", "-qm", "reviewed fixture")
+                commit = git("rev-parse", "HEAD")
+                blob = git("rev-parse", "HEAD:restart")
+                if case == "different-commit":
+                    (repository / "unrelated").write_text("new public content\n")
+                    git("add", "unrelated")
+                    git("commit", "-qm", "new commit retains old blob")
+                if case == "different-blob":
+                    blob = "0" * 40
+                result = subprocess.run(
+                    [sys.executable, "-c", launch, scanner, commit, blob],
+                    cwd=repository, capture_output=True, text=True, timeout=10,
                 )
-            self.assertTrue(
-                environment["PATH"].startswith("/quattro-nvm/versions/node/v24/bin:")
-            )
+                if case == "approved":
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    expected = "credential marker" if case == "credential" else "private marker"
+                    self.assertIn(expected, result.stderr)
+
 
 
 if __name__ == "__main__":

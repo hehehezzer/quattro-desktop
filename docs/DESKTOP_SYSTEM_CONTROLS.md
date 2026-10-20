@@ -1,18 +1,15 @@
 # Desktop system controls
 
+> Retained desktop maintenance reference, not an Intelligence service or a provisioning guarantee. Optional [Arch desktop setup](../README.md#optional-arch-desktop) does not activate the current desktop or install every historical integration described here.
+
 ## Scope and architecture
 
 This extends the existing single Quickshell process and theme, not a replacement
 shell. UI mode is **Operate**: compact, stable-width media at the left, clock and
 weather at the center, existing controls at the right. Existing sharp corners,
-semantic theme colors and Nerd Font icon vocabulary remain authoritative. The
-requested reference image was unavailable on this host; only its written brief
-could be used. No mock metadata or fabricated successful operations are shipped.
+semantic theme colors and Nerd Font icon vocabulary remain authoritative. No mock metadata or fabricated successful operations are shipped.
 
-Validated host: Arch Linux, Lua Hyprland 0.56.2, Quickshell, PipeWire 1.6.8,
-WirePlumber, pipewire-pulse, BlueZ and an unblocked adapter. Python 3 with
-`python-gobject`/Gio is already available. The helpers are Linux-only and the
-portable Core remains unchanged apart from deployment inventory metadata.
+The historical validated host used Arch Linux, Lua Hyprland 0.56.2, Quickshell, PipeWire 1.6.8, WirePlumber, pipewire-pulse, BlueZ and an unblocked adapter, with `python-gobject`/Gio available. These helpers are Linux-only and separate from the portable Intelligence runtime.
 
 ### Media
 

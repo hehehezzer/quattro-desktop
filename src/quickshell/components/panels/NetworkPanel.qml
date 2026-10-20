@@ -10,6 +10,7 @@ import "../shared"
 ColumnLayout {
     id: root
 
+    property string wifiDevice: ""
     signal requestFocus()
 
     property var wifiNetworks: []
@@ -231,6 +232,7 @@ ColumnLayout {
                     }
 
                     if (type === "wifi") {
+                        root.wifiDevice = parts[0]
                         root.wifiStatus =
                             state === "connected"
                             ? "Connected"
@@ -390,7 +392,7 @@ ColumnLayout {
             "nmcli",
             "device",
             "disconnect",
-            "wlp9s0"
+            root.wifiDevice
         ]
 
         onRunningChanged: {

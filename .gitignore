@@ -33,10 +33,9 @@ dictation/
 *.tmp
 *.swp
 
-# Credentials and local configuration. The example is intentionally tracked.
+# Credentials and local configuration; never track environment files.
 .env
 .env.*
-!.env.example
 auth.json
 credentials.json
 *.pem

@@ -24,6 +24,15 @@ _HISTORICAL_SYNTHETIC_KEYS = frozenset({
     "s" + "k-" + "synthetic-1234567890abcdefghijkl",
 })
 _PYTHON_SK_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{12,}")
+# Owner-approved on 2026-10-21: one already-public machine-path finding.
+# Acknowledgment is bound to immutable commit, path, blob, line and marker.
+# Credential rules below are never exempted by this record.
+ACKNOWLEDGED_HOME_PATH = (
+    "a58015ac9f2a477b0864e91287bb6d89efc60f90",
+    "src/restart-quickshell",
+    "f6271236f5a94675534db101f38ea0255c08edda",
+    19,
+)
 
 
 def allowed_historical_test_fixture(pattern: str, line: str) -> bool:
@@ -41,6 +50,14 @@ def run(*args: str) -> str:
     return subprocess.check_output(("git", *args), text=True, stderr=subprocess.DEVNULL)
 
 
+def acknowledged_historical_marker(commit: str, marker: str, lines: list[str]) -> bool:
+    known_commit, path, blob, number = ACKNOWLEDGED_HOME_PATH
+    if commit != known_commit or marker != MARKERS[0] or len(lines) != 1:
+        return False
+    if not lines[0].startswith(f"{commit}:{path}:{number}:"):
+        return False
+    return run("rev-parse", f"{commit}:{path}").strip() == blob
+
 def main() -> int:
     commits = [line for line in run("rev-list", "HEAD").splitlines() if line]
     findings: list[str] = []
@@ -52,10 +69,15 @@ def main() -> int:
         for marker in MARKERS:
             result = subprocess.run(
                 ("git", "grep", "-I", "-n", "-F", "-e", marker, commit, "--"),
-                text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             )
             if result.returncode == 0:
-                findings.append(f"{commit[:12]}: private marker {marker!r}")
+                if not acknowledged_historical_marker(commit, marker, result.stdout.splitlines()):
+                    findings.append(f"{commit[:12]}: private marker {marker!r}")
+            elif result.returncode != 1:
+                findings.append(
+                    f"{commit[:12]}: private marker scan failed for marker {marker!r}"
+                )
         for pattern in TOKEN_PATTERNS:
             result = subprocess.run(
                 ("git", "grep", "-I", "-n", "-E", "-e", pattern, commit, "--"),

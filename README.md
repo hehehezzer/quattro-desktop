@@ -1,272 +1,111 @@
-# Quattro
+# Quattro Intelligence
 
-**Codex orchestration framework with an optional Linux desktop integration.**
+Local-first knowledge retrieval and persistent project memory for independent clients. Quattro indexes explicitly registered code, documentation and notes, returns cited context, and stores deliberate memories in SQLite. Python 3.11+, no third-party Python runtime dependencies, and no mandatory paid API.
 
-Quattro is a Codex-centered agent orchestration framework providing durable
-sessions, task routing, delegation, recovery, repository coordination, and
-optional memory/RAG. It is not an AI provider and it does not replace Codex,
-Pi, or OmniRoute.
+Quattro does **not** choose models or providers, launch agents, route tasks, manage accounts, or take over client permissions. Use its CLI or bounded stdio MCP server with the tools you already use. The optional Arch desktop is a separate setup profile, not a requirement for Intelligence.
 
-The repository also contains an optional Linux desktop integration for
-Hyprland and Quickshell. The orchestration engine is usable without that
-desktop layer.
-
-This repository retains the `quattro-desktop` name for continuity and existing
-links. Quattro Core can be installed and used independently.
-
-## Why Quattro?
-
-- **Predictable decisions:** explanations can stay direct; repository changes
-  become durable, observable tasks.
-- **Evidence-aware execution:** a deterministic TaskProfile maps work to FAST,
-  STANDARD, or REASONING quality requirements and combines OmniRoute runtime
-  metadata, curated benchmark evidence, and local validated outcomes without
-  duplicating provider dispatch.
-- **Recoverable work:** SQLite/WAL task state, checkpoints, leases, cancellation,
-  and bounded retries make interrupted work inspectable.
-- **Safe boundaries:** provider credentials stay in native account homes;
-  display projections contain no prompts, responses, secrets, or environments.
-- **Small surface area:** the core uses Python's standard library and can run
-  with Codex, Pi, and memory integrations disabled during local testing.
-
-## Architecture
-
-```text
-User request
-    │
-    ▼
-Quattro classifier ── DIRECT ──► OmniRoute Responses ──► final response
-    │
-    └─────────────── DELEGATE ──► durable task
-                                      │
-                                      ├─ FAST / STANDARD / REASONING
-                                      ├─ Codex (primary) or bounded Pi worker
-                                      ├─ policy, lease, and process supervision
-                                      └─ validation, checkpoint, and projection
-```
-
-Quattro owns classification, agent selection, task lifecycle, policy, bounded
-context assembly, and explicit provider/account/model selection. OmniRoute owns
-transport, caching, token optimization, provider protocol adaptation, and
-runtime health signals. Codex and Pi execute; they
-do not create Quattro tasks or select providers.
-
-## Features in this release
-
-- Deterministic DIRECT versus DELEGATE request classification.
-- FAST/STANDARD/REASONING routing and bounded effort escalation.
-- Codex, closed OMP context workers, and retained Pi compatibility adapters with
-  task-scoped policy profiles.
-- SQLite/WAL persistence, checkpoints, resume/recovery, cancellation, and
-  terminal validation.
-- Cooperative global/repository limits and repository-relative write scopes.
-- Local hybrid retrieval with secret exclusion and repository/branch scoping.
-- Optional Markdown/Obsidian memory with a no-memory default.
-- Credential-safe OmniRoute contract and model-catalog validation.
-- Evidence-gated GitHub PR review workflow when `gh` and Codex are configured.
-- Optional Hyprland/Quickshell desktop projection under `src/quickshell/`.
-
-## Quattro Core
-
-The mature standard-library implementation remains in `quattro_agent` for
-backward compatibility and is exposed through the `quattro.core` boundary.
-Core owns routing, policy, durable SQLite/WAL state, sessions, recovery,
-collaboration, retrieval, Codex/Pi adapters, OmniRoute contracts, PR review,
-deployment, and the existing `quattro-agent` CLI.
-
-## Quattro Desktop
-
-Quattro Desktop is an optional Linux-only consumer of Core. Hyprland,
-Quickshell/QML, themes, desktop helpers, and desktop systemd units have an
-independent deployment inventory. Their absence is a valid Core state.
-
-## Platform support
-
-| Product | Linux | Windows | macOS |
-| --- | --- | --- | --- |
-| Quattro Core | Supported | Experimental (hosted Core CI) | Untested |
-| Quattro Desktop | Supported where dependencies are installed | Unsupported | Unsupported |
-
-Windows packaging, imports, CLI startup, platform paths, executable discovery,
-SQLite/WAL state, routing, adapter contracts, portable recovery, file locking,
-Core deployment, Desktop absence, and import boundaries pass hosted CI. Managed
-process identity/recovery still uses Linux procfs and remains unsupported on
-Windows.
-
-## Requirements
-
-- Python 3.11 or newer. Linux is currently the validated Core platform.
-- Git for repository-aware scheduling and retrieval (optional for non-Git
-  projects).
-- Codex CLI 0.15x or a compatible newer release for Codex execution.
-- Pi 0.8x or a compatible newer release only when delegated specialists are
-  enabled. Pi is optional and writable Pi execution remains fail-closed unless
-  the runtime can enforce the requested network policy.
-- OMP 18.6.3 and Bun 1.3.14 or newer for the reviewed OMP SDK route. Durable OMP
-  currently accepts context-only read-only tasks; native coding terminals use
-  the separate reviewed Herdr/OMP route. See [the durable contract](docs/DURABLE_OMP.md)
-  and [the scoped host-tool contract](docs/SCOPED_OMP.md).
-- OmniRoute with the Responses-compatible local endpoint and the Quattro,
-  account-qualified GPT-6 Astra/GPT-5.6, and verified Antigravity route labels when direct
-  or Codex execution is used. The endpoint and catalog are configurable;
-  Quattro does not bundle OmniRoute.
-- Optional desktop dependencies: Hyprland Lua integration, Quickshell 0.3.x,
-  Ghostty, `wl-clipboard`, and the commands documented in `docs/desktop.md`.
-  Foot remains supported for existing terminal sessions.
-
-## Core-only quick start
+## Install Intelligence
 
 ```bash
-git clone https://github.com/OWNER/quattro-desktop.git
+git clone https://github.com/hehehezzer/quattro-desktop.git
 cd quattro-desktop
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install --no-deps .
-
-# Creates a 0600 credential-free starter config in XDG_CONFIG_HOME.
-quattro-agent config init
-quattro-agent config validate
-quattro-agent --help
+./install.sh --core
 ```
 
-On Windows, use a native PowerShell or Command Prompt environment:
+This installs into the checkout's isolated `.venv`. It does not change global commands, agent settings, desktop services or existing databases. Without flags, an interactive terminal offers the core or Arch setup; noninteractive use retains the core install. See the [operating guide](docs/installation.md) for a different virtual environment destination.
 
-```powershell
-py -m venv .venv
-.venv\Scripts\python -m pip install --no-deps .
-.venv\Scripts\quattro-agent config init
-.venv\Scripts\quattro-agent --help
-```
-
-`install.sh` is a Linux convenience wrapper; it is not the Windows installer.
-
-## Linux Desktop quick start
-
-From a clean clone on Linux:
+Create a new operator configuration, register this checkout as an explicit source, and index it:
 
 ```bash
-./install.sh --profile desktop
-quattro-agent doctor
-quattro-agent deployment status --profile desktop
+Q="$PWD/.venv/bin/quattro-intelligence"
+C="$PWD/.quattro/intelligence.json"
+"$Q" --config "$C" config-init --database-dir "$PWD/.quattro/state" \
+  --project quattro --principal operator --writable --can-verify
+"$Q" --config "$C" register-source --project quattro --id code --root "$PWD" \
+  --kind repository --intent intended --exclude '.quattro/**' --exclude 'benchmarks/**'
+"$Q" --config "$C" index code
+"$Q" --config "$C" query --project quattro 'QueryRouter'
+"$Q" --config "$C" doctor --project quattro
 ```
 
-The script installs Core first, then deploys only the Desktop profile. Use
-`./install.sh --profile core` for the equivalent Linux Core-only convenience
-path.
+`config-init` refuses to overwrite an existing configuration. The example deliberately grants operator write and verification authority; create a separate, narrowly scoped reader configuration for clients. Never register an entire home directory or private vault by accident.
 
-The starter config has memory disabled and does not authenticate Codex. Set up
-each native Codex account separately, copy the shape in
-`examples/codex-config.toml`, install the shared catalog, then run
-`quattro-agent doctor`. See [installation](docs/installation.md) for a clean
-machine walkthrough.
+### Connect a client
 
-## Configuration and paths
-
-Interactive OMP selection is an explicit opt-in through the strict optional
-`nativeSession` configuration. It uses a verified skills catalog and named
-private Herdr socket, requires `--confirm-native-access` for each launch, and
-retains native always-ask approval. Existing Codex/Pi defaults and durable tasks
-remain compatible. See [native session configuration](docs/configuration.md#optional-native-session-selection)
-for the boundary and command examples.
-
-Configuration is strict schema version 3 JSON. Use `QUATTRO_CONFIG` to select a
-file, otherwise Quattro uses `$XDG_CONFIG_HOME/quattro/ai.json` (or
-`~/.config/quattro/ai.json`). Runtime state defaults to
-`$XDG_STATE_HOME/quattro/agents`; rebuildable retrieval and task databases are
-private there. `QUATTRO_STATE_DIR`, `QUATTRO_DATA_DIR`,
-`QUATTRO_CODEX_HOME_ROOT`, `QUATTRO_MODEL_CATALOG`,
-`QUATTRO_OMNIROUTE_BASE_URL`, and `QUATTRO_WORKSPACE` provide explicit
-portable overrides. See [configuration](docs/configuration.md).
-
-Precedence is: explicit command-line directory or policy option, environment
-override, config file, then the documented XDG default. Quattro never infers a
-clone destination from the maintainer's machine; project-root defaults are
-user-configurable.
-
-## Common commands
-
-The staged Herdr → Quattro → OMP replacement is documented in
-[Herdr and OMP](docs/HERDR_OMP.md). `quattro-agent launch omp PATH` locks
-`openai-codex/gpt-6.1-sol` with medium effort and native `always-ask` approval.
-It requires a verified skill catalog and explicit action-time native-access
-approval. Legacy Pi remains available until real replacement acceptance; Codex
-and original skill roots remain intact.
-
-```text
-quattro-agent                          # choose native Codex or Pi with per-turn routing
-quattro-agent launch                   # same native-agent chooser
-quattro-agent launch codex [PATH]      # open native Codex with the Quattro turn gate
-quattro-agent launch pi [PATH]         # open native Pi with the Quattro input hook
-quattro-agent doctor [--json]
-quattro-agent prompt [codex|pi] "Explain this repository"
-quattro-agent submit --agent auto --directory PATH --prompt "Implement ..."
-quattro-agent task list|show|events|artifacts|cancel|retry TASK_ID
-quattro-agent checkpoint SESSION_ID
-quattro-agent resume [SESSION_OR_PROJECT]
-quattro-agent recover SESSION_ID
-quattro-agent sessions status|clean|stop [SESSION_ID]
-quattro-agent collab status|claim --summary TEXT --scope PATH
-quattro-agent retrieval search "query" --directory PATH
-quattro-agent memory status|init
-```
-
-`prompt` stays direct only when the deterministic classifier can answer without
-execution. A mutating or repository request creates a durable task. Empty
-interactive launches remain launcher controls rather than user work.
-
-## Routing
-
-Interactive UI selection is independent of execution selection. Each user turn
-receives a fresh immutable Quattro ExecutionPlan. DIRECT questions use a bounded
-OmniRoute Responses call; only DELEGATE work enters an agent lifecycle. Codex
-uses its real native TUI connected to Quattro's local app-server bridge. Pi uses
-its real native TUI with a trusted input extension.
-
-Quattro chooses and locks the provider, account, model, effort, and context
-budget. OmniRoute retains transport, caching, token optimization, and accounting;
-it cannot replace the locked target. Automatic FAST turns select a lightweight
-approved target with low effort. Explicit approved model selections remain
-explicit, while the routing tier controls effort.
-
-See [interactive routing](docs/interactive-routing.md) for budgets, native
-protocol requirements, supported interactions, privacy, measurements, and
-reproducible validation. See [routing](docs/routing.md) for the gateway contract.
-
-## Memory
-
-Memory is optional and disabled by the generated starter configuration. If
-enabled, users supply their own long-term and project Markdown vaults. Quattro
-may index derived, redacted content locally, but it never ships or requires a
-specific Obsidian vault. Prompts, responses, credentials, authentication files,
-and arbitrary environments must never be stored. See [memory](docs/memory.md).
-
-## Security
-
-Codex authentication remains native to Codex account homes. Quattro reads only
-approved non-secret routing metadata, never copies `auth.json`, never forwards
-native credentials to OmniRoute, and does not place secrets in QML, SQLite
-projections, logs, or memory. Full access is per-task and confirmation-gated.
-The native Codex sandbox is write-scoped rather than a complete host read
-sandbox; ordinary workspace tasks are trusted-user operations. Untrusted PR
-reviews use a bubblewrap filesystem boundary and fail closed if it is missing.
-Report vulnerabilities through the process in [SECURITY.md](SECURITY.md).
-
-## Development
+Start MCP with an absolute configuration path:
 
 ```bash
-python -m unittest discover -s tests -p 'test_*.py'
-python -m compileall -q src scripts
-python scripts/check_python.py
-python scripts/check_public_artifacts.py
-git diff --check
+.venv/bin/quattro-intelligence-mcp --config "$PWD/.quattro/intelligence.json"
 ```
 
-Contributions and release checks are documented in [CONTRIBUTING.md](CONTRIBUTING.md)
-and [development](docs/development.md).
+The server uses JSON-lines on stdin/stdout and opens no network listener. Clients start it themselves. Missing configuration fails closed. All nine MCP tools enforce configured project/source and write permissions; indexing accepts registered source IDs, not caller-supplied roots. Retrieved content is untrusted evidence, never authorization.
 
-## License
+For optional native omp/Codex context integration, source registration, hook trust and approval requirements, follow the [integration guide](docs/INTEGRATION.md). Native clients keep their own models, accounts, execution, permissions and delegation.
 
-Quattro code and original bundled desktop artwork are released under the MIT
-License. Bundled fonts retain their accompanying SIL Open Font License notices.
-Local artwork can be supplied with `QUATTRO_WALLPAPER_DIR`.
+## What Intelligence provides
+
+- Exact and lexical retrieval using SQLite FTS5/BM25, paths, filenames, symbols, imports and configuration identifiers.
+- Optional local Nomic embeddings and hybrid ranking. Lexical mode works independently and reports semantic unavailability honestly.
+- Incremental, atomic indexing with exclusions, source ownership, provenance, freshness reporting and citations.
+- Episodic, semantic, procedural and shared memory with references, visibility, revisions, verification and explicit supersession.
+- Budgeted context, source/memory inspection, diagnostics, and checksummed backup/restore into a new directory.
+
+Quattro does not automatically record whole conversations or treat retrieved text as verified fact. See the [memory contract](docs/memory.md) and [security boundaries](docs/security.md).
+
+## Optional Arch desktop
+
+On an **already installed Arch Linux system**, clone the repository as above, then run:
+
+```bash
+./install.sh --arch --dry-run
+./install.sh --arch
+```
+
+This is desktop configuration, **not an Arch OS installer**: it does not partition disks, install a bootloader, create users or replace the operating system. Run as your normal user, not with `sudo`; package installation requests privilege separately. Review the dry-run package/file plan before applying it.
+
+Use a normal account with `sudo` and working official Arch mirrors. If Python is missing, normal Arch setup offers its pacman prerequisite first; dry-run/help and file-only staging never install it implicitly.
+
+In a terminal, setup asks which features to keep; press Enter for `desktop,intelligence`. Select an exact set with flags to skip that chooser:
+
+```bash
+./install.sh --arch --features desktop --dry-run
+./install.sh --arch --features desktop,intelligence,applications
+```
+
+| Feature | Purpose |
+|---|---|
+| `desktop` | Hyprland/Quickshell baseline and retained desktop configuration/assets; requires compatible Arch packages, including Hyprland's Lua configuration support. |
+| `intelligence` | Isolated Quattro Intelligence installation; does not register or index private sources automatically. |
+| `applications` | Optional nonessential desktop applications; requires `desktop`. |
+| `native` | Explicit native-client integration; requires `intelligence` and `--native-config PATH` pointing to an existing authorized configuration with at least one registered source. Read the integration guide first. |
+
+`--yes` accepts the displayed configuration changes without interactive confirmation; pacman retains its own package prompts. Changed existing target files are backed up under the user's XDG state directory at `quattro/setup-backups/<id>`, with a rollback manifest; they are not silently discarded. `--skip-packages` applies configuration without package installation. An alternate `--home PATH` stages an isolated home instead of changing the current one and does not install system packages or native clients.
+
+Native setup requires the current home and standard `~/.config` location; a custom `XDG_CONFIG_HOME` is rejected for that feature. Installed native reader configurations have writes and verification disabled. A desktop-only selection keeps the Intelligence panel available but reports the core as unavailable until configured; it does not restore retired agent controls.
+
+Setup does not restart the current desktop, enable services, change native permissions or migrate old execution consumers. Choose when to start the configured desktop yourself. Some retained desktop controls depend on separately installed services/apps and historical execution integrations are not provisioned. See [desktop maintenance and asset notices](docs/desktop.md).
+
+The Intelligence feature creates a lexical, read-only starter configuration in `~/.config/quattro/intelligence.json`, with an empty `local` namespace. Register your own sources and review project/write permissions using the configuration and operating guides; setup never copies the author's notes, accounts or databases. GPU drivers, display-manager installation, system service activation and machine-specific storage remain host choices.
+
+### Optional JEV
+
+JEV is an independent, optional external client/tool, not a bundled Quattro runtime or installer feature. Quattro works without it. This repository does not currently provide a supported JEV installation or `--features jev`; configure external tools separately against the documented MCP boundary without reviving retired routing or granting them additional permissions.
+
+## Guides
+
+| Need | Guide |
+|---|---|
+| Install, configure sources, operate and recover | [Operating guide](docs/installation.md) · [Configuration](docs/configuration.md) |
+| Connect independent/native clients | [Integration](docs/INTEGRATION.md) · [MCP contract](docs/MCP.md) |
+| Understand retrieval and memory | [Retrieval](docs/RETRIEVAL.md) · [Memory](docs/memory.md) |
+| Maintain the implementation safely | [Architecture](docs/architecture.md) · [Development](docs/development.md) · [Security](docs/security.md) |
+| Preserve data from older versions | [Migration](docs/MIGRATION.md) |
+| Maintain optional desktop assets | [Desktop](docs/desktop.md) · [Design reference](DESIGN.md) |
+
+The repository retains the historical `quattro-desktop` URL. Intelligence is the active standalone Python product; retained desktop assets are separate from its distribution. Old execution/orchestration code is retired. Do not delete live databases or reconnect historical execution consumers to the new API.
+
+## Development and support
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution boundaries and [development](docs/development.md) for checks. The [test report](docs/TEST_REPORT.md) records historical executed checks and measured limits, not a guarantee for every environment. Linux runtime has been exercised; Windows CI covers the portable memory/MCP surface. Windows indexing and macOS operation are not claimed as locally verified.
+
+[MIT license](LICENSE) · [Security reporting](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md)

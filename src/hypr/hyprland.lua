@@ -19,7 +19,8 @@
 require("bindings")
 
 local themeName = "lofi-noir"
-local themePath = os.getenv("HOME") .. "/.config/quattro/theme.json"
+local configHome = os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")
+local themePath = configHome .. "/quattro/theme.json"
 local themeFile = io.open(themePath, "r")
 
 if themeFile then
@@ -46,7 +47,7 @@ themeBorders["instrument-ember"] = { active = "rgba(ebe5dbff)", inactive = "rgba
 local activeThemeBorders = themeBorders[themeName]
 
 local pointerSensitivity = 0
-local pointerPath = os.getenv("HOME") .. "/.config/quattro/pointer.json"
+local pointerPath = configHome .. "/quattro/pointer.json"
 local pointerFile = io.open(pointerPath, "r")
 
 if pointerFile then
@@ -63,19 +64,7 @@ end
 ------------------
 
 -- See https://wiki.hypr.land/Configuring/Basics/Monitors/
-hl.monitor({
-    output = "HDMI-A-1",
-    mode = "preferred",
-    position = "0x0",
-    scale = 1,
-})
-
-hl.monitor({
-    output = "DP-2",
-    mode = "preferred",
-    position = "1920x0",
-    scale = 1,
-})
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 
 ---------------------
 ---- MY PROGRAMS ----
@@ -83,8 +72,6 @@ hl.monitor({
 
 -- Set programs that you use
 local terminal    = "ghostty"
-local fileManager = "dolphin"
-local menu        = "hyprlauncher"
 
 
 -------------------
@@ -98,10 +85,8 @@ local menu        = "hyprlauncher"
 --
 hl.on("hyprland.start", function () 
   hl.exec_cmd(terminal)
-  hl.exec_cmd("systemctl --user start plasma-polkit-agent.service")
-  hl.exec_cmd("python3 ~/.local/bin/quattro_desktop_controls.py surfshark-startup")
-  hl.exec_cmd("systemctl --user start quattro-surfshark.service")
-  hl.exec_cmd("quickshell -p ~/.config/quickshell/shell.qml")
+  hl.exec_cmd("/usr/lib/polkit-kde-authentication-agent-1")
+  hl.exec_cmd("quattro-shell")
 end)
 
 
@@ -112,6 +97,7 @@ end)
 -- See https://wiki.hypr.land/Configuring/Advanced-and-Cool/Environment-variables/
 
 hl.env("TERMINAL", "ghostty")
+hl.env("PATH", os.getenv("HOME") .. "/.local/bin:" .. (os.getenv("PATH") or "/usr/bin:/bin"))
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("QT_QPA_PLATFORMTHEME", "gtk3")
@@ -299,12 +285,6 @@ hl.gesture({
     action = "workspace"
 })
 
--- Example per-device config
--- See https://wiki.hypr.land/Configuring/Advanced-and-Cool/Devices/ for more
-hl.device({
-    name        = "epic-mouse-v1",
-    sensitivity = -0.5,
-})
 
 
 ---------------------
