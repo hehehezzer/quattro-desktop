@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import subprocess
 import venv
+from bootstrap_pip import bootstrap_pip
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +62,7 @@ def install(destination: Path) -> Path:
     if not destination.exists():
         venv.EnvBuilder(with_pip=True).create(destination)
     python = validate_environment(destination)
+    bootstrap_pip(python)
     subprocess.run(
         [str(python), "-I", "-m", "pip", "--isolated", "install", "--no-deps", str(ROOT)],
         check=True,
