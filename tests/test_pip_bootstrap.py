@@ -73,6 +73,14 @@ class PipBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unrecognized"):
             bootstrap_pip.parse_version("latest")
 
+    def test_timed_out_version_probe_is_unusable(self) -> None:
+        with mock.patch.object(
+            bootstrap_pip.subprocess,
+            "run",
+            side_effect=bootstrap_pip.subprocess.TimeoutExpired(["python"], 300),
+        ):
+            self.assertIsNone(bootstrap_pip.installed_pip_version(Path("python")))
+
     @unittest.skipIf(os.name == "nt", "symlink creation is not portable on Windows CI")
     def test_bootstrap_preserves_virtual_environment_interpreter_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

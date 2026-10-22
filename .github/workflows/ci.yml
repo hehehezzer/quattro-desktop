@@ -26,7 +26,7 @@ jobs:
       - name: Bootstrap incident-fixed pip
         run: python scripts/bootstrap_pip.py
       - name: Install build tooling
-        run: python -m pip --isolated install --upgrade build
+        run: python -m pip --isolated install --upgrade build "setuptools>=68"
       - name: Standalone and desktop preservation tests
         env:
           PYTHONPATH: src
@@ -38,7 +38,7 @@ jobs:
       - name: Source and documentation hygiene
         run: python -m compileall -q src/quattro_core src/quattro_intelligence_mcp.py scripts/bootstrap_pip.py scripts/install_local.py && git diff --check && test -s README.md && test -s LICENSE && test -s SECURITY.md
       - name: Build explicit package closure
-        run: python -m build
+        run: python -m build --no-isolation
       - name: Install and smoke isolated wheel
         run: |
           python -m venv "$RUNNER_TEMP/quattro-wheel"

@@ -22,6 +22,7 @@ PIP_WHEEL_URL = (
 )
 PIP_WHEEL_SHA256 = "fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
 MAX_WHEEL_BYTES = 8 * 1024 * 1024
+SUBPROCESS_TIMEOUT_SECONDS = 300
 
 
 def parse_version(value: str) -> tuple[int, int, int, int, int]:
@@ -47,11 +48,15 @@ def parse_version(value: str) -> tuple[int, int, int, int, int]:
 
 
 def installed_pip_version(python: Path) -> str | None:
-    probe = subprocess.run(
-        [str(python), "-I", "-c", "import pip; print(pip.__version__)"],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        probe = subprocess.run(
+            [str(python), "-I", "-c", "import pip; print(pip.__version__)"],
+            capture_output=True,
+            text=True,
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if probe.returncode != 0:
         return None
     return probe.stdout.strip()
@@ -98,6 +103,7 @@ def bootstrap_pip(python: Path) -> str:
             subprocess.run(
                 [str(python), "-I", "-m", "ensurepip", "--upgrade", "--default-pip"],
                 check=True,
+                timeout=SUBPROCESS_TIMEOUT_SECONDS,
             )
         subprocess.run(
             [
@@ -114,6 +120,7 @@ def bootstrap_pip(python: Path) -> str:
                 str(wheel),
             ],
             check=True,
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
         )
 
     installed = installed_pip_version(python)
