@@ -2,12 +2,14 @@
 """Install only the intelligence wheel into an isolated virtual environment."""
 from __future__ import annotations
 
+import http.client
 import os
 import argparse
 import json
 from pathlib import Path
 import subprocess
 import venv
+from bootstrap_pip import bootstrap_pip
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +63,7 @@ def install(destination: Path) -> Path:
     if not destination.exists():
         venv.EnvBuilder(with_pip=True).create(destination)
     python = validate_environment(destination)
+    bootstrap_pip(python)
     subprocess.run(
         [str(python), "-I", "-m", "pip", "--isolated", "install", "--no-deps", str(ROOT)],
         check=True,
@@ -75,7 +78,15 @@ def main() -> int:
     args = parser.parse_args()
     try:
         destination = install(args.destination)
-    except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        RuntimeError,
+        http.client.HTTPException,
+        subprocess.SubprocessError,
+    ) as error:
         parser.exit(1, f"Installation failed: {error}\n")
     print(f"Installed intelligence core in {destination}")
     print("No desktop, service, native-agent, or global command registration was performed.")

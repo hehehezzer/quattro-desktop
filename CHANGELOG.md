@@ -2,6 +2,7 @@
 
 ## Unreleased — Selectable Arch setup and focused onboarding
 
+- Secure every core-install and CI virtual environment with the Python advisory's hash-checked pip 26.2.2 wheel before package installation, including reused and pip-less environments.
 - Make Quattro Intelligence the primary README/onboarding path; consolidate guides and remove obsolete product, rebuild-audit and unrelated shell-proxy documents while retaining migration, release evidence and asset licensing.
 - Add `./install.sh --arch` for an existing Arch installation, with selectable desktop, intelligence, applications and native-client features; keep `--core` isolated. JEV is external and optional, not a dependency or a revived execution router.
 - Show mutation-free setup plans, install official Arch packages, back up changed configuration files with rollback journals, support isolated-home staging, preserve existing Intelligence configuration/accounts, and require explicit registered-source configuration for native integration. Never restart the live desktop or enable system services during setup.

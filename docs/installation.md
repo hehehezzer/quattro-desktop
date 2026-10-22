@@ -13,6 +13,8 @@ python scripts/install_local.py --destination .venv
 
 Existing destinations must be isolated virtual environments. Symlinked destination/bin/package paths, global/system-site-package destinations and linked console targets are rejected. The core installer does not register native integrations, global commands or desktop services. From source, `PYTHONPATH=src python -m quattro_core.cli ...` works without installation.
 
+The installer verifies the Python advisory's pinned SHA-256 before upgrading an environment to pip 26.2.2. It never disables TLS verification or uses a trusted-host bypass. Existing environments are checked independently because changing a global pip does not replace their bundled certificate stores.
+
 For optional desktop setup on an existing Arch system, use `./install.sh --arch --dry-run`, then `./install.sh --arch` after reviewing the plan. Feature selection, backup behavior, native prerequisites and isolated-home staging are documented in the [README](../README.md#optional-arch-desktop). This separate profile is not an OS installer and does not activate the running desktop.
 
 ## Setup and independent sources
