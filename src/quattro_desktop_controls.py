@@ -429,9 +429,14 @@ def eq_move_streams(sinks, target, source_sink=None):
     source_index = next((sink.get("index") for sink in sinks
                          if sink.get("name") == source_sink), None)
     for stream in json.loads(run(["pactl", "-f", "json", "list", "sink-inputs"])):
+        properties = stream.get("properties", {})
+        # Internal loopbacks must keep their mix bus, not reach a physical output.
+        if (properties.get("node.name") == "quattro_eq_output"
+                or properties.get("node.virtual") in (True, "true")
+                or properties.get("node.dont-move") in (True, "true")):
+            continue
         if source_sink is None or stream.get("sink") == source_index:
-            if stream.get("properties", {}).get("node.name") != "quattro_eq_output":
-                run(["pactl", "move-sink-input", str(stream["index"]), target])
+            run(["pactl", "move-sink-input", str(stream["index"]), target])
 
 
 def eq_recover(reason="DSP unavailable"):

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — Desktop audio routing
+
+- Preserve virtual mix/loopback streams and explicitly immovable streams during equalizer playback migration, preventing microphone/mix audio from being redirected to physical speakers.
+- Add behavior-focused recovery and activation regressions, replacing an audio source-text assertion.
+- Document hardware-local WirePlumber fallback priorities and output-only history recovery without resetting microphone, volume or mute settings.
+
 ## Unreleased — Selectable Arch setup and focused onboarding
 
 - Make Quattro Intelligence the primary README/onboarding path; consolidate guides and remove obsolete product, rebuild-audit and unrelated shell-proxy documents while retaining migration, release evidence and asset licensing.
