@@ -176,6 +176,25 @@ LADSPA downloads or UI-only sliders:
 - `quattro-equalizer.service` is enabled only by an EQ action and restores the
   saved graph after login/service restart. It does not restart the main server.
 
+Playback migration excludes virtual streams and streams marked `node.dont-move`.
+Internal microphone/system-audio loopbacks retain their explicit mix bus during
+EQ activation, bypass and recovery; they must not be redirected to speakers.
+
+WirePlumber owns ordinary physical-output fallback. If Bluetooth disconnection
+selects a microphone's headphone jack instead of the normal speakers, inspect
+both `default.configured.audio.sink` and `default.audio.sink` with `pw-metadata`.
+Stored output history outranks node priority. A WirePlumber 0.5
+`monitor.alsa.rules` fragment can match the normal sink's exact stable
+`node.name` and `media.class = "Audio/Sink"` and set `priority.session = 1400`.
+Keep that policy local to the hardware; do not ship a universal HDMI name or
+disable microphone capture. After reloading the policy, `wpctl clear-default 0`
+clears only output history; select the normal output with `wpctl set-default`
+using its freshly resolved node ID. Do not omit `0` or clear the entire state
+directory: input preferences, volume and mute must be preserved. Explicitly
+selected Bluetooth remains preferred while available, with the normal output
+next in history after it disappears. No polling service or forced-output loop
+is needed.
+
 The active indicator observes native PipeWire node existence. An externally
 selected non-EQ default is explicitly described as bypassing EQ. Target loss is
 fail-closed (`node.dont-fallback`): audio is not silently sent to another physical

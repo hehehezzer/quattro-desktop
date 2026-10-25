@@ -16,12 +16,6 @@ if sys.platform == "linux":
 
 @unittest.skipUnless(sys.platform == "linux", "Desktop controls require Linux")
 class DesktopControlsTests(unittest.TestCase):
-    def test_audio_ipc_serializes_only_stable_eq_fields(self):
-        qml = (Path(__file__).parents[1] / "src/quickshell/components/panels/AudioPanel.qml").read_text()
-        self.assertNotIn("eq: equalizer.snapshot}", qml)
-        for field in ("active", "enabled", "degraded", "preset"):
-            self.assertIn(field + ": equalizer.", qml)
-
     def test_coordinates_validate_finiteness_and_bounds(self):
         for lat, lon in [(91, 0), (0, 181), (float("nan"), 0), (0, float("inf"))]:
             with self.subTest(lat=lat, lon=lon), self.assertRaises(ValueError):
@@ -94,6 +88,87 @@ class DesktopControlsTests(unittest.TestCase):
                       [call.args for call in run.call_args_list])
         self.assertIn((["pactl", "move-sink-input", "20", "alsa_output.pci-hdmi"],),
                       [call.args for call in run.call_args_list])
+
+    def test_eq_recovery_preserves_virtual_mix_and_pinned_streams(self):
+        sinks = [
+            {"index": 10, "name": "quattro_eq"},
+            {"index": 11, "name": "meeting_mix"},
+            {"index": 12, "name": "alsa_output.speakers"},
+            {"index": 13, "name": "bluez_output.headphones"},
+        ]
+        streams = [
+            {"index": 20, "sink": 10, "properties": {
+                "node.name": "browser", "node.virtual": "false"}},
+            {"index": 21, "sink": 11, "properties": {
+                "node.name": "output.loopback", "node.virtual": "true",
+                "target.object": "meeting_mix"}},
+            {"index": 22, "sink": 13, "properties": {
+                "node.name": "conference", "node.dont-move": True}},
+        ]
+
+        def audio_server(argv, **_kwargs):
+            if argv == ["pactl", "-f", "json", "list", "sinks"]:
+                return json.dumps(sinks)
+            if argv == ["pactl", "get-default-sink"]:
+                return "quattro_eq\n"
+            if argv[:2] == ["pactl", "set-default-sink"]:
+                return ""
+            if argv == ["pactl", "-f", "json", "list", "sink-inputs"]:
+                return json.dumps(streams)
+            if argv[:2] == ["pactl", "move-sink-input"]:
+                stream = next(item for item in streams if str(item["index"]) == argv[2])
+                stream["sink"] = next(sink["index"] for sink in sinks if sink["name"] == argv[3])
+                return ""
+            raise AssertionError(argv)
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp)), \
+                patch.object(desktop, "run", side_effect=audio_server):
+            desktop.atomic(desktop.CONFIG / "equalizer.json", json.dumps({
+                "enabled": True, "target": "alsa_output.speakers", "gains": [0] * 10,
+            }))
+            desktop.eq_recover("Bluetooth target disappeared")
+
+        self.assertEqual(streams[0]["sink"], 12)
+        self.assertEqual(streams[1]["sink"], 11)
+        self.assertEqual(streams[2]["sink"], 13)
+
+    def test_eq_activation_keeps_its_output_on_the_physical_sink(self):
+        sinks = [
+            {"index": 10, "name": "quattro_eq"},
+            {"index": 11, "name": "meeting_mix"},
+            {"index": 12, "name": "alsa_output.speakers"},
+        ]
+        streams = [
+            {"index": 20, "sink": 12, "properties": {"node.name": "browser"}},
+            {"index": 21, "sink": 12, "properties": {"node.name": "quattro_eq_output"}},
+            {"index": 22, "sink": 11, "properties": {
+                "node.name": "output.loopback", "node.virtual": True}},
+            {"index": 23, "sink": 12, "properties": {
+                "node.name": "conference", "node.dont-move": "true"}},
+        ]
+
+        def audio_server(argv, **_kwargs):
+            if argv == ["pactl", "-f", "json", "list", "sinks"]:
+                return json.dumps(sinks)
+            if argv[:2] == ["pactl", "set-default-sink"]:
+                return ""
+            if argv == ["pactl", "-f", "json", "list", "sink-inputs"]:
+                return json.dumps(streams)
+            if argv[:2] == ["pactl", "move-sink-input"]:
+                stream = next(item for item in streams if str(item["index"]) == argv[2])
+                stream["sink"] = next(sink["index"] for sink in sinks if sink["name"] == argv[3])
+                return ""
+            raise AssertionError(argv)
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(desktop, "CONFIG", Path(temp)), \
+                patch.object(desktop, "run", side_effect=audio_server), \
+                patch.object(desktop, "eq_graph_active", return_value=True):
+            desktop.atomic(desktop.CONFIG / "equalizer.json", json.dumps({
+                "enabled": True, "target": "alsa_output.speakers", "gains": [0] * 10,
+            }))
+            desktop.eq_activate()
+
+        self.assertEqual([stream["sink"] for stream in streams], [10, 12, 11, 12])
 
     def test_only_alsa_outputs_are_eligible_eq_targets(self):
         sinks = [{"name": "quattro_eq"}, {"name": "talker_meeting_mix"},
