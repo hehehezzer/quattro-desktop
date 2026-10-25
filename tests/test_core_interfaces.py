@@ -117,6 +117,88 @@ class CoreInterfaceTests(unittest.TestCase):
         self.addCleanup(client.close)
         return client
 
+    def native(self, request, config: Path | None = None):
+        process = subprocess.run(
+            [sys.executable, "-m", "quattro_core.native", "--config", str(config or self.config),
+             "--host", "omp", "call"],
+            input=json.dumps(request), capture_output=True, text=True, timeout=20,
+            env=dict(os.environ, PYTHONPATH=str(SRC)))
+        self.assertEqual(process.stderr, "")
+        return process.returncode, json.loads(process.stdout)
+
+    def test_native_and_stdio_fact_correction_preserve_both_identities(self) -> None:
+        client = self.client()
+        old = client.call("save_memory", project="alpha", content="Signer is isolated.",
+                          fact_key="product_signer_live_tmpfs_export")["structuredContent"]
+        arguments = {"project": "alpha", "content": "Release is activated.",
+                     "fact_key": "product_release_activation", "supersedes": old["id"]}
+        cli_rejected = self.cli("memory", "save", "--project", "alpha",
+                                "--content", arguments["content"], "--fact-key", arguments["fact_key"],
+                                "--supersedes", old["id"], ok=False)
+        self.assertIn("fact_identity_mismatch", cli_rejected.stderr)
+        self.assertNotIn(arguments["content"], cli_rejected.stderr)
+        rejected = client.call("save_memory", **arguments)
+        exit_code, native = self.native({"cwd": str(self.repo), "session_id": "rejection-smoke",
+                                         "name": "save_memory", "arguments": arguments})
+        self.assertEqual(exit_code, 1)
+        self.assertTrue(rejected["isError"])
+        for field in ("status", "code", "message", "details"):
+            self.assertEqual(native[field], rejected["structuredContent"][field])
+        self.assertEqual(native["code"], "fact_identity_mismatch")
+        self.assertEqual(native["status"], "conflict")
+        self.assertIn(native["message"], native["summary"])
+        unchanged = client.call("recall_memory", project="alpha", historical=True)["structuredContent"]
+        self.assertEqual(unchanged["total"], 1)
+        self.assertEqual(unchanged["results"][0]["id"], old["id"])
+        self.assertEqual(unchanged["results"][0]["state"], "active")
+        self.assertEqual(unchanged["results"][0]["revision"], old["revision"])
+        arguments.pop("supersedes")
+        exit_code, corrected = self.native({"cwd": str(self.repo), "session_id": "correction-smoke",
+                                            "name": "save_memory", "arguments": arguments})
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(corrected["status"], "ready")
+        memories = client.call("recall_memory", project="alpha", historical=True)["structuredContent"]["results"]
+        self.assertEqual({memory["fact_key"] for memory in memories}, {old["fact_key"], arguments["fact_key"]})
+        self.assertTrue(all(memory["state"] == "active" for memory in memories))
+
+    def test_native_config_failure_and_invalid_request_are_distinct(self) -> None:
+        invalid = self.root / "invalid.json"
+        invalid.write_text('{"private-configuration-marker":', encoding="utf-8")
+        request = {"cwd": str(self.repo), "name": "recall_memory", "arguments": {"project": "alpha"}}
+        exit_code, unavailable = self.native(request, invalid)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual((unavailable["status"], unavailable["code"]), ("unavailable", "operation_unavailable"))
+        self.assertNotIn("private-configuration-marker", json.dumps(unavailable))
+        self.assertNotIn(str(invalid), json.dumps(unavailable))
+        mcp = subprocess.run([sys.executable, "-m", "quattro_intelligence_mcp", "--config", str(invalid)],
+                             input="", capture_output=True, text=True, timeout=20,
+                             env=dict(os.environ, PYTHONPATH=str(SRC)))
+        self.assertNotEqual(mcp.returncode, 0)
+        self.assertEqual(mcp.stdout, "")
+        self.assertNotIn("private-configuration-marker", mcp.stderr)
+        self.assertNotIn(str(invalid), mcp.stderr)
+        for malformed in ([], {"cwd": str(self.repo), "name": "save_memory", "arguments": []}):
+            exit_code, rejected = self.native(malformed)
+            self.assertEqual(exit_code, 1)
+            self.assertEqual((rejected["status"], rejected["code"]), ("invalid_request", "invalid_arguments"))
+
+    def test_native_credential_and_permission_rejections_remain_failed(self) -> None:
+        synthetic = "api_key=" + "example-not-a-real-key-" * 4
+        for arguments, expected in (
+            ({"project": "alpha", "content": synthetic}, ("invalid_request", "invalid_arguments")),
+            ({"project": "alpha", "content": "Verification authority marker.", "verification": "verified"}, ("forbidden", "permission_denied")),
+            ({"project": "private-unregistered-project", "content": "Namespace marker."}, ("forbidden", "permission_denied")),
+        ):
+            exit_code, result = self.native({"cwd": str(self.repo), "name": "save_memory", "arguments": arguments})
+            self.assertEqual(exit_code, 1)
+            self.assertEqual((result["status"], result["code"]), expected)
+            self.assertEqual(result["receipt"]["status"], expected[0])
+            self.assertEqual(result["receipt"]["error_code"], expected[1])
+            self.assertNotIn(arguments["content"], json.dumps(result))
+            self.assertNotIn("private-unregistered-project", json.dumps(result))
+        client = self.client()
+        self.assertEqual(client.call("recall_memory", project="alpha", historical=True)["structuredContent"]["total"], 0)
+
     def test_stdio_discovery_initialize_ping_and_strict_protocol(self) -> None:
         client = self.client()
         initialized = client.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}})
@@ -174,7 +256,12 @@ class CoreInterfaceTests(unittest.TestCase):
         bob = self.client(other_config)
         self.assertEqual(bob.call("recall_memory", project="alpha")["structuredContent"]["total"], 0)
         for name, extra in (("update_memory", {"patch": {"content": "not mine"}}), ("invalidate_memory", {"reason": "not mine"}), ("delete_memory", {})):
-            self.assertTrue(bob.call(name, project="alpha", id=memory_id, **extra)["isError"])
+            rejection = bob.call(name, project="alpha", id=memory_id, **extra)
+            self.assertTrue(rejection["isError"])
+            self.assertEqual(rejection["structuredContent"]["status"], "not_found")
+            self.assertEqual(rejection["structuredContent"]["code"], "memory_not_found")
+            self.assertNotIn("details", rejection["structuredContent"])
+            self.assertNotIn(memory_id, json.dumps(rejection))
         revision = saved["revision"]
         self.assertFalse(restarted.call("update_memory", project="alpha", id=memory_id, patch={"content": "The silver otter remembers bronze.", "expected_revision": revision})["isError"])
         self.assertTrue(restarted.call("update_memory", project="alpha", id=memory_id, patch={"content": "stale", "expected_revision": revision})["isError"])
@@ -271,6 +358,8 @@ class CoreInterfaceTests(unittest.TestCase):
         synthetic = "api_key=" + "example-not-a-real-key-" * 4
         rejected = client.call("save_memory", project="alpha", content=synthetic)
         self.assertTrue(rejected["isError"])
+        self.assertEqual(rejected["structuredContent"]["status"], "invalid_request")
+        self.assertEqual(rejected["structuredContent"]["code"], "invalid_arguments")
         self.assertNotIn(synthetic, json.dumps(rejected))
 
     def test_cli_errors_never_echo_input_and_help_is_independent(self) -> None:

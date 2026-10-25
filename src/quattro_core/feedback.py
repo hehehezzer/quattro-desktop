@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 
+from .errors import InvalidRequestError, PermissionDeniedError
 from .retrieval import utc_now
 
 LABELS = {"relevant", "irrelevant", "outdated", "wrong_project"}
@@ -11,10 +12,10 @@ LABELS = {"relevant", "irrelevant", "outdated", "wrong_project"}
 def record(service, project, result_id, label):
     service.config.authorize(project, write=True)
     if label not in LABELS:
-        raise ValueError("unsupported relevance label")
+        raise InvalidRequestError("unsupported relevance label")
     row = service.connection.execute("SELECT k.source_id,k.file_hash FROM knowledge_documents k WHERE k.document_id=? AND k.project=?",(result_id,project)).fetchone()
     if row is None or not any(s.id == row["source_id"] and s.intent != "excluded" for s in service._sources(project)):
-        raise PermissionError("result not in authorized source scope")
+        raise PermissionDeniedError("result not in authorized source scope")
     with service.connection:
         service.connection.execute("""CREATE TABLE IF NOT EXISTS relevance_feedback(
             project TEXT NOT NULL, result_id TEXT NOT NULL, principal TEXT NOT NULL,

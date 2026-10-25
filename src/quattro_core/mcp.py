@@ -11,13 +11,14 @@ import time
 import math
 import os
 import uuid
-import sqlite3
 import sys
 from pathlib import Path
 from typing import Any, BinaryIO
 
 from .config import Config, default_config_path
 from .knowledge import KnowledgeService
+from .errors import (InvalidRequestError, MemoryConflictError, MemoryNotFoundError,
+                     OperationUnavailableError, PermissionDeniedError)
 from .receipts import Receipts, source_scope
 
 MAX_REQUEST_BYTES = 65536
@@ -74,8 +75,11 @@ TOOLS = [
          {"source_id": string(128), "reindex": {"type": "boolean"}, "dry_run":{"type":"boolean"}}, ("source_id",), write=True),
     tool("get_index_status", "Inspect source states and counts; deep checks fingerprint authorized previously indexed sources.",
          {"project": PROJECT,"deep":{"type":"boolean"}}, ("project",)),
-    tool("save_memory", "Persist a bounded memory attributed to the configured principal. Private memories are visible only to their author. Verified writes require verification permission.",
-         {"project": PROJECT, **MEMORY_FIELDS, "fact_key": string(256), "supersedes": string(128)}, ("project", "content"), write=True),
+    tool("save_memory", "Persist a bounded memory attributed to the configured principal. fact_key is a stable fact identity; supersedes must name an active memory with that same fact_key. Save a different topic separately, without supersedes. Private memories are visible only to their author. Verified writes require verification permission.",
+         {"project": PROJECT, **MEMORY_FIELDS,
+          "fact_key": string(256, description="Stable identity of this fact, not a release label or a different topic."),
+          "supersedes": string(128, description="Active memory ID for the same fact_key only. A different topic is a separate save without supersedes.")},
+         ("project", "content"), write=True),
     tool("recall_memory", "Recall project-visible and principal-owned private memories with filters and pagination. Historical records require an explicit flag.",
          {"project": PROJECT, "query": string(2000, 0), **PAGE, "historical": {"type": "boolean"}, "category": MEMORY_FIELDS["category"], "tags": MEMORY_FIELDS["tags"], "verification": VERIFICATION}, ("project",)),
     tool("update_memory", "Update an accessible memory; fact changes use explicit supersession instead. expected_revision prevents stale updates. Verified updates require permission.",
@@ -166,12 +170,52 @@ def validate(value: Any, schema: dict) -> None:
             raise ValueError("invalid number range")
 
 
+def validate_call(name: str, arguments: dict) -> None:
+    """Translate only caller-validation failures, never service failures."""
+    try:
+        if not isinstance(name, str) or name not in TOOL_MAP:
+            raise ValueError("unknown tool")
+        _bounded_json(arguments)
+        validate(arguments, TOOL_MAP[name]["inputSchema"])
+        if name in {"search_knowledge", "get_project_context"} and not arguments["query"].strip():
+            raise ValueError("query must be nonempty")
+    except (ValueError, TypeError, UnicodeError, OverflowError, RecursionError) as error:
+        raise InvalidRequestError() from error
+
+
+def classify_error(error: Exception, *, request_failure: bool = True) -> dict:
+    """Expose only static guidance or an explicitly trusted domain rejection."""
+    if request_failure:
+        if isinstance(error, MemoryConflictError):
+            return {"status": "conflict", "code": error.code, "message": str(error),
+                    "details": error.details}
+        if isinstance(error, PermissionDeniedError):
+            return {"status": "forbidden", "code": "permission_denied",
+                    "message": "Operation not permitted. Use an authorized project and the configured write or verification permissions."}
+        if isinstance(error, MemoryNotFoundError):
+            return {"status": "not_found", "code": "memory_not_found",
+                    "message": "Memory not found or inaccessible. Recall accessible memories in the authorized project before choosing an ID."}
+        if isinstance(error, InvalidRequestError):
+            return {"status": "invalid_request", "code": "invalid_arguments",
+                    "message": "Invalid tool arguments or memory data. Check the tool schema, content and metadata limits, required references, and remove credential-shaped data."}
+    return {"status": "unavailable", "code": "operation_unavailable",
+            "message": "Operation unavailable. Configuration, runtime or storage needs attention; no retrieval or delivery success is claimed."}
+
+
 class McpRuntime:
     def __init__(self, config: Config) -> None:
         self.config = config
-        self.service = KnowledgeService(config)
         self.native_host = os.environ.get("QUATTRO_NATIVE_HOST")
-        self.native_receipts = Receipts(config) if self.native_host in {"omp", "codex"} else None
+        self.native_receipts = None
+        try:
+            self.service = KnowledgeService(config)
+            try:
+                self.native_receipts = Receipts(config) if self.native_host in {"omp", "codex"} else None
+            except Exception:
+                self.service.close()
+                raise
+        except Exception as error:
+            raise OperationUnavailableError() from error
         self.native_session = f"{self.native_host}-mcp-{uuid.uuid4().hex}"
 
     def close(self) -> None:
@@ -180,10 +224,7 @@ class McpRuntime:
             self.native_receipts.close()
 
     def call(self, name: str, arguments: dict) -> dict:
-        if name not in TOOL_MAP:
-            raise ValueError("unknown tool")
-        _bounded_json(arguments)
-        validate(arguments, TOOL_MAP[name]["inputSchema"])
+        validate_call(name, arguments)
         args = dict(arguments)
         if name == "index_source":
             source = self.config.source(args["source_id"])
@@ -195,13 +236,13 @@ class McpRuntime:
             source = self.config.source(source_id)
             self.config.authorize(source.project)
             if source.project != args["project"]:
-                raise PermissionError("source project mismatch")
+                raise PermissionDeniedError("source project mismatch")
         if name in ("search_knowledge", "get_project_context", "get_index_status"):
             return getattr(self.service, name)(**args)
         if name in ("save_memory", "update_memory"):
             supplied = args.get("patch", args)
             if supplied.get("verification") == "verified" and not self.config.can_verify:
-                raise PermissionError("verification unavailable")
+                raise PermissionDeniedError("verification unavailable")
         if name == "save_memory":
             return self.service.memory.save(**args, author=self.config.principal)
         if name == "update_memory":
@@ -213,15 +254,10 @@ def rpc_error(request_id: Any, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
-def tool_error(error: Exception) -> dict:
-    message = "Operation unavailable"
-    if isinstance(error, PermissionError):
-        message = "Operation not permitted"
-    elif isinstance(error, KeyError):
-        message = "Memory not found or inaccessible"
-    elif isinstance(error, (ValueError, TypeError, UnicodeError)):
-        message = "Invalid tool arguments or memory data"
-    return {"content": [{"type": "text", "text": message}], "isError": True}
+def tool_error(error: Exception, *, request_failure: bool = True) -> dict:
+    failure = classify_error(error, request_failure=request_failure)
+    return {"content": [{"type": "text", "text": f"{failure['code']}: {failure['message']}"}],
+            "structuredContent": failure, "isError": True}
 
 
 def handle(message: Any, runtime: McpRuntime) -> dict | None:
@@ -263,20 +299,26 @@ def handle(message: Any, runtime: McpRuntime) -> dict | None:
             identity = {"session_id":runtime.native_session,
                         "transport":"herdr" if os.environ.get("HERDR_ENV") == "1" and os.environ.get("HERDR_PANE_ID") and os.environ.get("HERDR_SOCKET_PATH") else "native",
                         "diagnostic":os.environ.get("QUATTRO_DIAGNOSTIC") == "1"}
+            request_failure = True
             try:
                 started = time.monotonic()
                 arguments = params.get("arguments", {})
                 if params["name"] not in TOOL_MAP:
-                    raise ValueError("unknown tool")
+                    raise InvalidRequestError("unknown tool")
                 if runtime.native_receipts is not None:
                     selected_project = runtime.config.source(arguments.get("source_id")).project if params["name"] == "index_source" else arguments.get("project")
                     if selected_project is not None:
                         runtime.config.authorize(selected_project)
                     resolved_sources = source_scope(runtime.config,params["name"],selected_project,arguments)
+                    request_failure = False
                     attempt = runtime.native_receipts.record(runtime.native_host,identity,selected_project,params["name"],"attempted",
                         {"authorized_scope":[selected_project] if selected_project else [],"authorized_sources":resolved_sources,"result_count":0})
+                request_failure = True
                 value = runtime.call(params["name"], arguments)
-                result = {"content": [{"type": "text", "text": json.dumps(value, ensure_ascii=False, allow_nan=False)}],
+                request_failure = False
+                text = json.dumps(value, ensure_ascii=False, allow_nan=False)
+                text.encode("utf-8")
+                result = {"content": [{"type": "text", "text": text}],
                           "structuredContent": value, "isError": False}
                 if runtime.native_receipts is not None:
                     from .native import evidence_metadata
@@ -290,14 +332,16 @@ def handle(message: Any, runtime: McpRuntime) -> dict | None:
                     result["_meta"] = {"quattro.receipt":receipt}
                     result["content"].append({"type":"text","text":f"Quattro receipt {receipt['id']}: result returned; native context delivery and model reliance unverified."})
             except Exception as error:
-                result = tool_error(error)
+                result = tool_error(error, request_failure=request_failure)
                 if attempt is not None:
                     try:
-                        receipt = runtime.native_receipts.record(runtime.native_host,identity,selected_project,params["name"],"unavailable",
+                        failure = result["structuredContent"]
+                        receipt = runtime.native_receipts.record(runtime.native_host,identity,selected_project,params["name"],failure["status"],
                             {"authorized_scope":[selected_project] if selected_project else [],"result_count":0,
-                             "authorized_sources":resolved_sources,"request_id":attempt["id"],"error_type":type(error).__name__})
+                             "authorized_sources":resolved_sources,"request_id":attempt["id"],
+                             "error_type":type(error).__name__,"error_code":failure["code"]})
                         result["_meta"] = {"quattro.receipt":receipt}
-                    except (ValueError, OSError, sqlite3.Error):
+                    except Exception:
                         pass
         else:
             return rpc_error(request_id, -32601, "Method not found")

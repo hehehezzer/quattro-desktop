@@ -63,12 +63,49 @@ class MemoryCoreTests(unittest.TestCase):
         self.assertEqual(self.store.connection.execute("SELECT count(*) FROM memory_events WHERE memory_id=?", (replacement["id"],)).fetchone()[0], 0)
         self.assertEqual(self.store.stats("alpha")["integrity"], "ok")
 
+    def test_supersession_identity_conflict_is_actionable_and_atomic(self):
+        signer = self.store.save("alpha", "Signer exports into temporary storage", fact_key="signer")
+        original = self.store.get("alpha", signer["id"])
+        with self.assertRaises(ValueError) as rejected:
+            self.store.save("alpha", "Release activation passed", fact_key="release",
+                            supersedes=signer["id"])
+        self.assertEqual(getattr(rejected.exception, "code", None), "fact_identity_mismatch")
+        self.assertEqual(rejected.exception.details, {
+            "memory_id": signer["id"], "existing_fact_key": "signer",
+            "requested_fact_key": "release",
+        })
+        self.assertEqual(self.store.get("alpha", signer["id"]), original)
+        self.assertEqual(self.store.recall("alpha", "activation")["results"], [])
+        self.assertEqual(self.store.connection.execute("SELECT count(*) FROM memory_events").fetchone()[0], 1)
+
+        release = self.store.save("alpha", "Release activation passed", fact_key="release")
+        self.assertEqual({row["id"] for row in self.store.recall("alpha")["results"]},
+                         {signer["id"], release["id"]})
+        self.assertEqual(self.store.get("alpha", signer["id"])["state"], "active")
+
+    def test_private_supersession_target_does_not_disclose_fact_identity(self):
+        private = self.store.save("alpha", "Private signing evidence", author="alice",
+                                  visibility="private", fact_key="private-signing")
+        with self.assertRaises(KeyError) as rejected:
+            self.store.save("alpha", "Release activation passed", author="bob",
+                            fact_key="release", supersedes=private["id"])
+        self.assertNotIn("private-signing", str(rejected.exception))
+        self.assertEqual(self.store.recall("alpha", principal="bob")["results"], [])
+        self.assertEqual(self.store.get("alpha", private["id"], principal="alice")["revision"], 1)
+        self.assertEqual(self.store.connection.execute("SELECT count(*) FROM memory_events").fetchone()[0], 1)
+
     def test_revision_conflict_and_failed_update_preserve_original(self):
-        memory = self.store.save("alpha", "Investigated the index timeout", category="episodic")
+        memory = self.store.save("alpha", "Investigated the index timeout", category="episodic",
+                                 fact_key="index_timeout")
         changed = self.store.update("alpha", memory["id"], {"tags": ["timeout"], "expected_revision": 1})
         self.assertEqual(changed["revision"], 2)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as stale:
             self.store.update("alpha", memory["id"], {"content": "Stale writer wins", "expected_revision": 1})
+        self.assertEqual(stale.exception.code, "revision_conflict")
+        self.assertEqual(stale.exception.details["current_revision"], 2)
+        with self.assertRaises(ValueError) as overwrite:
+            self.store.update("alpha", memory["id"], {"content": "Different fact content", "expected_revision": 2})
+        self.assertEqual(overwrite.exception.code, "supersession_required")
         with self.assertRaises(ValueError):
             self.store.update("alpha", memory["id"], {"confidence": float("nan")})
         current = self.store.recall("alpha", "timeout")["results"][0]

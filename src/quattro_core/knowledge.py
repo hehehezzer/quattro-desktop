@@ -18,6 +18,7 @@ from dataclasses import asdict
 from contextlib import closing
 from typing import Any
 
+from .errors import InvalidRequestError, PermissionDeniedError
 from .memory import MemoryStore
 from .retrieval import (
     RetrievalStore, LocalNeuralEmbeddingBackend, FeatureHashEmbeddingBackend,
@@ -220,10 +221,10 @@ class KnowledgeService:
         sources = [s for s in self.config.sources if s.project == project]
         if source_ids is not None:
             if not isinstance(source_ids, (list, tuple)) or not all(isinstance(s, str) for s in source_ids):
-                raise ValueError("source_ids must be a list of source identifiers")
+                raise InvalidRequestError("source_ids must be a list of source identifiers")
             allowed = {s.id for s in sources}
             if any(s not in allowed for s in source_ids):
-                raise PermissionError("source is not authorized for project")
+                raise PermissionDeniedError("source is not authorized for project")
             sources = [s for s in sources if s.id in source_ids]
         return sources
 
@@ -237,10 +238,10 @@ class KnowledgeService:
     def index_source(self, source_id, reindex=False, dry_run=False):
         source = self.config.source(source_id)
         if type(reindex) is not bool or type(dry_run) is not bool:
-            raise ValueError("index flags must be booleans")
+            raise InvalidRequestError("index flags must be booleans")
         self.config.authorize(source.project, write=not dry_run)
         if source.intent == "excluded":
-            raise PermissionError("source is explicitly excluded")
+            raise PermissionDeniedError("source is explicitly excluded")
         for retry in range(3):
             try:
                 return self._index_source(source, reindex, dry_run)
@@ -273,7 +274,7 @@ class KnowledgeService:
             with self.store.transaction():
                 old_source = self.connection.execute("SELECT project FROM knowledge_sources WHERE source_id=?", (source.id,)).fetchone()
                 if old_source and old_source[0] != source.project:
-                    raise PermissionError("source identity belongs to another project")
+                    raise PermissionDeniedError("source identity belongs to another project")
                 state = repository_state(root, include_tracked=True)
                 tracked = set(state.get("trackedPaths", ()))
                 for name, digest in files.items():
@@ -350,7 +351,7 @@ class KnowledgeService:
 
     def search_knowledge(self, project, query, limit=10, offset=0, source_ids=None, strategy="hybrid", explain=False):
         if strategy not in {"keyword", "semantic", "hybrid"}:
-            raise ValueError("unsupported retrieval strategy")
+            raise InvalidRequestError("unsupported retrieval strategy")
         sources = self._sources(project, source_ids)
         status = self.get_index_status(project)
         scoped_status = [s for s in status["sources"] if source_ids is None or s["source_id"] in source_ids]
@@ -362,9 +363,9 @@ class KnowledgeService:
         sources = [s for s in sources if s.intent != "excluded" and any(
             t["source_id"] == s.id and t["freshness"] not in {"root_changed", "unavailable"} for t in scoped_status)]
         if not isinstance(query, str) or not query.strip() or len(query.encode()) > 32768:
-            raise ValueError("query must be nonempty and bounded")
+            raise InvalidRequestError("query must be nonempty and bounded")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100 or isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
-            raise ValueError("invalid pagination")
+            raise InvalidRequestError("invalid pagination")
         # Code identifiers are exact evidence requests, not approximate concepts.
         # A cosine neighbor without the identifier cannot support a code citation.
         identifier_query = bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", query.strip()) and
@@ -504,7 +505,7 @@ class KnowledgeService:
 
     def get_project_context(self, project, query, budget=2000, limit=10, source_ids=None, strategy="hybrid"):
         if isinstance(budget,bool) or not isinstance(budget,int) or budget < 512 or budget > 32768:
-            raise ValueError("context budget must be between 512 and 32768 UTF-8 bytes")
+            raise InvalidRequestError("context budget must be between 512 and 32768 UTF-8 bytes")
         found = self.search_knowledge(project, query, limit=limit, source_ids=source_ids, strategy=strategy)
         top_score = max((entry["score"] for entry in found["results"]), default=0)
         context_results = [entry for entry in found["results"] if entry["score"] >= top_score * 0.72]
@@ -609,22 +610,22 @@ class KnowledgeService:
         for _ in range(3):
             result["budget"]["estimated_used"] = _bytes(result)
         if _bytes(result) > budget:
-            raise ValueError("context metadata exceeds requested budget")
+            raise InvalidRequestError("context metadata exceeds requested budget")
         return result
 
     def inspect_source(self, source_id, path=None):
         source = self.config.source(source_id)
         if source.intent == "excluded":
-            raise PermissionError("source is excluded")
+            raise PermissionDeniedError("source is excluded")
         status = next(s for s in self.get_index_status(source.project, deep=True)["sources"] if s["source_id"] == source_id)
         if path is None:
             return status
         relative = pathlib.Path(path)
         if relative.is_absolute() or ".." in relative.parts:
-            raise PermissionError("source path escapes authorized root")
+            raise PermissionDeniedError("source path escapes authorized root")
         files, _ = _source_snapshot(source)
         if relative.as_posix() not in files:
-            raise PermissionError("source file is not eligible for inspection")
+            raise PermissionDeniedError("source file is not eligible for inspection")
         content, _ = _read_file(source.root, relative)
         if hashlib.sha256(content.encode()).hexdigest() != files[relative.as_posix()]:
             raise ValueError("source changed during inspection")
@@ -695,7 +696,7 @@ class KnowledgeService:
             projects = [project] if project else self.config.projects
             allowed = {s.id for p in projects for s in self._sources(p)}
             if any(s not in allowed for s in source_ids):
-                raise PermissionError("source is not authorized")
+                raise PermissionDeniedError("source is not authorized")
         selected = [s for s in status["sources"] if s["status"] != "excluded" and
                     (s["source_id"] in source_ids if source_ids is not None else s["intended"]) and
                     (not retry_failed or s["status"] == "failed")]
