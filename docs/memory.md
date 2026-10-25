@@ -31,6 +31,16 @@ Update → atomic expected-revision check, validation, revision increment and ev
 
 Supersede → create a new record with `supersedes` and the same fact key. The old record becomes `superseded`, links to the new ID and disappears from ordinary recall. Competing active values for the same accessible fact key are rejected. Private facts belonging to another principal do not disclose their presence through a conflict error.
 
+A new topic is not a replacement for an unrelated fact. Save it separately
+without `supersedes`; do not rename a fact or drop supersession merely to bypass
+a same-fact conflict. Rejected state, identity and revision transitions retain
+their transactional rollback and return stable conflict codes with safe context
+from accessible records. Inaccessible private IDs remain indistinguishable from
+missing IDs. The operator CLI prints the trusted conflict code and guidance;
+native/MCP response fields and genuine availability failures are documented in
+[the integration contract](INTEGRATION.md#safe-operation-failures). No boundary
+automatically rewrites a failed request or retries its mutation.
+
 Invalidate → mark `invalid`, retain reason/history and remove from ordinary recall. Historical retrieval is explicit; `memory history --project PROJECT ID` authorizes the record before exposing retained revision snapshots. Delete → remove the record, FTS row and content-bearing event history. Deletion is logical, not guaranteed forensic erasure from SQLite free pages, WAL or backups.
 
 ## Freshness and contradictions

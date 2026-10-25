@@ -5,13 +5,13 @@ import argparse
 import datetime as dt
 import json
 import pathlib
-import sqlite3
 import sys
 import time
 from contextlib import closing
 
 from .config import Config, default_config_path, safe_path
-from .mcp import McpRuntime, TOOLS, TOOL_MAP, strict_json
+from .errors import InvalidRequestError, OperationUnavailableError, PermissionDeniedError
+from .mcp import McpRuntime, TOOLS, TOOL_MAP, classify_error, strict_json
 from .retrieval import redact
 from .receipts import Receipts, source_scope
 
@@ -22,7 +22,10 @@ HOSTS = ("omp", "codex")
 
 
 def project_for(config: Config, cwd: str):
-    root = safe_path(pathlib.Path(cwd), directory=True)
+    try:
+        root = safe_path(pathlib.Path(cwd), directory=True)
+    except (ValueError, TypeError) as error:
+        raise InvalidRequestError() from error
     candidates = [source for source in config.sources if source.project != "shared" and root.is_relative_to(source.root)]
     if not candidates:
         return None
@@ -65,15 +68,19 @@ def evidence_metadata(result):
             evidence.append({"id":memory["id"],"revision":memory.get("updated_at"),
                              "verification":memory.get("verification")})
     return {"selected_results":evidence[:100],
-            "context_bytes":len(json.dumps(result,ensure_ascii=False,sort_keys=True).encode()),
+            "context_bytes":len(json.dumps(result,ensure_ascii=False,sort_keys=True,allow_nan=False).encode("utf-8")),
             "strategy":"hybrid","citation_observed":False}
 
 
 def execute(config: Config, host: str, action: str, request: dict):
     if host not in HOSTS or not isinstance(request, dict):
-        raise ValueError("invalid native request")
+        raise InvalidRequestError("invalid native request")
     request.pop("_quattro_request", None)
-    with closing(Receipts(config)) as receipts:
+    try:
+        receipt_store = Receipts(config)
+    except Exception as error:
+        raise OperationUnavailableError() from error
+    with closing(receipt_store) as receipts:
         if action == "status":
             return receipts.recent(host, request)
         if action in {"delivered", "submitted", "delivery_failed"}:
@@ -82,15 +89,15 @@ def execute(config: Config, host: str, action: str, request: dict):
             return {"tools":TOOLS,"projects":list(config.projects)}
         cwd = request.get("cwd")
         if not isinstance(cwd, str):
-            raise ValueError("cwd is required")
+            raise InvalidRequestError("cwd is required")
         project = project_for(config, cwd)
         started = time.monotonic()
         arguments = request.get("arguments", {}) if action == "call" else {}
         if not isinstance(arguments, dict):
-            raise ValueError("tool arguments must be an object")
+            raise InvalidRequestError("tool arguments must be an object")
         operation = request.get("name") if action == "call" else action
-        if action == "call" and operation not in TOOL_MAP:
-            raise ValueError("unknown native tool")
+        if action == "call" and (not isinstance(operation, str) or operation not in TOOL_MAP):
+            raise InvalidRequestError("unknown native tool")
         target = config.source(arguments.get("source_id")).project if operation == "index_source" else arguments.get("project",project)
         if target is not None:
             config.authorize(target)
@@ -99,20 +106,23 @@ def execute(config: Config, host: str, action: str, request: dict):
         attempt = receipts.record(host,request,target,operation,"attempted",{
             "authorized_scope":scope,"authorized_sources":resolved_sources,
             "result_count":0})
-        request["_quattro_request"] = {"id":attempt["id"],"project":target,"scope":scope,"sources":resolved_sources}
+        request["_quattro_request"] = {"id":attempt["id"],"project":target,"scope":scope,
+                                       "sources":resolved_sources,"operation":operation}
         with closing(McpRuntime(config)) as runtime:
             if action == "call":
                 name = request.get("name")
                 arguments = request.get("arguments", {})
                 if not isinstance(arguments, dict):
-                    raise ValueError("tool arguments must be an object")
+                    raise InvalidRequestError("tool arguments must be an object")
                 arguments = dict(arguments)
                 if name != "index_source" and "project" not in arguments:
                     if project is None:
-                        raise PermissionError("working directory is not registered; specify an authorized project")
+                        raise PermissionDeniedError("working directory is not registered; specify an authorized project")
                     arguments["project"] = project
                 selected = config.source(arguments.get("source_id")).project if name == "index_source" else arguments.get("project", project)
                 result = runtime.call(name, arguments)
+                if not isinstance(result, dict):
+                    raise OperationUnavailableError()
                 semantic = result.get("semantic", {}) if isinstance(result, dict) else {}
                 count = (len(result.get("results",result.get("knowledge",[]))) + len(result.get("memories",[]))) if isinstance(result, dict) else 0
                 receipt = receipts.record(host,request,selected,name,"ready",{
@@ -124,10 +134,10 @@ def execute(config: Config, host: str, action: str, request: dict):
                     "strategy":arguments.get("strategy","hybrid")})
                 return {"status":"ready","project":selected,"result":result,"receipt":receipt,"summary":summary(receipt)}
             if action != "context":
-                raise ValueError("unsupported native operation")
+                raise InvalidRequestError("unsupported native operation")
             query = request.get("query", "")
             if not isinstance(query,str) or len(query)>2000 or not query.strip():
-                raise ValueError("query must contain 1 to 2000 characters")
+                raise InvalidRequestError("query must contain 1 to 2000 characters")
             query = redact(query)[0]
             projects = ([project] if project else []) + (["shared"] if "shared" in config.projects else [])
             if not projects:
@@ -144,7 +154,7 @@ def execute(config: Config, host: str, action: str, request: dict):
             metadata = {"semantic":semantic,"result_count":count,"sources":sources,"project_registered":project is not None,
                         "latency_ms":round((time.monotonic()-started)*1000,2),"model_reliance":"unknown",
                         "request_id":attempt["id"],
-                        "authorized_scope":projects,"authorized_sources":resolved_sources,**evidence_metadata({"projects":contexts})}
+                        "authorized_scope":projects,"authorized_sources":resolved_sources,**evidence_metadata({"projects":contexts,"sources":sources})}
             receipt = receipts.record(host,request,project,"context","ready",metadata)
             return {"status":"ready","project":project,"context":{"projects":contexts,"sources":sources,"untrusted":True},"receipt":receipt,"summary":summary(receipt)}
 
@@ -158,30 +168,47 @@ def main(argv=None):
     args = parser.parse_args(argv)
     config = None
     request = {}
+    request_failure = True
+    failed = False
     try:
         raw = b"" if sys.stdin.isatty() and args.action in {"status","tools"} else sys.stdin.buffer.read(MAX_INPUT+1)
         if len(raw)>MAX_INPUT:
-            raise ValueError("native input exceeds limit")
-        request = strict_json(raw) if raw.strip() else {}
+            raise InvalidRequestError("native input exceeds limit")
+        try:
+            request = strict_json(raw) if raw.strip() else {}
+        except (ValueError, TypeError, UnicodeError, OverflowError, RecursionError) as error:
+            raise InvalidRequestError("invalid native JSON") from error
+        if not isinstance(request, dict):
+            raise InvalidRequestError("native request must be an object")
+        request.pop("_quattro_request", None)
         if args.session is not None:
             request["session_id"] = args.session
+        request_failure = False
         config = Config.load(args.config)
+        request_failure = True
         result = execute(config,args.host,args.action,request)
+        request_failure = False
+        rendered = json.dumps(result,ensure_ascii=False,allow_nan=False)
+        rendered.encode("utf-8")
     except Exception as error:
-        result = {"status":"unavailable","error":type(error).__name__,"summary":"Quattro intelligence unavailable; no retrieval or delivery success claimed."}
+        failed = True
+        failure = classify_error(error, request_failure=request_failure)
+        result = {**failure, "error":type(error).__name__,
+                  "summary":f"Quattro {failure['status']} ({failure['code']}): {failure['message']} No retrieval or delivery success claimed."}
         if config is not None and isinstance(request, dict) and args.action in {"context", "call"}:
             try:
                 with closing(Receipts(config)) as receipts:
                     trace = request.get("_quattro_request", {})
-                    result["receipt"] = receipts.record(args.host,request,trace.get("project"),args.action,"unavailable",
-                        {"semantic":{"available":False,"reason":"native operation failed"},"result_count":0,
-                         "request_id":trace.get("id"),"authorized_scope":trace.get("scope",[]),
-                         "authorized_sources":trace.get("sources",[]),"error_type":type(error).__name__})
-            except (ValueError, OSError, sqlite3.Error):
+                    result["receipt"] = receipts.record(args.host,request,trace.get("project"),trace.get("operation",args.action),failure["status"],
+                        {"result_count":0, "request_id":trace.get("id"),"authorized_scope":trace.get("scope",[]),
+                         "authorized_sources":trace.get("sources",[]),"error_type":type(error).__name__,
+                         "error_code":failure["code"]})
+            except Exception:
                 # An invalid identity or inaccessible receipt store cannot become a success.
                 result["receipt_unavailable"] = True
-    print(json.dumps(result,ensure_ascii=False,allow_nan=False))
-    return 0 if result.get("status") != "unavailable" else 1
+        rendered = json.dumps(result,ensure_ascii=False,allow_nan=False)
+    print(rendered)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

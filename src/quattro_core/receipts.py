@@ -7,6 +7,7 @@ import sqlite3
 import uuid
 
 from .config import Config, safe_path
+from .errors import InvalidRequestError, PermissionDeniedError
 from .retrieval import private_database, redact
 
 
@@ -16,9 +17,9 @@ def utc_now() -> str:
 
 def text(value, maximum=256):
     if not isinstance(value, str) or len(value) > maximum or any(ord(c) < 32 for c in value):
-        raise ValueError("invalid native identity")
+        raise InvalidRequestError("invalid native identity")
     if redact(value)[1]:
-        raise ValueError("credential-shaped native identity")
+        raise InvalidRequestError("credential-shaped native identity")
     return value
 
 
@@ -33,9 +34,9 @@ def source_scope(config, operation, project, arguments):
     selected = arguments.get("source_ids")
     if selected is not None:
         if not isinstance(selected, list) or any(not isinstance(s, str) for s in selected):
-            raise ValueError("invalid source scope")
+            raise InvalidRequestError("invalid source scope")
         if set(selected) - {s.id for s in sources}:
-            raise PermissionError("source scope is not authorized")
+            raise PermissionDeniedError("source scope is not authorized")
         sources = [s for s in sources if s.id in selected]
     return [s.id for s in sources if s.intent != "excluded"]
 
@@ -82,7 +83,7 @@ class Receipts:
         transport = "herdr" if request.get("transport") == "herdr" else "native"
         diagnostic = request.get("diagnostic", False)
         if type(diagnostic) is not bool:
-            raise ValueError("diagnostic must be boolean")
+            raise InvalidRequestError("diagnostic must be boolean")
         identifier = "qi-" + uuid.uuid4().hex
         retrieval = operation in {"context", "search_knowledge", "get_project_context", "recall_memory"}
         metadata = {**metadata, "stages": {
@@ -111,14 +112,14 @@ class Receipts:
         allowed = {"confirmed":{"omp_context_messages":"omp","codex_model_input_observed":"codex"},
                    "submitted":{"codex_hook_stdout":"codex"}, "failed":{"omp_context_messages":"omp","codex_hook_stdout":"codex"}}
         if outcome not in allowed or allowed[outcome].get(boundary) != host:
-            raise ValueError("unsupported host delivery boundary")
+            raise InvalidRequestError("unsupported host delivery boundary")
         row = self.connection.execute("SELECT project,metadata_json FROM native_receipts WHERE id=? AND host=? AND session_id=?",
                                       (identifier,host,session)).fetchone()
         if row is None:
-            raise ValueError("matching returned receipt unavailable")
+            raise InvalidRequestError("matching returned receipt unavailable")
         metadata = json.loads(row["metadata_json"])
         if not scope_allowed(self.config, row["project"], metadata):
-            raise PermissionError("receipt scope is not authorized")
+            raise PermissionDeniedError("receipt scope is not authorized")
         placeholders = ",".join("?" for _ in self.config.projects)
         with self.connection:
             changed = self.connection.execute(f"""UPDATE native_receipts SET delivery=?,boundary=?,delivered_at=?
@@ -127,7 +128,7 @@ class Receipts:
                 AND (project IS NULL OR project IN ({placeholders}))""",
                 (outcome,boundary,utc_now(),identifier,host,session,*self.config.projects)).rowcount
         if not changed:
-            raise ValueError("matching returned receipt unavailable")
+            raise InvalidRequestError("matching returned receipt unavailable")
         return {"receipt_id":identifier,"delivery":outcome,"boundary":boundary,
                 "client_accepted":"not_observed","answer_cited":"not_observed","model_reliance":"unknown"}
 

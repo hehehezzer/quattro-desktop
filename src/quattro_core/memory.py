@@ -13,6 +13,10 @@ import uuid
 from typing import Any
 
 from .config import identifier, safe_path
+from .errors import (
+    InvalidRequestError, MemoryConflictError, MemoryNotFoundError,
+    OperationUnavailableError, PermissionDeniedError,
+)
 from .retrieval import QUERY_STOPWORDS, private_database, redact
 
 CATEGORIES = {"episodic", "semantic", "procedural", "shared"}
@@ -26,15 +30,16 @@ def now() -> str:
 def clean_json(value: Any) -> str:
     try:
         encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        encoded_bytes = encoded.encode("utf-8")
     except (ValueError, TypeError, RecursionError) as error:
-        raise ValueError("memory metadata must be valid JSON") from error
-    if len(encoded.encode()) > 32_000 or redact(encoded)[1]:
-        raise ValueError("memory contains oversized or credential-shaped data")
+        raise InvalidRequestError("memory metadata must be valid JSON") from error
+    if len(encoded_bytes) > 32_000 or redact(encoded)[1]:
+        raise InvalidRequestError("memory contains oversized or credential-shaped data")
     pending = [value]
     while pending:
         item = pending.pop()
         if isinstance(item, str) and redact(item)[1]:
-            raise ValueError("memory contains credential-shaped data")
+            raise InvalidRequestError("memory contains credential-shaped data")
         if isinstance(item, dict):
             pending.extend(item.keys())
             pending.extend(item.values())
@@ -47,23 +52,29 @@ def validate(record: dict[str, Any]) -> None:
     identifier(record["project"])
     identifier(record["author"])
     if record["category"] not in CATEGORIES or record["verification"] not in VERIFICATIONS:
-        raise ValueError("invalid memory category or verification")
+        raise InvalidRequestError("invalid memory category or verification")
     content = record["content"]
-    if not isinstance(content, str) or not content.strip() or len(content.encode()) > 24_000:
-        raise ValueError("memory content must contain 1 to 24000 UTF-8 bytes")
+    if not isinstance(content, str) or not content.strip():
+        raise InvalidRequestError("memory content must contain 1 to 24000 UTF-8 bytes")
+    try:
+        content_bytes = len(content.encode("utf-8"))
+    except UnicodeError as error:
+        raise InvalidRequestError("memory content must be valid UTF-8") from error
+    if content_bytes > 24_000:
+        raise InvalidRequestError("memory content must contain 1 to 24000 UTF-8 bytes")
     if record["visibility"] not in {"project", "private"}:
-        raise ValueError("invalid memory visibility")
+        raise InvalidRequestError("invalid memory visibility")
     confidence = record["confidence"]
     if type(confidence) not in {int, float} or not math.isfinite(confidence) or not 0 <= confidence <= 1:
-        raise ValueError("invalid memory confidence")
+        raise InvalidRequestError("invalid memory confidence")
     for field in ("references", "tags"):
         values = record[field]
         if not isinstance(values, list) or len(values) > 50 or any(not isinstance(v, str) or not v.strip() or len(v) > 1000 for v in values):
-            raise ValueError("invalid memory references or tags")
+            raise InvalidRequestError("invalid memory references or tags")
     if record["verification"] == "verified" and not record["references"]:
-        raise ValueError("verified memory requires source references")
+        raise InvalidRequestError("verified memory requires source references")
     if not isinstance(record["metadata"], dict):
-        raise ValueError("memory metadata must be an object")
+        raise InvalidRequestError("memory metadata must be an object")
     if record["fact_key"] is not None:
         identifier(record["fact_key"])
     clean_json(record)
@@ -149,8 +160,17 @@ class MemoryStore:
             "SELECT * FROM memories WHERE id=? AND project=? AND (visibility='project' OR author=?)",
             (memory_id, project, principal)).fetchone()
         if row is None:
-            raise KeyError("memory not found in authorized namespace")
+            raise MemoryNotFoundError("memory not found in authorized namespace")
         return self._projection(row)
+
+    def _validated_get(self, project: str, memory_id: str, principal: str) -> dict[str, Any]:
+        record = self._get(project, memory_id, principal)
+        try:
+            # The projection marker is not part of the persisted record budget.
+            validate({key: value for key, value in record.items() if key != "untrusted"})
+        except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as error:
+            raise OperationUnavailableError() from error
+        return record
 
     def get(self, project: str, id: str, principal: str = "local") -> dict[str, Any]:
         return self._get(project, id, principal)
@@ -181,11 +201,17 @@ class MemoryStore:
         validate(record)
         self.connection.execute("BEGIN IMMEDIATE")
         try:
-            old = self._get(project, supersedes, author) if supersedes else None
+            old = self._validated_get(project, supersedes, author) if supersedes else None
             if old and (old["state"] != "active" or old["content"] == content):
-                raise ValueError("supersession requires an active, different memory")
+                raise MemoryConflictError(
+                    "invalid_supersession",
+                    "Supersession requires an active memory and changed content. Recall the current fact before replacing it.",
+                    memory_id=old["id"], state=old["state"])
             if old and old["fact_key"] and fact_key != old["fact_key"]:
-                raise ValueError("supersession must preserve the fact identity")
+                raise MemoryConflictError(
+                    "fact_identity_mismatch",
+                    "Supersession must retain the existing fact_key. To save a different fact, omit supersedes.",
+                    memory_id=old["id"], existing_fact_key=old["fact_key"], requested_fact_key=fact_key)
             duplicate = self.connection.execute(
                 "SELECT * FROM memories WHERE project=? AND content_hash=? AND state='active' AND visibility=? AND (visibility='project' OR author=?)",
                 (project, digest(content), visibility, author)).fetchone()
@@ -195,12 +221,21 @@ class MemoryStore:
                     (project, fact_key, visibility, author)).fetchall()
                 permitted = {supersedes, duplicate["id"] if duplicate else None}
                 if any(r[0] not in permitted for r in facts):
-                    raise ValueError("active fact conflicts; explicit supersession is required")
+                    raise MemoryConflictError(
+                        "fact_conflict",
+                        "An active fact already exists. Recall it and explicitly supersede the same fact_key.",
+                        fact_key=fact_key, existing_memory_ids=[r[0] for r in facts if r[0] not in permitted][:16])
             if duplicate:
                 if supersedes:
-                    raise ValueError("replacement already exists; do not create ambiguous lineage")
+                    raise MemoryConflictError(
+                        "replacement_exists",
+                        "The replacement already exists. Recall that memory instead of creating ambiguous lineage.",
+                        memory_id=duplicate["id"])
                 if duplicate["fact_key"] != fact_key:
-                    raise ValueError("duplicate content has a different fact identity")
+                    raise MemoryConflictError(
+                        "fact_identity_mismatch",
+                        "Duplicate content already has a different fact_key. Reuse its identity or save different content for another fact.",
+                        memory_id=duplicate["id"], existing_fact_key=duplicate["fact_key"], requested_fact_key=fact_key)
                 result = self._projection(duplicate)
                 self.connection.commit()
                 return {**result, "duplicate": True}
@@ -231,11 +266,11 @@ class MemoryStore:
         if (not isinstance(query, str) or len(query) > 2000 or type(limit) is not int
                 or not 1 <= limit <= 50 or type(offset) is not int or not 0 <= offset <= 100_000
                 or type(historical) is not bool):
-            raise ValueError("invalid memory query bounds")
+            raise InvalidRequestError("invalid memory query bounds")
         if category is not None and category not in CATEGORIES or verification is not None and verification not in VERIFICATIONS:
-            raise ValueError("invalid memory filters")
+            raise InvalidRequestError("invalid memory filters")
         if tags is not None and (not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags)):
-            raise ValueError("invalid tag filter")
+            raise InvalidRequestError("invalid tag filter")
         where = ["m.project=?", "(m.visibility='project' OR m.author=?)"]
         params: list[Any] = [project, principal]
         if not historical:
@@ -267,30 +302,42 @@ class MemoryStore:
                *, can_verify: bool = True) -> dict[str, Any]:
         allowed = {"content", "category", "references", "confidence", "verification", "tags", "metadata", "fact_key", "expected_revision"}
         if not isinstance(patch, dict) or not patch or set(patch) - allowed:
-            raise ValueError("unsupported memory update")
+            raise InvalidRequestError("unsupported memory update")
         self.connection.execute("BEGIN IMMEDIATE")
         try:
-            record = self._get(project, id, principal)
+            record = self._validated_get(project, id, principal)
             if record["state"] != "active":
-                raise ValueError("inactive memories cannot be updated")
+                raise MemoryConflictError(
+                    "memory_inactive", "Inactive memories cannot be updated. Recall the current active memory.",
+                    memory_id=record["id"], state=record["state"])
             expected = patch.get("expected_revision")
             if expected is not None and (type(expected) is not int or expected != record["revision"]):
-                raise ValueError("memory revision conflict")
+                raise MemoryConflictError(
+                    "revision_conflict", "The memory revision changed. Recall it before submitting another update.",
+                    memory_id=record["id"], current_revision=record["revision"])
             if "content" in patch and patch["content"] != record["content"] and record["fact_key"]:
-                raise ValueError("facts must be superseded rather than overwritten")
+                raise MemoryConflictError(
+                    "supersession_required", "Changed fact content requires save_memory with the same fact_key and explicit supersedes.",
+                    memory_id=record["id"], fact_key=record["fact_key"])
             if record["fact_key"] and "fact_key" in patch and patch["fact_key"] != record["fact_key"]:
-                raise ValueError("fact identity changes require explicit supersession")
+                raise MemoryConflictError(
+                    "fact_identity_mismatch", "A fact_key cannot be renamed. Save a different fact separately.",
+                    memory_id=record["id"], existing_fact_key=record["fact_key"])
             record.update({k: v for k, v in patch.items() if k != "expected_revision"})
             if record["verification"] == "verified" and not can_verify:
-                raise PermissionError("verified memory updates require verification authority")
+                raise PermissionDeniedError("verified memory updates require verification authority")
             validate(record)
             duplicate = self.connection.execute("SELECT id FROM memories WHERE project=? AND content_hash=? AND state='active' AND id!=? AND visibility=? AND (visibility='project' OR author=?)",
                 (project, digest(record["content"]), id, record["visibility"], record["author"])).fetchone()
             if duplicate:
-                raise ValueError("update duplicates an active memory")
+                raise MemoryConflictError(
+                    "duplicate_memory", "This update duplicates an active memory. Recall the existing memory.",
+                    memory_id=duplicate["id"])
             if record["fact_key"] and self.connection.execute("SELECT 1 FROM memories WHERE project=? AND fact_key=? AND state='active' AND id!=? AND visibility=? AND (visibility='project' OR author=?)",
                 (project, record["fact_key"], id, record["visibility"], record["author"])).fetchone():
-                raise ValueError("active fact conflicts")
+                raise MemoryConflictError(
+                    "fact_conflict", "Another active memory has this fact_key. Recall it and use explicit supersession.",
+                    fact_key=record["fact_key"])
             record["updated_at"] = now()
             record["revision"] += 1
             self.connection.execute("""UPDATE memories SET content=?,content_hash=?,category=?,references_json=?,confidence=?,
@@ -308,13 +355,15 @@ class MemoryStore:
 
     def invalidate(self, project: str, id: str, reason: str, principal: str = "local") -> dict[str, Any]:
         if not isinstance(reason, str) or not reason.strip() or len(reason) > 2000:
-            raise ValueError("invalidation requires a bounded reason")
+            raise InvalidRequestError("invalidation requires a bounded reason")
         clean_json(reason)
         self.connection.execute("BEGIN IMMEDIATE")
         try:
-            record = self._get(project, id, principal)
+            record = self._validated_get(project, id, principal)
             if record["state"] != "active":
-                raise ValueError("memory is not active")
+                raise MemoryConflictError(
+                    "memory_inactive", "The memory is already inactive. Recall the active or historical record before changing it.",
+                    memory_id=record["id"], state=record["state"])
             self.connection.execute("UPDATE memories SET state='invalid',invalidation_reason=?,updated_at=?,revision=revision+1 WHERE id=?", (reason, now(), id))
             record = self._get(project, id, principal)
             self._event(record, "invalidate", principal)

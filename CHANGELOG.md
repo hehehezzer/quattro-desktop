@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — Native memory rejection diagnostics
+
+- Distinguish expected memory conflicts, denied operations, invalid arguments and inaccessible memories from actual configuration/runtime/storage outages across native and MCP clients.
+- Return stable conflict codes and safe authorized identity/revision context without weakening transactional lineage, namespace/private access, credential detection or verification permissions.
+- Preserve actionable native summaries for existing clients, structured error fields for updated OMP adapters, and safe conflict guidance in the operator CLI. Failed operations remain errors with nonzero native exit status.
+- Record matching scoped failure statuses and error codes without persisting submitted text, correction messages or conflict details in receipts.
+- Clarify stable fact identities and same-fact supersession; keep genuinely separate facts separate without automatic request rewriting or retry.
+
 ## Unreleased — Selectable Arch setup and focused onboarding
 
 - Make Quattro Intelligence the primary README/onboarding path; consolidate guides and remove obsolete product, rebuild-audit and unrelated shell-proxy documents while retaining migration, release evidence and asset licensing.

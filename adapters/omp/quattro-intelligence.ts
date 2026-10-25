@@ -14,6 +14,9 @@ interface NativeResponse {
   delivery?: string;
   receipts?: unknown[];
   error?: string;
+  code?: string;
+  message?: string;
+  details?: Record<string, unknown>;
 }
 
 // Retrieval only: never changes native tools, models, accounts, approvals or delegation.
@@ -28,6 +31,7 @@ export default function quattroIntelligence(pi: ExtensionAPI) {
     status: z.string().optional(), summary: z.string().optional(), context: z.unknown().optional(),
     result: z.unknown().optional(), receipt: z.object({ id: z.string() }).passthrough().optional(),
     delivery: z.string().optional(), receipts: z.array(z.unknown()).optional(), error: z.string().optional(),
+    code: z.string().optional(), message: z.string().optional(), details: z.record(z.string(), z.unknown()).optional(),
   });
   const runtimeSchema = z.object({ python: z.string().regex(/^\//), config_dir: z.string().regex(/^\//) });
   pi.setLabel("Quattro Intelligence");
@@ -142,8 +146,8 @@ export default function quattroIntelligence(pi: ExtensionAPI) {
   register("get_project_context", "Retrieve cited project evidence and persistent memories within a UTF-8 byte budget; availability and coverage are explicit.", z.object({ project, query, budget: z.number().int().min(512).max(32768).optional(), limit: page.limit, source_ids, strategy }).strict());
   register("get_index_status", "Inspect registered project index freshness and coverage; deep checks content fingerprints.", z.object({ project, deep: z.boolean().optional() }));
   register("recall_memory", "Recall active project/private memories; never assume unverified observations are facts.", z.object({ project, query: z.string().max(2000).optional(), ...page, historical: z.boolean().optional(), verification, category, tags }).strict());
-  register("save_memory", "Deliberately persist a concise durable lesson with references; never credentials or conversation dumps. Native clients cannot verify facts.", z.object({ project, ...fields, visibility: z.enum(["project", "private"]).optional(), supersedes: z.string().max(128).optional() }), true);
-  register("update_memory", "Update an accessible memory using expected_revision; changed facts require explicit supersession.", z.object({ project, id: z.string().max(128), patch: z.object({ ...fields, content: fields.content.optional(), expected_revision: z.number().int().min(1).optional() }) }), true);
+  register("save_memory", "Deliberately persist a concise durable lesson with references; never credentials or conversation dumps. Native clients cannot verify facts. Keep fact_key stable for the same fact; supersedes must identify an accessible memory about that same fact with the same fact_key. Save a genuinely new topic separately without supersedes; never rename a fact or drop supersedes merely to bypass a conflict.", z.object({ project, ...fields, visibility: z.enum(["project", "private"]).optional(), supersedes: z.string().max(128).optional() }), true);
+  register("update_memory", "Update an accessible memory using expected_revision; keep its fact_key stable. Changed facts require save_memory with explicit same-fact supersedes and the same fact_key. Save a genuinely new topic separately without supersedes; do not repurpose an existing memory or rename its fact_key.", z.object({ project, id: z.string().max(128), patch: z.object({ ...fields, content: fields.content.optional(), expected_revision: z.number().int().min(1).optional() }) }), true);
   register("invalidate_memory", "Invalidate an accessible memory with an explicit reason.", z.object({ project, id: z.string().max(128), reason: z.string().min(1).max(2000) }), true);
   register("delete_memory", "Permanently delete an accessible memory under native approval.", z.object({ project, id: z.string().max(128) }), true);
   register("index_source", "Incrementally refresh an explicitly approved registered source. dry_run inspects changes without publication.", z.object({ source_id: z.string().max(80), reindex: z.boolean().optional(), dry_run: z.boolean().optional() }), true);

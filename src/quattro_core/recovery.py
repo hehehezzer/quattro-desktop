@@ -9,6 +9,7 @@ import sqlite3
 from contextlib import ExitStack, closing
 
 from .config import safe_path
+from .errors import PermissionDeniedError
 from .retrieval import utc_now, _private_directory
 
 DATABASES = ("retrieval.sqlite3", "memory.sqlite3", "native-receipts.sqlite3")
@@ -42,15 +43,15 @@ def _authorize_snapshot(config, directory, names):
             allowed = {s.id:(s.project,str(s.root)) for s in config.sources if s.intent != "excluded"}
             for source_id, project, root in db.execute("SELECT source_id,project,root FROM knowledge_sources"):
                 if allowed.get(source_id) != (project,root):
-                    raise PermissionError("snapshot contains a source outside configured authority")
+                    raise PermissionDeniedError("snapshot contains a source outside configured authority")
             for source_id, project in db.execute("SELECT DISTINCT source_id,project FROM knowledge_documents UNION SELECT DISTINCT source_id,project FROM knowledge_files"):
                 if source_id not in allowed or allowed[source_id][0] != project:
-                    raise PermissionError("snapshot contains unauthorized source mappings")
+                    raise PermissionDeniedError("snapshot contains unauthorized source mappings")
             projects |= {r[0] for r in db.execute("SELECT DISTINCT project FROM knowledge_sources")}
             projects |= {r[0] for r in db.execute("SELECT DISTINCT project FROM knowledge_documents")}
             unmapped = db.execute("SELECT count(*) FROM documents d LEFT JOIN knowledge_documents k ON d.id=k.document_id WHERE k.document_id IS NULL").fetchone()[0]
             if unmapped and not config.can_verify:
-                raise PermissionError("unmapped historical content requires full operator authority")
+                raise PermissionDeniedError("unmapped historical content requires full operator authority")
     if "memory.sqlite3" in names:
         with closing(sqlite3.connect((directory / "memory.sqlite3").as_uri() + "?mode=ro", uri=True)) as db:
             if db.execute("PRAGMA user_version").fetchone()[0] != 1:
@@ -58,7 +59,7 @@ def _authorize_snapshot(config, directory, names):
             projects |= {r[0] for r in db.execute("SELECT DISTINCT project FROM memories UNION SELECT DISTINCT project FROM memory_events")}
             private = db.execute("SELECT count(*) FROM memories WHERE visibility='private' AND author!=?", (config.principal,)).fetchone()[0]
             if private and not config.can_verify:
-                raise PermissionError("private memory export requires full operator authority")
+                raise PermissionDeniedError("private memory export requires full operator authority")
     if "native-receipts.sqlite3" in names:
         with closing(sqlite3.connect((directory / "native-receipts.sqlite3").as_uri() + "?mode=ro", uri=True)) as db:
             for project, metadata in db.execute("SELECT project,metadata_json FROM native_receipts"):
@@ -66,14 +67,14 @@ def _authorize_snapshot(config, directory, names):
                     projects.add(project)
                 projects.update(json.loads(metadata).get("authorized_scope", []))
                 if not scope_allowed(config, project, json.loads(metadata)):
-                    raise PermissionError("snapshot receipts contain unauthorized source scope")
+                    raise PermissionDeniedError("snapshot receipts contain unauthorized source scope")
     if projects - set(config.projects):
-        raise PermissionError("snapshot includes projects outside configured authority")
+        raise PermissionDeniedError("snapshot includes projects outside configured authority")
 
 
 def backup(config, destination):
     if not config.writable:
-        raise PermissionError("full-store backup requires operator write authority")
+        raise PermissionDeniedError("full-store backup requires operator write authority")
     destination = safe_path(destination)
     # Authorization is rechecked while all writer reservations are held below.
     _private_directory(destination)
@@ -130,7 +131,7 @@ def verify_backup(config, source):
 def restore(config, source, destination):
     """Never overwrite a live store; a failed restore remains an unusable new directory."""
     if not config.writable:
-        raise PermissionError("restore requires operator write authority")
+        raise PermissionDeniedError("restore requires operator write authority")
     source, destination = safe_path(source, directory=True), safe_path(destination)
     manifest_path = source / "manifest.json"
     files = verify_backup(config, source)["files"]

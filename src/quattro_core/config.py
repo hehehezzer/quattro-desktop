@@ -10,12 +10,14 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any
 
+from .errors import InvalidRequestError, PermissionDeniedError
+
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 
 
 def identifier(value: Any) -> str:
     if not isinstance(value, str) or not NAME.fullmatch(value):
-        raise ValueError("invalid namespace or identity")
+        raise InvalidRequestError("invalid namespace or identity")
     return value
 
 
@@ -101,16 +103,16 @@ class Config:
 
     def authorize(self, project: str, write: bool = False) -> None:
         if project not in self.projects:
-            raise PermissionError("project is not authorized")
+            raise PermissionDeniedError("project is not authorized")
         if write and not self.writable:
-            raise PermissionError("write access is disabled")
+            raise PermissionDeniedError("write access is disabled")
 
     def source(self, source_id: str) -> Source:
         for source in self.sources:
             if source.id == source_id:
                 self.authorize(source.project)
                 return source
-        raise PermissionError("source is not authorized")
+        raise PermissionDeniedError("source is not authorized")
 
     @classmethod
     def load(cls, path: pathlib.Path) -> "Config":

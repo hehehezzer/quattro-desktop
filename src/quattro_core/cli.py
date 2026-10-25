@@ -10,6 +10,7 @@ from typing import Any
 
 from .config import Config, Source, default_config_path, register_source
 from .knowledge import migrate_legacy_database
+from .errors import MemoryConflictError, PermissionDeniedError
 from .mcp import McpRuntime, PATCH_FIELDS, TOOL_MAP, obj, serve, strict_json, validate
 
 MAX_OPERATOR_CONTENT = 1048576
@@ -232,13 +233,13 @@ def execute(args: argparse.Namespace) -> Any:
         return _backup(config, args.destination)
     if args.command == "migrate":
         if not config.writable:
-            raise PermissionError("migration requires write permission")
+            raise PermissionDeniedError("migration requires write permission")
         if bool(args.project) != bool(args.source_id):
             raise ValueError("mapping requires project and source")
         if args.project:
             config.authorize(args.project, write=True)
             if config.source(args.source_id).project != args.project:
-                raise PermissionError("source project mismatch")
+                raise PermissionDeniedError("source project mismatch")
         return migrate_legacy_database(_local_path(args.source, exists=True), config.database_dir / "retrieval.sqlite3",
                                        project=args.project, source_id=args.source_id,
                                        source_root=config.source(args.source_id).root if args.source_id else None)
@@ -298,7 +299,7 @@ def execute(args: argparse.Namespace) -> Any:
             # Operator file/stdin is the only large-content path; MCP remains bounded.
             config.authorize(args.project, write=True)
             if args.verification == "verified" and not config.can_verify:
-                raise PermissionError("verification unavailable")
+                raise PermissionDeniedError("verification unavailable")
             validate(dict(values, content="validation"), TOOL_MAP["save_memory"]["inputSchema"])
             return runtime.service.memory.save(**values, content=content, author=config.principal)
         if command == "recall":
@@ -325,7 +326,7 @@ def execute(args: argparse.Namespace) -> Any:
                 raise ValueError("empty patch")
             config.authorize(args.project, write=True)
             if patch.get("verification") == "verified" and not config.can_verify:
-                raise PermissionError("verification unavailable")
+                raise PermissionDeniedError("verification unavailable")
             small_patch = dict(patch)
             if "content" in small_patch and isinstance(small_patch["content"], str):
                 small_patch["content"] = "validation"
@@ -354,6 +355,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "doctor":
             return {"healthy":0,"degraded":1,"unavailable":2}[result["status"]]
         return 0
+    except MemoryConflictError as error:
+        print(f"Memory conflict [{error.code}]: {error}", file=sys.stderr)
     except PermissionError:
         print("Operation not permitted by intelligence configuration", file=sys.stderr)
     except (ValueError, TypeError, KeyError, UnicodeError):
